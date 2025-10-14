@@ -1,0 +1,672 @@
+---
+title: "Baseline TOC model development in CLP"
+date: "2025-10-08"
+output: html_document
+---
+
+The purpose of this markdown is to explore the relationship between TOC and 
+snowmelt signals within the CLP, with the intention of creating a baseline 
+forecast model to measure further model development against.
+
+This script is an adapted version of `baseline_TOC.Rmd` that includes data from
+the City of Fort Collins, including their historical data going back to 2008.
+
+```{r, echo = F, error = F, message = F}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, error = FALSE)
+library(tidyverse)
+library(readxl)
+library(here)
+library(mgcv)
+library(Metrics)
+
+version_date = Sys.Date()
+```
+
+Harmonization of ROSS and FC data
+
+```{r}
+# grab chemistry data - this is from the zenodo pull
+ross_toc <- read_csv(here("data/upper_clp_dss/ross_clp_chem/data/cleaned/CLP_chemistry_up_to_20250701.csv")) %>% 
+  rename(site_name = Site,
+         date = Date) %>% 
+  select(site_code, site_name = site_name, date = date,
+         TOC, DOC, distance_upstream_km, Lat:location_type, -watershed) %>% 
+  mutate(collector = "ROSS")
+
+# grab distance upstream for FC samples
+dist_upstream <- ross_toc %>% 
+  select(site_code, distance_upstream_km, Lat, Long, Campaign, location_type) %>% 
+  distinct()
+
+# and TOC from FC
+FC_chem_2018_2021 <- read_xlsx(here("data/upper_clp_dss/fc_clp_chem/UCLP_CWQMP_database_2008-2021.xlsx")) %>% 
+  mutate(Date = ymd(Date),
+         site_code = ShortDesc,
+         TOC = as.numeric(TOC)) %>% 
+  select(date = Date, 
+         site_name = LongDesc,
+         site_code, TOC) %>% 
+  filter(!is.na(TOC)) %>% 
+  mutate(collector = "FC")
+
+FC_chem_2022_2024 <- read_csv(here("data/upper_clp_dss/fc_clp_chem/UCLP_CWQMP_database_2022-24.csv")) %>%
+  mutate(Date = as.POSIXct(Date, format = "%m/%d/%y"),
+         site_code = ShortDesc) %>%
+  select(date = Date, 
+         location_type = SiteType,
+         site_name = LongDesc,
+         site_code, TOC) %>% 
+  filter(!is.na(TOC)) %>% 
+  mutate(collector = "FC")
+
+# get site type for 2025 toc data
+FC_site_helper <- FC_chem_2022_2024 %>% 
+  select(location_type, site_code) %>% 
+  distinct()
+
+FC_chem_2025 <- read_xlsx("data/upper_clp_dss/fc_clp_chem/UCLP_CWQMP_TOC_202504-202506.xlsx") %>%
+  select(date = `Sampled Date`, 
+         site_name = `Location Name`,
+         TOC = `Corrected Result`) %>%
+  mutate(flag = if_else(TOC == "ND", "ND", ""),
+         site_code = str_sub(site_name, 1, 3),
+         TOC = as.numeric(TOC)) %>%
+  mutate(collector = "FC") %>% 
+  left_join(., FC_site_helper)
+# warning okay
+
+FC_toc <- reduce(list(FC_chem_2018_2021, FC_chem_2022_2024, FC_chem_2025), full_join) %>% 
+  mutate(date = as_date(date)) %>% 
+  select(-location_type) %>% 
+  left_join(., dist_upstream)
+
+toc <- full_join(ross_toc, FC_toc)
+```
+
+
+# Exploring DOC/TOC interoperability
+
+Look at relationship between TOC and DOC, does this get us some "more" data that
+we can use DOC "as" TOC. 
+
+```{r}
+toc %>% 
+  filter(!is.na(TOC) & !is.na(DOC)) %>% 
+  ggplot(., aes(x = TOC, y = DOC)) + 
+  geom_point() + 
+  facet_wrap(site_name ~ .)
+```
+
+The answer is, kind of yes. Exceptions: basically everything after Canyon Mouth. 
+Let's also look at water source type for this:
+
+```{r}
+toc %>% 
+  filter(!is.na(TOC) & !is.na(DOC)) %>% 
+  ggplot(., aes(x = TOC, y = DOC)) + 
+  geom_point() + 
+  facet_wrap(location_type ~ .)
+```
+
+Let's look at mainstem here:
+
+```{r}
+toc %>% 
+  filter(!is.na(TOC) & !is.na(DOC) & location_type == "Mainstem") %>% 
+  ggplot(., aes(x = TOC, y = DOC)) + 
+  geom_point() + 
+  facet_wrap(Campaign ~ .)
+```
+
+Okay, this aligns with the relationship falling apart after the Canyon Mouth.
+
+Let's also look at the stream type:
+
+```{r}
+toc %>% 
+  filter(!is.na(TOC) & !is.na(DOC) & location_type == "Stream") %>% 
+  ggplot(., aes(x = TOC, y = DOC)) + 
+  geom_point() + 
+  facet_wrap(Campaign ~ .)
+```
+
+Let's also look at the South Fork
+
+```{r}
+toc %>% 
+  filter(!is.na(TOC) & !is.na(DOC) & Campaign == "South Fork") %>% 
+  ggplot(., aes(x = TOC, y = DOC)) + geom_point() + 
+  facet_wrap(site_name ~ .)
+```
+
+Okay, these are all right-on - the correlation is something like 0.97, the intercept
+is nearly zero and the slope is nearly 1, so we're just going to say that for these
+sites, DOC = TOC. 
+
+```{r}
+toc %>% 
+  filter(!is.na(TOC) & !is.na(DOC) & 
+           (grepl("Upper", Campaign) | Campaign == "South Fork")) %>% 
+  ggplot(., aes(x = TOC, y = DOC, color = factor(year(date)))) + geom_point() + 
+  facet_wrap(site_name + location_type ~ .)
+```
+
+Let's look at DOC timeseries across the upper sites and South Fork:
+
+```{r}
+toc %>% 
+  filter(!is.na(DOC)) %>% 
+  filter(grepl("Upper", Campaign) | Campaign == "South Fork") %>% 
+  mutate(dist_name = paste(distance_upstream_km, site_name, sep = " - ")) %>% 
+  ggplot(., aes(x = yday(date), y = DOC, color = factor(year(date)))) + 
+  geom_point() + 
+  facet_wrap(dist_name + location_type ~.)
+```
+
+And removing post-fire 2021, 2022, since we'll assume that DOC is not as dominant 
+of a part of TOC during this time, or at the very least might be a different
+proportion of TOC during this recovery time. (We only have DOC-TOC matches 
+post-fire.) Additionally, limiting DOC interpretation to those that have 2015 data.
+
+```{r}
+toc %>% 
+  filter(!year(date) %in% c(2021, 2022) & 
+           site_code %in% c("PSF", "PBR", "SFM", "PNF", "PJW")) %>% 
+  mutate(ordered_site = factor(site_code, levels = c("PNF", "PSF", 
+                                                     "PBR", "SFM", 
+                                                     "PJW"))) %>% 
+  filter(!is.na(DOC)) %>% 
+  ggplot(., aes(x = yday(date), y = DOC, color = factor(year(date)))) + 
+  geom_point() + 
+  facet_wrap(ordered_site + distance_upstream_km + Campaign ~.)
+```
+
+The consistency between 2015 and post-fire leads me to believe that there is 
+probably consistency in the relationship between DOC and TOC in 2015 data and 
+post-fire data, since it doesn't seem significantly larger or smaller than pre-fire.
+We're assuming that these water years were pretty similar in this assessment.
+
+For now, we're going to limit even further to a handful of sites with good data
+records. The sites here are those that are on the mainstem and not as affected by
+reservoir signals. In particular, we drop JWC since it is primarily reservoir fed.
+
+```{r}
+toc %>% 
+  filter(site_code %in% c("PBD", "PNF", "PMAN", "PSF", 
+                          "PBR", "SFM",  "PFAL", "PJW") &
+           !year(date) %in% c(2021, 2022), !is.na(DOC)) %>% 
+  mutate(dist_name = paste(distance_upstream_km, site_name, sep = " - "),
+         ordered_name = factor(site_name, levels = c("Poudre at Bellvue Diversion",
+                                                     "Poudre Above North Fork",
+                                                     "Poudre at Manner's Bridge",
+                                                     "Poudre Below S. Fork", 
+                                                     "Poudre Below Rustic",
+                                                     "Poudre South Fork",
+                                                     "Poudre below Poudre Falls",
+                                                     "Poudre Above Joe Wright"))) %>% 
+  ggplot(., aes(x = yday(date), y = DOC, color = factor(year(date)))) + 
+  geom_point() + 
+  facet_wrap(ordered_name + distance_upstream_km +location_type + Campaign ~ .)
+
+```
+
+# ROSS x FC
+
+We're just shooting for the mainstem forecast rignt now. After some perusing, 
+NF is... weird... and definitely does not vibe with the mainstem. 
+Need to remove High Park Fire 2013 late season?
+
+```{r}
+toc %>% 
+  mutate(toc_doc = if_else(!is.na(TOC), TOC, DOC)) %>% 
+  filter(site_code %in% c("PBD", "PNF", "PMAN", "PSF", 
+                          "PBR", "SFM",  "PFAL", "PJW"),
+           !year(date) %in% c(2021, 2022),
+           !(year(date) == 2013 & month(date) > 8)) %>%
+  mutate(ordered_site = factor(site_code, levels = c("PBD", "PNF", "PMAN", "PSF", 
+                                                     "PBR", "SFM",  "PFAL", "PJW"))) %>%
+  
+  ggplot(., aes(x = yday(date), y = toc_doc, color = collector)) +
+  geom_point() +
+  facet_wrap(year(date) ~ .)
+```
+
+
+# GAM time
+
+Great, now let's play with a GAM fit, for now, we wont do a TVT, because I just 
+want to see if it works. I have played with including a bunch or other sites, but
+this is the most straightforward group for forecasting the 4 mainstem sites.
+
+```{r}
+gam_toc <- toc %>% 
+  filter(site_code %in% c("PBD", "PNF", "PMAN", "PSF", 
+                          "PBR", "SFM", "PFAL", "PJW")) %>% 
+  mutate(DOY = yday(date),
+         year = year(date), 
+         toc_doc = if_else(!is.na(TOC), TOC, DOC),
+         # to play with categorical variables, they failed.
+         fire_signal = if_else(year %in% c(2021, 2022) | (year == 2013 & month(date) > 8), 1, 0),
+         # there's one flier at SFM
+         toc_doc = if_else(site_code == "SFM" & toc_doc > 9, NA_real_, toc_doc)) %>% 
+  # limit time, remove fire signal, remove flier
+  filter(!is.na(toc_doc), 
+         between(DOY, 100, 320), 
+         fire_signal == 0)
+
+# see what this looks like
+TOC_GAM <- gam(toc_doc ~ te(DOY, distance_upstream_km, k = c(6, 6)),
+               method = "REML", gamma = 2,
+               data = gam_toc)
+
+gam.check(TOC_GAM)
+
+plot(TOC_GAM, scheme = 2, too.far = 1, shade = TRUE)
+vis.gam(TOC_GAM, view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp", theta = 30, phi = 30,
+        ticktype = "detailed")
+
+```
+
+Okay, this seems to work pretty well, even if it's a little wonky and seemingly 
+overfit, especially where we don't have data ~60km upstream. We do, however, 
+want to do some thoughtful TVT here to keep our error estimates honest. First 
+let's look at annual distribution since we want to test in 2025.
+
+```{r}
+gam_toc %>% 
+  summarize(n = n(), 
+            .by = year)
+```
+
+I think we can do some tvt across years here, keeping 2020, 2023-2024 always in the 
+training set.
+
+- Test: 2025
+- folds: LOO 2008/9, 2010/11, 2012/13, 2014/15, 2016/17, 2018/19
+
+GAM diagnostics are interpreted using the gam.check() function. We want to make
+sure that:
+
+1) the model converged (second line of the output), the convergnece value is very small,
+and ideally model rank is last (26/26 for instance)
+2) We are confident we are not finding a local minima in the convergence ("Hessian was positive difinitive")
+3) that the k is ~ 1 and the p value > 0.05
+4) we want the lowest k (default is 25 or c(5, 5)) while not maxing out the wiggles
+which is determined by k' (max number of wiggles) and edf (actual wiggles used)
+
+Some notes on interpretation and tuning:
+
+- If the p-value < 0.05, you need to add more complexity to the model (by increasing k)
+- The lower the k means it's less likely to be over fit. 
+- As long as the p value > 0.05 and k ~ 1, it's unlikely to be underfit.
+- A higher k risks being overfit, and not generalizable. 
+- If your edf is very close to k' (like, within 1 unit), you probably need to increase k
+
+My rule of thumb for making sure you don't overfit: 
+if the edf value of your model is less than the k' of a lower k, you might be overfit:
+
+edf = 20, k' = 48 (implying the k = c(7,7), or 7x7-1), you'd want to try k = c(6,6),
+which would have a k' of 35 (6x6-1), and ideally the edf would still be low with
+a smaller parameterization space.
+
+Added: With the added data, we're in a strange place with k-index/p-value. It's
+okay to have significant p (p < 0.05) as long as the k-index is near 1 and we've
+optimized the other parameters of the fit summary. I've found that with added data
+I can counter act the significant p by adding a gamma value (this is to help over
+fitting) - 1 is default, increasing to 1.5-2 can help a ton.
+
+## Make CV Models 
+
+Make a function for easier iteration:
+
+```{r}
+run_cv_gam <- function(block, k_vals, gamma_val = 1) {
+  valid <- gam_toc %>% filter(year %in% block)
+  train <- anti_join(gam_toc, valid) %>% 
+    filter(year != 2025) 
+  
+  # fit gam
+  fit <- gam(toc_doc ~ te(DOY, distance_upstream_km, k = c(6, 6)), 
+             data = train, method = "REML", select = TRUE, gamma = gamma_val)
+  
+  # check gam diagnostics
+  gam.check(fit)
+  
+  plot(fit, scheme = 2, too.far = 1, shade = TRUE)
+  
+  vis.gam(fit,
+          view = c("DOY", "distance_upstream_km"),
+          plot.type = "persp",
+          theta = 30, phi = 30,
+          ticktype = "detailed")
+  
+  # apply to validation
+  valid$pred <- predict(fit, newdata = valid)
+  
+  # and report performance
+  mae_val <- mae(valid$toc_doc, valid$pred)
+  rmse_val <- rmse(valid$toc_doc, valid$pred)
+  bias_val <- bias(valid$toc_doc, valid$pred)
+  
+  # r2 from linear regression
+  r2_val <- summary(lm(valid$toc_doc ~ valid$pred))$r.squared
+  
+  # format annotation text for plot
+  metrics_text <- paste0(
+    "MAE = ", round(mae_val, 2),
+    "\nRMSE = ", round(rmse_val, 2),
+    "\nBias = ", round(bias_val, 2),
+    "\nR² = ", round(r2_val, 2)
+  )
+  
+  plot(valid$DOY, valid$toc_doc - valid$pred)
+  plot(valid$distance_upstream_km, valid$toc_doc - valid$pred)
+  
+  valid_performance <- ggplot(valid, aes(y=toc_doc, x=pred)) +
+    geom_point() +
+    geom_abline(slope=1, intercept=0, color="red") +
+    theme_bw() +
+    annotate("text", x = min(valid$pred), y = max(valid$toc_doc), 
+             hjust = 0, vjust = 1, 
+             label = metrics_text, size = 4) +
+    labs(title=paste("Predicted vs Observed - Years:", paste0(block, collapse = ", ")))
+  
+  valid_performance
+  
+  return(list(fit, valid_performance))
+}
+
+```
+
+
+## CV Model 1
+
+```{r}
+cv_1 <- run_cv_gam(block = c(2008, 2009), k = c(6,6), gamma = 1.7)
+
+```
+
+
+## CV Model 2
+
+```{r}
+cv_2 <- run_cv_gam(block = c(2010, 2011), k = c(6,6), gamma = 1.7)
+
+```
+
+
+## CV Model 3
+
+```{r}
+cv_3 <- run_cv_gam(block = c(2012, 2013), k = c(6, 6), gamma = 1.7)
+
+```
+
+
+## CV Model 4
+
+```{r}
+cv_4 <- run_cv_gam(block = c(2014, 2015), k = c(6,6), gamma = 1.5)
+
+```
+
+
+## CV Model 5
+
+```{r}
+cv_5 <- run_cv_gam(block = c(2016, 2017), k = c(6,6), gamma = 1.5)
+
+```
+
+
+## CV Model 6
+
+```{r}
+cv_6 <- run_cv_gam(block = c(2018, 2019), k = c(6,6), gamma = 1.5)
+
+```
+
+
+
+# Apply ensemble to test set
+
+```{r}
+test_2025 <- gam_toc %>% filter(year == 2025)
+
+# apply ensemble
+test_2025 <- test_2025 %>%
+  mutate(
+    pred1 = predict(cv_1[[1]], newdata = test_2025),
+    pred2 = predict(cv_2[[1]], newdata = test_2025),
+    pred3 = predict(cv_3[[1]], newdata = test_2025),
+    pred4 = predict(cv_4[[1]], newdata = test_2025),
+    pred5 = predict(cv_5[[1]], newdata = test_2025),
+    pred6 = predict(cv_6[[1]], newdata = test_2025),
+    pred_avg = (pred1 + pred2 + pred3 + pred4 + pred5 + pred6) / 6
+  )
+
+# calculate performance metrics
+mae_val  <- mae(test_2025$toc_doc, test_2025$pred_avg)
+rmse_val <- rmse(test_2025$toc_doc, test_2025$pred_avg)
+bias_val <- bias(test_2025$toc_doc, test_2025$pred_avg)
+
+# r2 from linear regression
+r2_val <- summary(lm(test_2025$toc_doc ~test_2025$pred_avg))$r.squared
+
+# format annotation text for plot
+metrics_text <- paste0(
+  "MAE = ", round(mae_val, 2),
+  "\nRMSE = ", round(rmse_val, 2),
+  "\nBias = ", round(bias_val, 2),
+  "\nR² = ", round(r2_val, 2)
+)
+
+
+# pred - obs scatter plot!
+ggplot(test_2025, aes(x = toc_doc, y = pred_avg)) +
+  geom_point(color = "blue", alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (2025)") +
+  annotate("text", x = 3, y = 8, 
+           hjust = 0, vjust = 1, 
+           label = metrics_text, size = 4) +
+  theme_bw(base_size = 14) 
+
+# uncomment on new model
+# ggsave(here(paste0("modeling/toc/toc_forecast/performance/baseline_wFC_2025_v", version_date, ".jpg")),
+#        width = 8, height = 8, units = "in")
+
+# for kicks, look at performance by site
+ggplot(test_2025, aes(x = toc_doc, y = pred_avg)) +
+  geom_point(color = "blue", alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (2025)") +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim = c(3, 8), ylim = c(3, 8)) +
+  facet_wrap(site_code ~ .)
+
+```
+
+And let's look at performance if we only pull out the four sites that we care about
+for forecasting:
+
+```{r}
+test_2025_four <- test_2025 %>% 
+  filter(site_code %in% c("PFAL", "PBR", "PMAN", "PBD"))
+# calculate performance metrics
+mae_val  <- mae(test_2025_four$toc_doc, test_2025_four$pred_avg)
+rmse_val <- rmse(test_2025_four$toc_doc, test_2025_four$pred_avg)
+bias_val <- bias(test_2025_four$toc_doc, test_2025_four$pred_avg)
+
+# r2 from linear regression
+r2_val <- summary(lm(test_2025_four$toc_doc ~test_2025_four$pred_avg))$r.squared
+
+# format annotation text for plot
+metrics_text <- paste0(
+  "MAE = ", round(mae_val, 2),
+  "\nRMSE = ", round(rmse_val, 2),
+  "\nBias = ", round(bias_val, 2),
+  "\nR² = ", round(r2_val, 2)
+)
+
+
+# pred - obs scatter plot!
+ggplot(test_2025_four, aes(x = toc_doc, y = pred_avg, color = collector)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (2025)") +
+  annotate("text", x = 3, y = 8, 
+           hjust = 0, vjust = 1, 
+           label = metrics_text, size = 4) +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim = c(3, 8), ylim = c(3, 8))
+
+# uncomment on new model
+# ggsave(here(paste0("modeling/toc/toc_forecast/performance/baseline_wFC_focus_sites_2025_v", version_date, ".jpg")),
+#        width = 8, height = 8, units = "in")
+
+# for kicks, look at performance by site
+ggplot(test_2025_four, aes(x = DOC, y = pred_avg)) +
+  geom_point(color = "blue", alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (2025)") +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim = c(3, 8), ylim = c(3, 8)) +
+  facet_wrap(site_code ~ .)
+
+```
+
+And because we think there is something funky with FC data in 2025, we'll also
+do some performance without those data
+
+```{r}
+test_2025_four <- test_2025 %>% 
+  filter(site_code %in% c("PFAL", "PBR", "PMAN", "PBD"),
+         collector != "FC")
+# calculate performance metrics
+mae_val  <- mae(test_2025_four$toc_doc, test_2025_four$pred_avg)
+rmse_val <- rmse(test_2025_four$toc_doc, test_2025_four$pred_avg)
+bias_val <- bias(test_2025_four$toc_doc, test_2025_four$pred_avg)
+
+# r2 from linear regression
+r2_val <- summary(lm(test_2025_four$toc_doc ~test_2025_four$pred_avg))$r.squared
+
+# format annotation text for plot
+metrics_text <- paste0(
+  "MAE = ", round(mae_val, 2),
+  "\nRMSE = ", round(rmse_val, 2),
+  "\nBias = ", round(bias_val, 2),
+  "\nR² = ", round(r2_val, 2)
+)
+
+
+# pred - obs scatter plot!
+ggplot(test_2025_four, aes(x = toc_doc, y = pred_avg, color = collector)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (2025)") +
+  annotate("text", x = 3, y = 8, 
+           hjust = 0, vjust = 1, 
+           label = metrics_text, size = 4) +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim = c(3, 8), ylim = c(3, 8))
+
+# uncomment on new model
+# ggsave(here(paste0("modeling/toc/toc_forecast/performance/baseline_noFC_focus_sites_2025_v", version_date, ".jpg")),
+#        width = 8, height = 8, units = "in")
+```
+
+
+# Visualize the decision space for interpretability
+
+GAMs are pretty interpretable when they have fewer interacting variables. In this
+case, we can just create a synthetic space/time space and apply the model across
+it to visualize what happens up the canyon over time.
+
+```{r}
+# Make a prediction grid across DOY and distance
+newdata <- expand.grid(
+  DOY = seq(min(gam_toc$DOY), max(gam_toc$DOY)),
+  distance_upstream_km = seq(min(gam_toc$distance_upstream_km),
+                             max(gam_toc$distance_upstream_km))
+)
+
+# Get predictions from your GAMs for the grid
+newdata$fit1 <- predict(cv_1[[1]], newdata = newdata)
+newdata$fit2 <- predict(cv_2[[1]], newdata = newdata)
+newdata$fit3 <- predict(cv_3[[1]], newdata = newdata)
+newdata$fit4 <- predict(cv_4[[1]], newdata = newdata)
+newdata$fit5 <- predict(cv_5[[1]], newdata = newdata)
+newdata$fit6 <- predict(cv_6[[1]], newdata = newdata)
+
+# create ensemble prediction
+newdata <- newdata %>% 
+  mutate(ave_fit = (fit1 + fit2 + fit3 + fit4 + fit5 + fit6) / 6)
+
+# heatmap + contour plot
+ggplot(newdata, aes(x = DOY, y = distance_upstream_km, fill = ave_fit)) +
+  geom_tile() +
+  geom_contour(aes(z = ave_fit), color = "white", alpha = 0.7) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(fill = "Predicted TOC",
+    x = "Day of Year",
+    y = "Distance upstream from Canyon Mouth (km)") +
+  theme_bw(base_size = 14) 
+
+# uncomment on new model
+# ggsave(here(paste0("modeling/toc/toc_forecast/performance/baseline_wFC_visualize_model_v", version_date, ".jpg")),
+#        width = 8, height = 8, units = "in")
+
+```
+
+
+## Export Models and Metrics
+
+And let's save these models as the baseline and export the performance info for 
+the CV and test sets. Only run this section if you want to save the models and
+export statistics.
+
+```{r}
+
+# write_rds(cv_1[[1]], here(paste0("data/upper_clp_dss/modeling/TOC_baseline/TOC_GAM_fit1_v", version_date, ".rds")))
+# write_rds(cv_2[[1]], here(paste0("data/upper_clp_dss/modeling/TOC_baseline/TOC_GAM_fit2_v", version_date, ".rds")))
+# write_rds(cv_3[[1]], here(paste0("data/upper_clp_dss/modeling/TOC_baseline/TOC_GAM_fit3_v", version_date, ".rds")))
+# write_rds(cv_4[[1]], here(paste0("data/upper_clp_dss/modeling/TOC_baseline/TOC_GAM_fit4_v", version_date, ".rds")))
+# write_rds(cv_5[[1]], here(paste0("data/upper_clp_dss/modeling/TOC_baseline/TOC_GAM_fit5_v", version_date, ".rds")))
+# write_rds(cv_6[[1]], here(paste0("data/upper_clp_dss/modeling/TOC_baseline/TOC_GAM_fit6_v", version_date, ".rds")))
+# 
+# ggsave(plot = cv_1[[2]], 
+#        filename = here(paste0("modeling/toc/toc_forecast/performance/cv_1_performance_v", version_date, ".jpg")),
+#        width = 8, height = 8, units = "in")
+# ggsave(plot = cv_2[[2]], 
+#        filename = here(paste0("modeling/toc/toc_forecast/performance/cv_2_performance_v", version_date, ".jpg")),
+#        width = 8, height = 8, units = "in")
+# ggsave(plot = cv_3[[2]],
+#        filename = here(paste0("modeling/toc/toc_forecast/performance/cv_3_performance_v", version_date, ".jpg")),
+#        width = 8, height = 8, units = "in")
+# ggsave(plot = cv_4[[2]],
+#        filename = here(paste0("modeling/toc/toc_forecast/performance/cv_4_performance_v", version_date, ".jpg")),
+#        width = 8, height = 8, units = "in")
+# ggsave(plot = cv_5[[2]],
+#        filename = here(paste0("modeling/toc/toc_forecast/performance/cv_5_performance_v", version_date, ".jpg")),
+#        width = 8, height = 8, units = "in")
+# ggsave(plot = cv_6[[2]],
+#        filename = here(paste0("modeling/toc/toc_forecast/performance/cv_6_performance_v", version_date, ".jpg")),
+#        width = 8, height = 8, units = "in")
+
+```
+
+
+
+

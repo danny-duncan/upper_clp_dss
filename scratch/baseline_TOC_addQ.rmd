@@ -1,0 +1,167 @@
+---
+title: "Baseline TOC + Q"
+author: "ROSSyndicate"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+Let's add in discharge from the mouth of the canyon - this will give us a little 
+bit of inter-annual variability.
+
+```{r}
+canyon_mouth_q <- read_csv("~/Downloads/Selected_Station_Analysis_Xtab_202509301503.csv") %>% 
+  mutate(Date = mdy(meas_date)) %>% 
+  select(Date, discharge = `Streamflow Value`)
+
+mainstem_plus <- left_join(mainstem, canyon_mouth_q) %>%
+  filter(!is.na(discharge))
+
+
+TOC_GAM_more_q <- gam(toc_doc ~ te(DOY, distance_upstream_km, discharge), 
+                      data = mainstem_plus)
+gam.check(TOC_GAM_more_q)
+plot(TOC_GAM_more_q, scheme = 2, too.far = 0.1, shade = TRUE)
+vis.gam(TOC_GAM_more_q, view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp", theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(TOC_GAM_more_q, view = c("distance_upstream_km", "discharge"),
+        plot.type = "persp", theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(TOC_GAM_more_q, view = c("DOY", "discharge"),
+        plot.type = "persp", theta = 30, phi = 30,
+        ticktype = "detailed")
+
+
+```
+
+```{r}
+
+# ----------------------------
+# 1. Subset data for Model 1
+# Train: all years except 2024 & 2025
+train_q <- mainstem_plus %>% filter(!year %in% c(2024, 2025))
+# Validation: 2024
+valid_q <- mainstem_plus %>% filter(year == 2024)
+# Test: 2025
+test_q <- mainstem_plus %>% filter(year == 2025)
+
+# ----------------------------
+# 2. Fit GAM
+fit_q <- gam(toc_doc ~ te(DOY, distance_upstream_km, discharge), data = train_q, method = "GCV.Cp")
+
+# ----------------------------
+# 3. Check GAM diagnostics
+gam.check(fit_q)   # residuals, k-index, edf, etc.
+
+# ----------------------------
+# 4. Visualize smooth
+# 4a. Basic 2D contour/heatmap
+vis.gam(fit_q,
+        view = c("DOY", "distance_upstream_km"),
+        plot.type = "contour",
+        color = "topo",
+        too.far = 0.1)
+
+# 4b. 3D perspective
+vis.gam(fit_q,
+        view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+# 5. Generate predictions
+valid$pred <- predict(fit_q, newdata = valid_q)
+
+metrics <- function(df, set_name) {
+  data.frame(
+    dataset = set_name,
+    rmse = sqrt(mean((df$toc_doc - df$pred)^2)),
+    r2   = cor(df$toc_doc, df$pred)^2
+  )
+}
+
+metrics(valid, "validation")
+```
+
+```{r}
+
+# ----------------------------
+# 1. Subset data for Model 2
+# Train: all years except 2015, 2023, 2025
+train2_q <- mainstem_plus %>% filter(!year %in% c(2015, 2023, 2025))
+# Validation: 2024
+valid2_q <- mainstem_plus %>% filter(year %in% c(2015, 2023))
+
+
+# ----------------------------
+# 2. Fit GAM
+fit2_q <- gam(toc_doc ~ te(DOY, distance_upstream_km, discharge), data = train2_q, method = "GCV.Cp")
+
+# ----------------------------
+# 3. Check GAM diagnostics
+gam.check(fit2_q)   # residuals, k-index, edf, etc.
+
+# ----------------------------
+# 4. Visualize smooth
+# 4a. Basic 2D contour/heatmap
+vis.gam(fit2_q,
+        view = c("DOY", "distance_upstream_km"),
+        plot.type = "contour",
+        color = "topo",
+        too.far = 0.1)
+
+# 4b. 3D perspective
+vis.gam(fit2_q,
+        view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+# 5. Generate predictions
+valid2_q$pred <- predict(fit2_q, newdata = valid2_q)
+metrics(valid2_q, "validation")
+
+```
+
+```{r}
+# ----------------------------
+# 1. Subset test data
+test_2025_q <- mainstem_plus %>% filter(year == 2025)
+
+# ----------------------------
+# 2. Predict with both models
+test_2025_q <- test_2025_q %>%
+  mutate(
+    pred1 = predict(fit_q,  newdata = test_2025_q),
+    pred2 = predict(fit2_q, newdata = test_2025_q),
+    pred_avg = (pred1 + pred2) / 2
+  )
+
+# ----------------------------
+# 3. Compute performance metrics for ensemble
+rmse <- sqrt(mean((test_2025_q$toc_doc - test_2025_q$pred_avg)^2))
+r2   <- cor(test_2025_q$toc_doc, test_2025_q$pred_avg)^2
+cat("Ensemble RMSE:", rmse, "\n")
+cat("Ensemble R²:", r2, "\n")
+
+# ----------------------------
+# 4. Scatter plot: observed vs predicted
+ggplot(test_2025_q, aes(x = toc_doc, y = pred_avg)) +
+  geom_point(color = "blue", alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    x = "Observed response",
+    y = "Predicted response (ensemble)",
+    title = "GAM Ensemble Predictions vs Observed (2025)"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+Save models
+
+```{r}
+write_rds(fit_q, "TOC_GAM_with_CMq_fit1_v2025-09-30.rds")
+write_rds(fit2_q, "TOC_GAM_with_CMq_fit2_v2025-09-30.rds")
+```
