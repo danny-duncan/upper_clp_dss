@@ -4,15 +4,13 @@
 #' @description
 #' Reduces high-frequency noise in turbidity measurements using a 5-point binomial kernel
 #' low-pass filter applied three times in succession. This function specifically addresses
-#' the noise characteristics of optical turbidity sensors, which are prone to rapid
+#' the noise characteristics of optical turbidity, chl-a sensors, which are prone to rapid
 #' fluctuations due to suspended particles, biofouling, and electronic interference.
 #'
 #' The filter uses a binomial kernel with weights [1,4,6,4,1] normalized by dividing by 16, which provides
 #' a Gaussian-like smoothing effect. This kernel gives the greatest influence to the
 #' current measurement, moderate influence to the measurements 15 minutes before and
-#' after, and least influence to the measurements 30 minutes before and after. The
-#' triple application of the filter creates a more aggressive smoothing effect equivalent
-#' to a higher-order binomial filter.
+#' after, and least influence to the measurements 30 minutes before and after.
 #'
 #' This function currently processes only turbidity data, as turbidity sensors are
 #' particularly susceptible to noise from suspended particles and optical interference.
@@ -76,23 +74,25 @@ apply_low_pass_binomial_filter <- function(df,
             !!sym(new_value_col) := data.table::frollapply(
               !!sym(value_col), n = 5, FUN = binomial_kernel,
               fill = NA, align = "center"
-            ),
-            # Second pass
-            !!sym(new_value_col) := data.table::frollapply(
-              !!sym(new_value_col), n = 5, FUN = binomial_kernel,
-              fill = NA, align = "center"
-            ),
-            # Third pass
-            !!sym(new_value_col) := data.table::frollapply(
-              !!sym(new_value_col), n = 5, FUN = binomial_kernel,
-              fill = NA, align = "center"
             )
           )
+        #   ),
+        #   # Second pass
+        #   !!sym(new_value_col) := data.table::frollapply(
+        #     !!sym(new_value_col), n = 5, FUN = binomial_kernel,
+        #     fill = NA, align = "center"
+        #   ),
+        #   # Third pass
+        #   !!sym(new_value_col) := data.table::frollapply(
+        #     !!sym(new_value_col), n = 5, FUN = binomial_kernel,
+        #     fill = NA, align = "center"
+        #   )
+        # )
       } else {
         .x <- .x %>%
           mutate(!!sym(new_value_col) := NA_real_)
       }
-      # Fill remaining NA in smoothed column with original values
+      #Fill remaining NA in smoothed column with original values
       .x <- .x %>%
         mutate(
           !!sym(new_value_col) := if_else(

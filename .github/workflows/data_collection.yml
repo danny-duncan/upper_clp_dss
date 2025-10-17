@@ -1,4 +1,4 @@
-name: Hourly Data Collection From APIs (HV, WET, Contrail) test
+name: Hourly Data Collection From APIs (HV, WET, Contrail)
 on:
   schedule:
     - cron: "1 * * * *"  # Every hour at minute 1 (prevents hv api call issues)

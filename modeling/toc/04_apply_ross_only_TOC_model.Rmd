@@ -1,0 +1,586 @@
+---
+title: "Applying TOC preds on sensor data"
+author: "Sam Struthers-ROSSyndicate"
+date: "2025-08-01"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("src/setup_libraries.R")
+
+#these are just packages for testing within this script
+library(gridExtra)
+library(grid)
+library(Ckmeans.1d.dp)
+library(DiagrammeR)
+library(Metrics)
+library(caret)
+library(glue)
+set.seed(123)
+
+source("src/apply_sensor_transformations_toc.R")
+
+sites <- c("chd", "joei", "cbri", "sfm", "penn", "lbea", "pfal", "pbr", "pman", "pbd", "udall", "archery")
+id_cols <- c("site", "DT_round", "id", "sensor_datetime", "lab_datetime")
+```
+
+# Read in Model & Set features + Targets
+Model created in 03 script
+
+```{r}
+
+most_recent_file <- list.files("data/upper_clp_dss/modeling/model_splits", pattern = "ross_only_toc_xgboost_models_light_.*\\.rds", full.names = TRUE) %>%
+  tail(1)
+model <- readRDS(most_recent_file)
+
+features <- map(model, "feature_names") %>%
+  unlist() %>%
+  unique()
+
+target  = "TOC"
+```
+
+# Read in water chem data
+Created in 01 script
+
+```{r}
+water_chem <- read_parquet("data/upper_clp_dss/modeling/ROSS_FC_water_chemistry.parquet")%>%
+  mutate(DT_round = round_date(DT_sample, unit = "1 hour" ))%>%
+  rename(site = site_code)
+
+toc_max <- max(water_chem$TOC, na.rm = T)
+
+```
+
+# Create scaling based on all sensor data
+
+```{r}
+# Read in all data to create scaling parameters
+wide_data_file <- list.files("data/upper_clp_dss/sensor/prepped/", pattern = "all_sensor_data_.*\\.parquet", full.names = TRUE)%>%
+  tail(1)
+
+
+all_sensor_data_wide <- read_parquet(wide_data_file)
+
+# Use the complete sensor dataset for scaling parameters (assuming sensor has all necessary columns already)
+complete_sensor_data <- all_sensor_data_wide %>%
+  apply_sensor_transformations_toc(., dt_col = "DT_hourly_round")%>%
+    select(site, DT_round = DT_hourly_round, any_of(features))
+
+```
+
+
+# Normalize data for model
+
+```{r}
+
+# Save the original min/max values for each numeric column, removing NAs
+scaling_params <- complete_sensor_data %>%
+  select(where(is.numeric)) %>%
+  summarise(across(
+    everything(),
+    list(min = ~min(.x, na.rm = TRUE), max = ~max(.x, na.rm = TRUE)),
+    .names = "{.col}_{.fn}"
+  ))
+
+# Function to apply the same scaling to new data
+apply_training_scale <- function(new_data, scaling_params) {
+  numeric_cols <- names(select(new_data, where(is.numeric)))
+  
+  scaled_data <- new_data
+  
+  for (col in numeric_cols) {
+    min_val <- scaling_params[[paste0(col, "_min")]]
+    max_val <- scaling_params[[paste0(col, "_max")]]
+    
+    # Apply same min-max scaling as training data
+    scaled_data[[col]] <- (new_data[[col]] - min_val) / (max_val - min_val)
+  }
+  
+  return(scaled_data)
+}
+# Apply scaling to dataset
+prepped_data_norm <- complete_sensor_data %>%
+  #Only keep columns that would be in the complete sensor dataset
+  select(any_of(id_cols), any_of(features))%>%
+  #normalize data based on full sensor set from 01_sensor_data_prep.rmd and the chunk above
+  apply_training_scale(., scaling_params)%>%
+  na.omit()
+
+```
+
+
+
+# Make a plot of historical data model estimated TOC
+
+```{r}
+
+create_toc_model_plot <- function(summary_interval, site_sel,site_title,start_DT,end_DT){
+  #convert datetimes  
+  start_DT <- ymd_hm(start_DT,tz = "MST")
+  end_DT <- ymd_hm(end_DT,tz = "MST")
+  # Get testing data RMSE for the model
+  # find half way point between start and end DT
+  halfway_DT <- start_DT + (end_DT - start_DT) / 2
+  
+  # Summarize data to desired interval and trim to individual site
+  sum_data_norm <- prepped_data_norm%>%
+    filter(site == site_sel)%>%
+    select(site, DT_round, all_of(features)) %>%
+    mutate(DT_round = round_date(DT_round, unit = summary_interval )) %>% # ensure DT_round is rounded to the nearest
+    group_by(site, DT_round) %>%
+    summarise(across(everything(), mean, na.rm = TRUE), .groups = 'drop')
+  
+  # Add predictions from each fold model as new columns
+  
+  for (i in seq_along(model)) {
+    features <- model[[i]]$feature_names
+      #convert to matrix
+  model_input_matrix_sum <- sum_data_norm[, features]%>%
+    mutate(across(everything(), as.numeric)) %>%
+    as.matrix()
+  
+    fold_model <- model[[i]]
+    col_name <- glue("{target}_guess_fold{i}")
+    sum_data_norm[[col_name]] <- round(predict(fold_model, model_input_matrix_sum, iteration_range = c(1, fold_model$best_iteration)), 2)
+  }
+  
+  fold_cols <- glue("{target}_guess_fold{seq_along(model)}")
+  ensemble_col <- glue("{target}_guess_ensemble")
+  sum_data_norm[[ensemble_col]] <- round(rowMeans(sum_data_norm[, fold_cols]), 2)
+
+plot_sensor_data <- sum_data_norm %>%
+  # Filter to desired time window first
+  filter(between(DT_round, start_DT, end_DT)) %>%
+  # Pad missing timestamps based on summary_interval
+  pad(
+    by = "DT_round",
+    interval = summary_interval,   # e.g., "1 hour", "1 day", etc.
+    group = NULL                   # optional: group by site if multiple sites
+  ) %>%
+  # Compute min/max across folds
+  mutate(
+    !!glue("{target}_guess_min") := pmin(!!!syms(fold_cols), na.rm = TRUE),
+    !!glue("{target}_guess_max") := pmax(!!!syms(fold_cols), na.rm = TRUE),
+    !!glue("{target}_guess_ensemble") := pmax(0, !!sym(glue("{target}_guess_ensemble"))), 
+    group = with(rle(!is.na(.data[[ensemble_col]])), rep(seq_along(values), lengths))
+    )
+
+  
+  #Water chem
+  plot_water_chem <- water_chem %>%
+    filter(site == site_sel)%>%
+    filter(between(DT_round, start_DT, end_DT))%>%
+    mutate(DT_round = round_date(DT_round, unit = summary_interval )) #round date to match sensor data
+  
+  #get correct dates for plot title
+  start_DT <- min(plot_sensor_data$DT_round, na.rm = TRUE)
+  end_DT <- max(plot_sensor_data$DT_round, na.rm = TRUE)
+
+  #Create plot
+toc_plot <- ggplot() +
+  geom_ribbon(data = plot_sensor_data,
+              aes(x = DT_round,
+                  ymin = TOC_guess_min,
+                  ymax = TOC_guess_max,
+                  fill = "Models Estimate Range"),
+              alpha = 0.5) +
+  geom_line(
+    data = plot_sensor_data,
+    aes(x = DT_round,
+        y = .data[[ensemble_col]],
+        group = group,
+        color = "Mean Model Estimate"),
+    linewidth = 1
+  ) +
+  geom_point(data = plot_water_chem,
+             aes(x = DT_round,
+                 y = round(TOC,2),
+                 color = "Sample Values", 
+                 shape = collector)) +
+  labs(title = paste0("Estimated TOC at ", site_title," from ", as.Date(start_DT), " - ", as.Date(end_DT)),
+       x = "Date",
+       y = "Model Estimated TOC (mg/L)", 
+       color = NULL,    # <- make sure both use the same "legend"
+       fill = NULL, 
+       shape = "Sample Collector") +
+  scale_fill_manual(values = c("Models Estimate Range" = "grey")) +
+  scale_color_manual(
+    values = c(
+      "Mean Model Estimate" = "#E70870",
+      "Sample Values" = "#002EA3"
+    )
+  )+
+  guides(
+    fill = guide_legend(override.aes = list(alpha = 0.5)),
+    color = guide_legend(override.aes = list(size = 1))  # keep consistent
+  ) +
+  annotate("text", 
+           x = max(plot_sensor_data$DT_round, na.rm = TRUE), 
+           y = Inf, 
+           label = "PRELIMINARY RESULTS", 
+           hjust = 1.1, 
+           vjust = 1.5, 
+           size = 7, 
+           fontface = "bold",
+           color = "red") +
+  ROSS_theme +
+  theme(legend.position = "bottom")
+
+  
+  # combine grabs and sensor data for plotting to determine axes
+  plot_toc <- c(plot_sensor_data$TOC_guess_min, plot_sensor_data$TOC_guess_max, plot_water_chem$TOC)
+  max_plot_toc <- max(plot_toc, na.rm = TRUE)
+  min_plot_toc <- min(plot_toc, na.rm = TRUE)
+  
+  if(max_plot_toc > max(water_chem$TOC, na.rm = T)){
+    toc_plot <- toc_plot + 
+      geom_hline(yintercept = toc_max, linetype = "dashed", color = "red") +
+      annotate("text", x = halfway_DT, y = toc_max - 0.2, label = "Max TOC Measured")
+  }
+  
+  return(toc_plot)
+  
+}
+```
+
+## Create plots of the other sensor data
+
+```{r}
+create_sensor_ts_plot <- function(example_site, site_title, start_dt, end_dt){
+  
+example_data <- complete_sensor_data %>%
+  filter(site == example_site) %>%
+  filter(between(DT_round, start_dt, end_dt)) %>%
+  mutate(date = as.Date(DT_round)) %>%
+  pivot_longer(
+    cols = c(any_of(c(features, "Sensor_Turb", "Sensor_Cond","Temp"))),
+    names_to = "parameter",
+    values_to = "value"
+  ) %>%
+  mutate(parameter = case_when(
+    parameter == "FDOM" ~ "FDOM Fluorescence",
+    parameter == "FDOMc" ~ "FDOM Temp Corrected",
+    parameter == "Sensor_Turb" ~ "Turbidity",
+    parameter == "Sensor_Cond" ~ "Specific Conductivity",
+    parameter == "Chl_a" ~ "Chl-a Fluorescence",
+    parameter == "Temp" ~ "Temperature",
+    TRUE ~ parameter
+  )) %>%
+  select(site, parameter, DT_round, parameter, value)%>%
+  group_by(parameter) %>%       # pad separately for each parameter
+  pad(
+    by = "DT_round",
+    interval = "1 hour"
+  ) %>%
+  ungroup()
+
+
+# filter grab samples
+example_grab <- water_chem %>%
+  filter(site == example_site) %>%
+  filter(between(DT_sample, start_dt, end_dt))
+
+# compute per-parameter ranges and rescale grab TOC values to each sensor axis
+param_ranges <- example_data %>%
+  group_by(parameter) %>%
+  summarise(y_min = min(value, na.rm = TRUE),
+            y_max = max(value, na.rm = TRUE),
+            .groups = "drop")
+
+grab_rescaled <- example_grab %>%
+  crossing(parameter = unique(example_data$parameter)) %>%
+  left_join(param_ranges, by = "parameter") %>%
+  group_by(parameter) %>%
+  mutate(
+    TOC_rescaled = rescale(
+      TOC,
+      to   = c(first(y_min), first(y_max)),
+      from = range(TOC, na.rm = TRUE)
+    )
+  ) %>%
+  ungroup()
+
+# plot
+example_ts_grab <-  ggplot(example_data, aes(x = DT_round, y = value)) +
+  geom_line(color = "#E70870", na.rm = TRUE) +
+  geom_point(data = grab_rescaled,
+             aes(x = DT_sample, y = TOC_rescaled, shape = collector),
+             color = "#002EA3", size = 2) +
+  facet_wrap(~parameter, scales = "free_y", ncol = 1) +
+  scale_y_continuous(
+    name = "Sensor Value"
+  #,
+    #sec.axis = sec_axis(~ ., name = "Grab Sample TOC (mg/L)")
+  ) +
+  labs(
+    title = paste0("Sensor Time Series at Site: ", site_title),
+    x = "Date", 
+    shape = "Sample Collector"
+  ) +
+  ROSS_theme+
+    theme(legend.position = "bottom")
+  
+  return(example_ts_grab)
+}
+
+```
+
+
+
+
+# Example 1: CHD 2025
+
+```{r}
+
+chd_start_dt <- "2025-05-01 00:00"
+chd_end_dt <- "2025-07-05 00:00"
+
+chd_plot <- create_toc_model_plot(summary_interval = "1 hour",
+                      site_sel = "chd",
+                      site_title = "Chambers Lake Outflow",
+                      start_DT = chd_start_dt,
+                      end_DT = chd_end_dt
+)
+
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/chambers_outflow_20250501_20250705_toc.png", 
+#        plot = chd_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+
+chd_ts_plot <- create_sensor_ts_plot(example_site = "chd",
+                                   site_title = "Chambers Lake Outflow",
+                                   start_dt = chd_start_dt,
+                                   end_dt = chd_end_dt
+)
+
+
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/chambers_outflow_20250501_20250705_sensor.png",
+#        plot = chd_ts_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
+
+ggarrange(chd_plot, chd_ts_plot,
+          ncol = 2
+)
+```
+
+
+# Example 2: PFAL 2025
+
+```{r}
+
+pfal_start_dt <- "2025-04-15 23:59"
+pfal_end_dt <- "2025-07-10 00:00"
+
+
+pfal_plot <- create_toc_model_plot(site_sel = "pfal",
+                                   summary_interval = "4 hours",
+                                   site_title = "CLP @ Poudre Falls",
+                                   start_DT = pfal_start_dt,
+                                   end_DT = pfal_end_dt
+)
+
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pfal_20240415_20240710_toc.png", 
+#        plot = pfal_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+
+pfal_ts_plot <-  create_sensor_ts_plot(example_site = "pfal",
+                                   site_title = "CLP @ Poudre Falls",
+                                   start_dt = pfal_start_dt,
+                                   end_dt = pfal_end_dt
+)
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pfal_20240415_20240710_sensor.png",
+#        plot = pfal_ts_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
+ggarrange(pfal_plot, pfal_ts_plot,
+          ncol = 2
+)
+```
+
+# Example 3: PBR
+
+```{r}
+
+pbr_plot <-   create_toc_model_plot(summary_interval = "1 hour",
+                                   site_sel = "pbr",
+                                   site_title = " CLP @ Indian Meadows",
+                                   start_DT = "2025-05-01 00:00",
+                                   end_DT = "2025-07-08 00:00"
+)
+
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pbr_20250501_20250708_toc.png", 
+#        plot = pbr_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+
+pbr_ts_plot <- create_sensor_ts_plot(example_site = "pbr",
+                                   site_title = "CLP @ Indian Meadows",
+                                   start_dt = "2025-05-01 00:00",
+                                   end_dt = "2025-07-08 00:00")
+
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pbr_20250501_20250708_sensor.png",
+#        plot = pbr_ts_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
+
+ggarrange(pbr_plot, pbr_ts_plot,
+          ncol = 2
+)
+```
+
+# Example 4: SFM 2025
+
+```{r}
+
+sfm_plot<- create_toc_model_plot(site_sel = "sfm",
+                                  summary_interval = "1 hour",
+                                  site_title = "South Fork CLP",
+                                  start_DT = "2025-04-15 23:59",
+                                  end_DT = "2025-06-15 00:00"
+)
+#sfm_plot
+
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/sfm_20250424_20250615_toc.png", 
+#        plot = sfm_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+
+sfm_ts_plot <- create_sensor_ts_plot(example_site = "sfm",
+                                   site_title = "South Fork CLP",
+                                   start_dt = "2025-04-15 00:00",
+                                   end_dt = "2025-06-15 00:00")
+#sfm_ts_plot
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/sfm_20250415_20250615_sensor.png",
+#        plot = sfm_ts_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
+ggarrange(sfm_plot, sfm_ts_plot,
+          ncol = 2
+)
+
+```
+
+
+
+# Example 4: PMAN 2025
+
+```{r}
+
+pman_plot<- create_toc_model_plot(site_sel = "pman",
+                                  summary_interval = "1 hour",
+                                  site_title = "Poudre at Manner's Bridge",
+                                  start_DT = "2025-04-15 23:59",
+                                  end_DT = "2025-07-05 00:00"
+)
+
+
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pman_20250424_20250714_toc.png", 
+#        plot = pman_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+pman_ts_plot <- create_sensor_ts_plot(example_site = "pman",
+                                   site_title = "Poudre at Manner's Bridge",
+                                   start_dt = "2025-04-15 00:00",
+                                   end_dt = "2025-07-05 00:00")
+
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pman_20250415_20250705_sensor.png",
+#        plot = pman_ts_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
+ggarrange(pman_plot, pman_ts_plot,
+          ncol = 2
+)
+```
+
+# Example 5: PBD 2025
+
+```{r}
+
+pbd_plot<- create_toc_model_plot(site_sel = "pbd",
+                                 summary_interval = "1 hour",
+                                 site_title = "Poudre at Canyon Mouth Gage",
+                                 start_DT = "2025-05-20 23:59",
+                                 end_DT = "2025-07-05 00:00"
+)
+
+
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pbd_20250415_20250705_toc.png", 
+#        plot = pbd_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+
+pbd_ts_plot <- create_sensor_ts_plot(example_site = "pbd",
+                                   site_title = "Poudre at Canyon Mouth Gage",
+                                   start_dt = "2025-05-20 00:00",
+                                   end_dt = "2025-07-05 00:00")
+
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pbd_20250520_20250705_sensor.png",
+#        plot = pbd_ts_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
+
+ggarrange(pbd_plot, pbd_ts_plot,
+          ncol = 2
+)
+
+```
+
+
+# Example 6: archery 2025
+
+```{r}
+
+archery_start_dt <- "2025-04-15 23:59"
+archery_end_dt <- "2025-07-10 00:00"
+
+
+archery_plot <- create_toc_model_plot(site_sel = "archery",
+                                   summary_interval = "4 hours",
+                                   site_title = "CLP @ archery",
+                                   start_DT = pfal_start_dt,
+                                   end_DT = pfal_end_dt
+)
+
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pfal_20240415_20240710_toc.png", 
+#        plot = pfal_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+
+archery_ts_plot <-  create_sensor_ts_plot(example_site = "archery",
+                                   site_title = "CLP @ archery",
+                                   start_dt = pfal_start_dt,
+                                   end_dt = pfal_end_dt
+)
+# ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pfal_20240415_20240710_sensor.png",
+#        plot = pfal_ts_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
+ggarrange(archery_plot, archery_ts_plot,
+          ncol = 2
+)
+```
+
+# Run all 
+```{r}
+
+```
+
+
+

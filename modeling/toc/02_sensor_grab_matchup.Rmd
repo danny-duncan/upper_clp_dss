@@ -1,0 +1,309 @@
+---
+title: "Sensor Grab Munge"
+author: "Sam Struthers- CSU ROSSyndicate"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(dplyr.summarise.inform = FALSE)
+source("src/setup_libraries.R")
+
+```
+
+The purpose of this script is to create a dataset that matches up water chemistry grab samples with sensor data. The final dataset will be used for modeling TOC from sensor data. Intially I was doing alot of exploratory analysis of where/when we were dropping/losing samples, this can be removed later on. We should functionalize/generalize the matchup function in this script so we can use it for other parameters in the future. Once this has been condensed, there is less need to save our datasets unless we need to export them later on.
+
+# Reading in data
+
+Prepared in `01_raw_data_prep.Rmd`
+
+## Read in water chemistry data
+
+```{r}
+water_chem <- read_parquet("data/upper_clp_dss/modeling/ROSS_FC_water_chemistry.parquet")
+```
+
+## Read in wide sensor dataset
+
+```{r}
+wide_sensor_file <- list.files(path = "data/upper_clp_dss/sensor/prepped/", pattern = "all_sensor_data_wide_.*\\.parquet$", full.names = TRUE)%>%
+  tail(1)
+
+all_sensor_data_wide <- read_parquet(wide_sensor_file)%>%
+  rename(DT_round = DT_hourly_round)
+```
+
+## Trim dataset to variables of interest
+
+```{r}
+#site/date identifiers to keep 
+id_cols <- c("site", "DT_round", "data_avail")
+#find all the other variables
+features <- setdiff(colnames(all_sensor_data_wide), id_cols)
+#remove pH, ORP, Depth, DO
+features <- features[features %nin% c("pH", "pH MV", "ORP", "Depth", "DO")]
+
+#trim down to only needed columns and create a data available column
+all_sensor_data_wide <- all_sensor_data_wide%>%
+  select( any_of(id_cols), any_of(features))%>% # remove unneeded parameters for TOC model 
+  mutate(data_avail = if_else(rowSums(!is.na(across(all_of(features)))) == length(features), TRUE, FALSE))
+
+```
+
+# Visualize Data Availability
+
+```{r}
+
+map(unique(water_chem$site_code), function(site_sel) {
+  
+  # years where site has samples
+  valid_years <- water_chem %>% 
+    filter(site_code == site_sel & !is.na(TOC)) %>% 
+    mutate(year = year(as.Date(DT_sample))) %>% 
+    distinct(year) %>% 
+    pull(year)
+  
+  if(is_empty(valid_years)) {
+    return(NULL)  # Skip this iteration if no valid years
+  }
+  
+  p <- all_sensor_data_wide %>%
+    filter(site == site_sel) %>% 
+    mutate(date = as.Date(DT_round),
+           year = year(date)) %>%
+    filter(year %in% valid_years) %>%   # keep only years with samples
+    summarize(data_avail = any(data_avail), .by = c("date")) %>%
+    mutate(year = year(date)) %>%
+    ggplot(aes(x = date, y = data_avail)) +
+    geom_point() +
+    geom_vline(
+      data = water_chem %>%
+        rename(site = site_code) %>%
+        filter(site == site_sel & !is.na(TOC)) %>%
+        mutate(date = as.Date(DT_sample),
+               year = year(date)),
+      aes(xintercept = date), 
+      color = "red"
+    ) +
+    labs(title = paste("Data Availability for Site:", site_sel)) +
+    facet_wrap(~year, scales = "free")
+  
+  print(p)
+})
+
+```
+
+
+# Find match ups between grabs and sensors
+
+This works using the wide dataset and finds the most recent (forward looking) timestep where all sensor parameters (features) are available. In the instance where there is no data after a sample is collected (ie a sensor is removed for the year), it will find the most recent (backward looking) timestep. If no data is available, a row will be added with NA values for the sensor data but will contain the water chemistry data.
+
+```{r}
+#trim waterchem to only samples with TOC and needed columns
+water_chem <- water_chem%>%
+  filter(!is.na(TOC))%>%
+  select(site_code, DT_sample, TOC, ChlA, collector)
+
+#loop over waterchem to form matchup dataset
+modeling_data <- map(1:nrow(water_chem), function(i) {
+  # Get the current water chemistry row
+  current_row <- water_chem[i, ]
+  
+  if(i/25 == round(i/25)) {
+    cat("Processing row", i, "of", nrow(water_chem), "\n")
+  }
+  
+  #get data from the day of sampling
+  site_data <- all_sensor_data_wide %>%
+    filter(site == current_row$site_code & 
+             date(DT_round) == date(current_row$DT_sample) &
+             data_avail == TRUE)
+  
+  # Find the most recent (forward looking) sensor data
+  most_recent_sensor <- site_data %>%
+    filter(DT_round >= current_row$DT_sample)%>%
+    arrange(DT_round) %>%
+    slice_head(n = 1)
+  if(nrow(most_recent_sensor) > 0){
+    #if this is greater than 3 hours, or no data found, look backwards
+    fwd_time_diff <- as.numeric(difftime(most_recent_sensor$DT_round, current_row$DT_sample, units = "hours"))
+    if (fwd_time_diff > 3) {
+      # Find the most recent sensor data (closest before sampling)
+      backward_check <- site_data %>%
+        filter(DT_round <= current_row$DT_sample)%>%
+        arrange(desc(DT_round)) %>%
+        slice_head(n = 1)
+      # Calculate backward time difference
+      bwd_time_diff <- as.numeric(difftime(current_row$DT_sample, backward_check$DT_round, units = "hours"))
+      # Check if backward match exists
+      if(nrow(backward_check) > 0) {
+        # If the backward time difference is less than 1 hour or forward is > 5 hours, use backward match
+        if(bwd_time_diff < 1 | fwd_time_diff > 5) {
+          most_recent_sensor <- backward_check
+        }else{
+          # If not, keep the forward match (even if > 3 hours)
+          # most_recent_sensor remains unchanged
+        }
+      }
+    }
+  }
+  
+  # If no forward match found, look backwards
+  if (nrow(most_recent_sensor) == 0) {
+    # Find the most recent sensor data (closest before sampling)
+    most_recent_sensor <- site_data %>%
+      filter(DT_round <= current_row$DT_sample)%>%
+      arrange(desc(DT_round)) %>%
+      slice_head(n = 1)
+  }
+  
+  # If still no matching data is found, add NA values
+  if (nrow(most_recent_sensor) == 0) {
+    most_recent_sensor <- tibble(
+      site = current_row$site_code,
+      DT_round = NA,
+      data_avail = NA,
+      !!!setNames(rep(list(NA_real_), length(features)), features)
+    )
+  }
+  
+  # Combine the current water chemistry row with the sensor data
+  bind_cols(current_row, most_recent_sensor)
+}) %>% 
+  bind_rows()%>%
+  #fix column names for later use
+  dplyr::select(id = site,
+                sensor_datetime = DT_round, 
+                lab_datetime = DT_sample, 
+                any_of(features),everything())
+
+
+```
+
+## Check Matches
+
+- We are losing quite a few samples for periods that have not been verified yet. In particular, we are missing a lot of samples from CHD, SFM and Udall in 2024. It is likely worth looking into which flags we can generally ignore to give ourselves more data before everything is completely manually verified. 
+
+
+```{r}
+# Count of how many did not match (sensor_datetime is NA)
+TOC_samples <- modeling_data %>%
+  filter(!is.na(TOC)) 
+
+missing_samples <- TOC_samples%>%
+  mutate(year = year(lab_datetime))%>%
+  group_by(year, id) %>%
+  summarise(n_missing = sum(is.na(sensor_datetime)),
+            n_missing_fc = sum(is.na(sensor_datetime)&collector == "FC"),
+            n_missing_ross = n_missing-n_missing_fc,
+            .groups = "drop")%>%
+  arrange(desc(n_missing))%>%
+  filter(n_missing > 0)
+
+FC_missing_samples <- TOC_samples%>%
+  filter(collector == "FC" & is.na(sensor_datetime))
+
+cat("Number of samples with no match up:\n", sum(missing_samples$n_missing), " of ", nrow(TOC_samples), "\n", nrow(FC_missing_samples), " are FC samples with no match (ie sensor may not be deployed)\n" )
+print(missing_samples, n = Inf)
+
+#create a histogram of the time difference between sensor_datetime and lab_datetime
+time_diff <- TOC_samples %>%
+  filter(!is.na(sensor_datetime)) %>%
+  mutate(time_difference = as.numeric(difftime(sensor_datetime, lab_datetime, units = "hours")),
+         abs_time_difference = abs(time_difference))
+
+ggplot(time_diff, aes(x = time_difference)) +
+  geom_histogram(binwidth = 1, fill = "blue", color = "black") +
+  labs(title = "Histogram of Time Difference Between Sensor and Lab Datetime",
+       x = "Time Difference (hours)",
+       y = "Count") +
+  ROSS_theme
+
+#which samples are greater than 3 hours difference
+large_time_diff <- time_diff %>%
+  filter(abs_time_difference > 3) %>%
+  arrange(desc(abs_time_difference))%>%
+  select(id, lab_datetime, sensor_datetime, time_difference, abs_time_difference, collector)
+large_time_diff
+
+```
+
+# Save Final Dataset
+
+## Saving ROSS only set
+
+```{r}
+
+ROSS_model_data <- modeling_data%>%
+  #removing samples with no match up
+  filter(!is.na(sensor_datetime))%>%
+  mutate(sensor_datetime = as.character(sensor_datetime), 
+         lab_datetime = as.character(lab_datetime))
+
+write_csv(ROSS_model_data, paste0("data/upper_clp_dss/modeling/parsed_data_ROSS_", Sys.Date(),".csv"))
+
+```
+
+
+
+## Binding with Virridy 
+
+```{r}
+virridy_data <- read_csv("data/upper_clp_dss/modeling/parsed_data_virridy.csv")%>%
+  dplyr::select(-"...1" )%>%
+  mutate(id = as.character(mw_id))%>%
+  select(-mw_id)%>%
+  mutate(collector = "Virridy")
+
+all_matched_data <- ROSS_model_data%>%
+  bind_rows(virridy_data)
+
+write_csv(all_matched_data, "data/upper_clp_dss/modeling/parsed_data_ROSS_virridy.csv")
+
+```
+
+
+# Create example plot of sensor TS 
+Add grab sample DT as dashed black line and sensor match up as solid red line
+
+```{r}
+
+example_site <- "sfm"
+site_title <- "S FORK"
+
+start_dt <- ymd_hm("2024-04-01 00:00", tz = "MST")
+end_dt <- ymd_hm("2024-12-05 00:00", tz = "MST")
+
+example_data <- all_sensor_data_wide%>%
+  filter(site == example_site)%>%
+  filter(between(DT_round,start_dt, end_dt))%>%
+  mutate(date = as.Date(DT_round))%>%
+  pivot_longer(cols = c("Chl-a Fluorescence", "Temperature", "FDOM Fluorescence", "Turbidity", "Specific Conductivity"), names_to = "parameter", values_to = "value")
+
+example_grab <- modeling_data%>%
+  filter(id == example_site)%>%
+  filter(between(lab_datetime, start_dt, end_dt))%>%
+  mutate(lab_date = as.Date(lab_datetime),
+         sensor_date = as.Date(sensor_datetime))
+
+example_ts_grab <- ggplot(example_data, aes(x = DT_round, y = value)) +
+  geom_line(color = "#E70870") +
+  geom_vline(data = example_grab, aes(xintercept = lab_datetime, color = is.na(sensor_datetime)), linetype = "dashed") +
+  #geom_vline(data = example_grab %>% filter(!is.na(sensor_datetime)), aes(xintercept = sensor_datetime), linetype = "solid", color = "#256BF5") +
+  facet_wrap(~parameter, scales = "free_y", ncol = 1) +
+  labs(title = paste("Example Sensor Time Series at Site:", site_title),
+       x = "Date",
+       y = "Sensor Value") +
+  ROSS_theme
+
+example_ts_grab
+
+ggsave(plot = example_ts_grab, "data/upper_clp_dss/figures/example_sensor_timeseries_pfal.png",
+       width = 12, height = 8)
+
+```
+
+

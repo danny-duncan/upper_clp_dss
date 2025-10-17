@@ -1,6 +1,8 @@
 #this file contains all the packages,metadata, groupings and color palettes that are used in downstream scripts
 
 knitr::opts_chunk$set(echo = TRUE)
+
+#Installing and loading all packages
 package_loader <- function(x) {
   if (x %in% installed.packages()) {
     suppressMessages({
@@ -15,7 +17,6 @@ package_loader <- function(x) {
 }
 
 
-
 invisible(
   lapply(c(
     # Date/time handling
@@ -24,13 +25,13 @@ invisible(
     # Data cleaning and utilities
     "janitor",
     "broom",
-    "here",
     # Stats/modeling
     "stats",
     "RcppRoll",
     "trend",
     "xgboost",
     "scales",
+    "slider",
     # Spatial packages
     "sf",
     "nhdplusTools",
@@ -49,7 +50,6 @@ invisible(
     "ggbeeswarm",
     "plotly",
     "ggpmisc",
-    "flextable",
     # Web scraping/data retrieval
     "rvest",
     "httr",
@@ -58,26 +58,46 @@ invisible(
     "jsonlite",
     "dataRetrieval",
     "RSelenium",
-    # "cdssr",
     "yaml",
     # Development tools
     "devtools",
     "here",
+    "tools",
     # Core data manipulation
     "tidyverse",
     "data.table",
     "arrow",
     "readxl",
-    "furrr",
-    "fcw.qaqc"
+    "furrr"
   ),
   package_loader)
 )
 
+#library non CRAN packages
+non_cran_packages <- c("rossyndicate/fcw.qaqc",
+                       "anguswg-ucsb/cdssr")
+invisible(
+  lapply(non_cran_packages, function(x) {
+    pack_name <- unlist(strsplit(x, "/"))[2] #get package name (no GH username)
+
+    if (pack_name %in% installed.packages()) {
+      suppressMessages({
+        library(pack_name, character.only = TRUE)
+      })
+    } else {
+      suppressMessages({
+        devtools::install_github(x)
+        library(pack_name, character.only = TRUE)
+      })
+    }
+  })
+)
+rm(non_cran_packages, package_loader) #clean up
+
+
 # Helper function
 `%nin%` <- Negate(`%in%`)
-#Simple function to negate %in%
-`%nin%` = Negate(`%in%`)
+
 
 ### ----- Meta Data ----- ###
 

@@ -41,11 +41,11 @@ calc_lagged_parameter <- function(wide_df, site_col = "site", parameter_col = "T
                                   dt_col = "DT_round", lag_fun = "median",
                                   time_period = "12 hour", new_value_col = "lagged_median") {
 
-  #seperate time period by space
+  # separate time period
   time_period_num <- as.numeric(str_split_i(time_period, " ", 1))
   time_period_str <- str_split_i(time_period, " ", 2)
 
-    # #parsing function
+  # parsing function
   fn <- switch(lag_fun,
                "var" = stats::var,
                "mean" = mean,
@@ -56,28 +56,38 @@ calc_lagged_parameter <- function(wide_df, site_col = "site", parameter_col = "T
                stop("Unsupported lag_fun: ", lag_fun)
   )
 
+  # safe wrapper
   fn_used <- if (lag_fun %in% c("mean", "median", "max", "min", "sum")) {
-    function(x) fn(x, na.rm = TRUE)
-  } else if(lag_fun %in% c("var")) {
-    function(x) fn(x, use = "na.or.complete")
+    function(x) {
+      x <- x[!is.na(x)] # check if the window is all NAs (return NA rather than evaluating to Inf/NaN)
+      if (length(x) == 0) NA_real_ else fn(x, na.rm = TRUE)
+    }
+  } else if (lag_fun %in% c("var")) {
+    function(x) {
+      x <- x[!is.na(x)]
+      if (length(x) == 0) NA_real_ else fn(x, use = "na.or.complete")
+    }
   } else {
-    function(x) fn(x)
+    function(x) {
+      x <- x[!is.na(x)]
+      if (length(x) == 0) NA_real_ else fn(x)
+    }
   }
 
   wide_df %>%
-    arrange(!!sym(site_col), !!sym(dt_col)) %>% # arrange by site and time
-    group_by(!!sym(site_col)) %>% # group by site only
+    arrange(!!sym(site_col), !!sym(dt_col)) %>%
+    group_by(!!sym(site_col)) %>%
     mutate(
       !!sym(new_value_col) := slide_period_dbl(
-        .x = !!sym(parameter_col), # use the specified parameter column
-        .i = !!sym(dt_col), # use the time column for indexing
-        .period = time_period_str, # use the specified time unit
-        .f = fn_used, # use match.fun to convert string to function
-        .before = time_period_num, # look back the specified time period
-        .complete = FALSE # do not require complete windows
+        .x = !!sym(parameter_col),
+        .i = !!sym(dt_col),
+        .period = time_period_str,
+        .f = fn_used,
+        .before = time_period_num,
+        .complete = FALSE
       )
     ) %>%
     ungroup()
-
 }
+
 
