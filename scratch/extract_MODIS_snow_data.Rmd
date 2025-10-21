@@ -10,31 +10,27 @@ discharge). Catchments will be defined using nhdplusTools.
 MODIS Snow Cover: https://doi.org/10.5067/MODIS/MOD10A1.061
 
 ```{r setup}
+source("Scratch/pySetup.R")
+# A warning message here is okay!
+
 library(rgee)
 library(sf)
 library(nhdplusTools)
-library(tidyverse)
 library(geojsonio)
 library(data.table)
 library(mapview)
 library(dataRetrieval)
-library(purrr)
 library(signal)
 library(ggthemes)
+library(tidyverse)
 
-source("Scratch/pySetup.R")
+# Authenticate your GEE account - only need to do once
+# ee_Authenticate(user = "therossyndicate@gmail.com")
 
+# strange workaround here to get rgee to initialize
+# see notes here: https://github.com/r-spatial/rgee/issues/355
+ee$Initialize(project = "poudre-dss")
 
-# Example pySetup that this was copied from (Aquasat):
-# https://github.com/AquaSat/AquaMatch_lakeSR/blob/main/python/pySetup.R
-# Note, on the first run, you can just manually go in and run the lines of 
-# code in pySetup that 
-
-# see also rgee setup instructions:
-# https://cran.r-project.org/web/packages/rgee/vignettes/rgee01.html#6_Installation
-
-# Initialize Earth Engine
-ee_Initialize()
 ```
 
 
@@ -50,21 +46,20 @@ if we end up using this function.
 #' @return gage_basin sf object of watershed associated with USGS site
 
 nldi_finder <- function(site_no) {
+  
   #get those gages' watersheds using get_nldi_basin in the {nhdplusTools}.
   nldi_nwis <- list(featureSource = "nwissite",
                     featureID = paste0("USGS-", site_no))
-
-  gage_basin <-
-    tryCatch({
-      invisible(
-        suppressMessages(
-          nhdplusTools::get_nldi_basin(nldi_feature = nldi_nwis) %>%
-            sf::st_transform(., 4269) %>%
-            dplyr::mutate(site_no = site_no)))
-    }, error = function(e) {
-      NA
-    })
-
+  
+  gage_basin <- tryCatch({invisible(
+    suppressMessages(
+      get_nldi_basin(nldi_feature = nldi_nwis) %>%
+        mutate(site_no = site_no)))
+  }, 
+  error = function(e) {
+    NULL
+  })
+  
   return(gage_basin)
 }
 
@@ -74,27 +69,32 @@ nldi_finder <- function(site_no) {
 # with recent data within the last week
 
 get_recent_nwis <- function(aoi, dist = 0) {
+  
   aoi %>%
-  st_buffer(dist) %>%
-  st_bbox() %>%
-  as.vector() %>%
-  round(., digits = 7) %>%
-  paste(collapse = ",") %>%
-      dataRetrieval::whatNWISdata(bBox = .) %>%
-  st_as_sf(coords = c("dec_long_va", "dec_lat_va"), crs = 4269) %>%
-  dplyr::filter(data_type_cd %in% c("dv","uv"),
-                parm_cd %in% c("00060"),
-                end_date > as.Date(Sys.Date() - days(7))) 
+    st_buffer(dist) %>%
+    st_bbox() %>%
+    as.vector() %>%
+    round(., digits = 7) %>%
+    paste(collapse = ",") %>%
+    whatNWISdata(bBox = .) %>%
+    st_as_sf(coords = c("dec_long_va", "dec_lat_va"),
+             crs = "EPSG:4269") %>% 
+    filter(data_type_cd %in% c("dv","uv"),
+           parm_cd %in% c("00060"),
+           end_date > as.Date(Sys.Date() - days(7))) 
+  
 }
 
 
 # Get discharge data for NWIS site_nos
 get_discharge <- function(site_nos) { 
-  dataRetrieval::readNWISdv(
+  
+  readNWISdv(
     siteNumbers = site_nos,
     parameterCd = "00060",
     startDate = "1980-01-01",
     endDate = Sys.Date())      
+  
 }
 
 ```
@@ -105,24 +105,23 @@ Read in uCLP Sonde Locations and NWIS locations
 
 ```{r}
 
-sonde_locs <- read.csv("data/metadata/sonde_location_metadata.csv") %>%
-  dplyr::mutate(
-    lat = str_split(lat_long, pattern = ",", simplify = TRUE)[,1] %>% as.numeric(),
-    lng = str_split(lat_long, pattern = ",", simplify = TRUE)[,2] %>% as.numeric()) %>%
+sonde_locs <- read_csv("data/metadata/sonde_location_metadata.csv") %>%
+  mutate(lat = str_split(lat_long, pattern = ",", simplify = TRUE)[,1] %>% as.numeric(),
+         lng = str_split(lat_long, pattern = ",", simplify = TRUE)[,2] %>% as.numeric()) %>%
   st_as_sf(coords = c("lng","lat"), crs = 4326)
 
 search_aoi <- sonde_locs %>%
   st_bbox() %>%
-  st_as_sfc() %>%
-  st_as_sf()
+  st_as_sfc()
 
 nwis_gages <- get_recent_nwis(search_aoi, dist = 0) %>% 
-  dplyr::filter(data_type_cd == "dv")
+  filter(data_type_cd == "dv")
 
 watersheds <- nwis_gages$site_no %>%
   unique() %>%
-  purrr::map_dfr(~nldi_finder(site_no = .)) %>%
-  left_join(nwis_gages  %>% st_drop_geometry(), by = "site_no")
+  map(~ nldi_finder(site_no = .)) %>%
+  bind_rows() %>% 
+  left_join(., nwis_gages %>% st_drop_geometry(), by = "site_no")
 
 # Pull discharge because why not
 discharge <- get_discharge(nwis_gages$site_no %>% unique())
@@ -147,14 +146,12 @@ mapview(watersheds,
 
 ```{r define_aoi}
 # for now, just start with first watershed
-aoi_sf <- watersheds[1,] %>% dplyr::summarize()
+aoi_sf <- watersheds[1,] %>% 
+  select(geometry)
 
+# create an eeFeatureCollection for use in GEE
 aoi <- aoi_sf %>%
-  sf_as_ee()# lower poudre gage
-
-
-#aoi <- nldi_finder("06746110") %>% # Joe Wright Reservoir Gage (small area for testing)
-#  sf_as_ee()
+  sf_as_ee() 
 ```
 
 
@@ -166,7 +163,7 @@ myd10 <- ee$ImageCollection("MODIS/061/MYD10A1")
 
 # Combine collections and select both NDSI and the QA band
 modis_snow <- mod10$merge(myd10)$select(
-    c("NDSI_Snow_Cover", "NDSI_Snow_Cover_Basic_QA") 
+  c("NDSI_Snow_Cover", "NDSI_Snow_Cover_Basic_QA") 
 )
 
 # Define time range (using your provided range)
@@ -176,61 +173,61 @@ end_date <- "2024-01-01"
 # COMBINED IMAGE PROCESSING FUNCTION WITH QA MASKING AND MEAN NDSI
 get_prop_snow <- function(img) {
   
-    # 1. DEFINE MASK
-    qa_band <- img$select("NDSI_Snow_Cover_Basic_QA")
-    # Keep observations where QA is 0 (Best quality) or 1 (Good quality).
-    is_good_qa <- qa_band$lte(1) 
-    
-    ndsi_band <- img$select("NDSI_Snow_Cover")
-    
-    # 2. APPLY MASKING, CLIPPING, AND DATE SETTING
-    img_processed <- ndsi_band %>%
-        ee$Image$clip(aoi) %>%
-        ee$Image$updateMask(is_good_qa) %>% # Apply the good quality mask
-        ee$Image$set("date", img$date()$format("YYYY-MM-dd"))
-    
-    # 3. PERFORM REDUCEREGION CALCULATIONS
-    
-    # A. Total clear pixels
-    total_clear_pixels <- img_processed$reduceRegion(
-        reducer = ee$Reducer$count(),
-        geometry = aoi,
-        scale = 500,
-        bestEffort = TRUE
-    )$getNumber("NDSI_Snow_Cover")
-    
-    # B. Snow pixels (Use stricter threshold of NDSI > 40 to fix 100% issue)
-    snow_pixels <- img_processed$gt(40)$reduceRegion( 
-        reducer = ee$Reducer$count(),
-        geometry = aoi,
-        scale = 500,
-        bestEffort = TRUE
-    )$getNumber("NDSI_Snow_Cover")
-    
-    # C. MEAN NDSI (New variable for inspection)
-    mean_ndsi <- img_processed$reduceRegion(
-        reducer = ee$Reducer$mean(),
-        geometry = aoi,
-        scale = 500,
-        bestEffort = TRUE
-    )$getNumber("NDSI_Snow_Cover")
-    
-    # Calculate proportion
-    prop <- snow_pixels$divide(total_clear_pixels)
-    
-    # 4. SET FINAL PROPERTIES
-    return(img_processed$set(
-        "n_pixels_clear", total_clear_pixels,
-        "n_snow_pixels", snow_pixels,
-        "snow_cover_fraction", prop,
-        "mean_ndsi", mean_ndsi
-    ))
+  # 1. DEFINE MASK
+  qa_band <- img$select("NDSI_Snow_Cover_Basic_QA")
+  # Keep observations where QA is 0 (Best quality) or 1 (Good quality).
+  is_good_qa <- qa_band$lte(1) 
+  
+  ndsi_band <- img$select("NDSI_Snow_Cover")
+  
+  # 2. APPLY MASKING, CLIPPING, AND DATE SETTING
+  img_processed <- ndsi_band %>%
+    ee$Image$clip(aoi) %>%
+    ee$Image$updateMask(is_good_qa) %>% # Apply the good quality mask
+    ee$Image$set("date", img$date()$format("YYYY-MM-dd"))
+  
+  # 3. PERFORM REDUCEREGION CALCULATIONS
+  
+  # A. Total clear pixels
+  total_clear_pixels <- img_processed$reduceRegion(
+    reducer = ee$Reducer$count(),
+    geometry = aoi,
+    scale = 500,
+    bestEffort = TRUE
+  )$getNumber("NDSI_Snow_Cover")
+  
+  # B. Snow pixels (Use stricter threshold of NDSI > 40 to fix 100% issue)
+  snow_pixels <- img_processed$gt(40)$reduceRegion( 
+    reducer = ee$Reducer$count(),
+    geometry = aoi,
+    scale = 500,
+    bestEffort = TRUE
+  )$getNumber("NDSI_Snow_Cover")
+  
+  # C. MEAN NDSI (New variable for inspection)
+  mean_ndsi <- img_processed$reduceRegion(
+    reducer = ee$Reducer$mean(),
+    geometry = aoi,
+    scale = 500,
+    bestEffort = TRUE
+  )$getNumber("NDSI_Snow_Cover")
+  
+  # Calculate proportion
+  prop <- snow_pixels$divide(total_clear_pixels)
+  
+  # 4. SET FINAL PROPERTIES
+  return(img_processed$set(
+    "n_pixels_clear", total_clear_pixels,
+    "n_snow_pixels", snow_pixels,
+    "snow_cover_fraction", prop,
+    "mean_ndsi", mean_ndsi
+  ))
 }
 
 # Apply date filter, then apply the single comprehensive map function
 snow_summary <- modis_snow$
-    filterDate(start_date, end_date)$
-    map(get_prop_snow)
+  filterDate(start_date, end_date)$
+  map(get_prop_snow)
 
 
 # Define the column names (5 columns now)
@@ -239,12 +236,12 @@ num_inputs <- length(columns_to_extract) # Should be 5
 
 # Extract data
 snow_list <- snow_summary$reduceColumns(
-    reducer = ee$Reducer$toList(num_inputs),
-    selectors = columns_to_extract
+  reducer = ee$Reducer$toList(num_inputs),
+  selectors = columns_to_extract
 )$getInfo()
 
 # 1. Convert the raw Python list structure to a standard R list
-snow_r_list <- rgee::ee_utils_py_to_r(snow_list)
+snow_r_list <- ee_utils_py_to_r(snow_list)
 
 # 2. Extract the data (which is in the element named 'list') and use 
 #    matrix/data.frame methods to restructure the concatenated list into columns.
@@ -252,11 +249,11 @@ snow_r_list <- rgee::ee_utils_py_to_r(snow_list)
 raw_data <- unlist(snow_r_list$list)
 
 snow_df <- data.frame(
-    matrix(
-        raw_data,
-        ncol = 5,
-        byrow = TRUE 
-    )
+  matrix(
+    raw_data,
+    ncol = 5,
+    byrow = TRUE 
+  )
 )
 
 # Assign names
@@ -264,31 +261,25 @@ colnames(snow_df) <- c("date", "n_pixels_clear", "n_snow_pixels", "snow_cover_fr
 
 # Create final DF
 snow_df <- snow_df %>%
-  mutate(
-    date = as.Date(date),
-    n_pixels_clear = as.numeric(n_pixels_clear), 
-    n_snow_pixels = as.numeric(n_snow_pixels),
-    snow_cover_fraction = as.numeric(snow_cover_fraction),
-    mean_ndsi = as.numeric(mean_ndsi)
-  ) %>%
-  # CORRECT PERCENT SNOW CALCULATION: Snow Pixels divided by TOTAL CLEAR PIXELS
-  dplyr::mutate(
-    # 1. Rolling Mean (frollmean) - Unchanged
-    roll_mean_ndsi = frollmean(mean_ndsi, 7, align = "right"), 
-    # 2. Savitzky-Golay Filter 
-    # p = polynomial order (2 or 3 is typical)
-    # n = filter length (must be odd, e.g., 7 for a week of data)
-    smooth_ndsi = signal::sgolayfilt(
-      x = mean_ndsi,
-      p = 4,  # Polynomial order (3 = cubic smoothing)
-      n = 31   # Filter length (7-day window, must be odd)
-    ),
-    # 3. Melt calculation (using the newly created roll_mean_ndsi) - Unchanged
-    melt = frollmean(c(NA, diff(smooth_ndsi)), 7, align = "right")
-  ) %>%
-  dplyr::mutate(melt = ifelse(melt < 0, -melt, 0)) %>%
-  dplyr::left_join(discharge %>% dplyr::filter(site_no == watersheds[1,]$site_no), 
-                   by = c("date" = "Date"))
+  mutate(date = as.Date(date),
+         across(.cols = c(n_pixels_clear, n_snow_pixels, snow_cover_fraction, mean_ndsi),
+                .fns = ~ as.numeric(.)),
+         # PERCENT SNOW CALCULATION: Snow Pixels divided by TOTAL CLEAR PIXELS
+         # 1. Rolling Mean (frollmean) 
+         roll_mean_ndsi = frollmean(mean_ndsi, 7, align = "right"), 
+         # 2. Savitzky-Golay Filter 
+         # p = polynomial order (2 or 3 is typical)
+         # n = filter length (must be odd, e.g., 7 for a week of data)
+         smooth_ndsi = sgolayfilt(x = mean_ndsi,
+                                  # Polynomial order (3 = cubic smoothing)
+                                  p = 3,  
+                                  # Filter length (7-day window, must be odd)
+                                  n = 31),
+         # 3. Melt calculation (using the newly created smooth_ndsi)
+         melt = frollmean(c(NA, diff(smooth_ndsi)), 7, align = "right"),
+         melt = if_else(melt < 0, abs(melt), 0)) %>% 
+  left_join(discharge %>% filter(site_no == watersheds[1,]$site_no), 
+            by = c("date" = "Date"))
 
 # Plotting
 ggplot(snow_df, aes(x = date)) +
@@ -296,7 +287,7 @@ ggplot(snow_df, aes(x = date)) +
   geom_line(aes(y = roll_mean_ndsi, color = "NDSI_7day"), alpha = 0.5) +
   geom_line(aes(y = smooth_ndsi, color = "NDSI_SGfilt")) +
   geom_line(aes(y = 10*melt, color = "Est. Melt")) +
-    geom_line(aes(y = X_00060_00003, color = "Discharge"), lwd = 1) +
+  geom_line(aes(y = X_00060_00003, color = "Discharge"), lwd = 1) +
   theme_bw() +
   labs(x = "", y = "NDSI (-) and Discharge (cfs)") +
   scale_color_colorblind()
