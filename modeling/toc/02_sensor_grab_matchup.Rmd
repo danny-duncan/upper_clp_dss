@@ -244,7 +244,7 @@ ROSS_model_data <- modeling_data%>%
   mutate(sensor_datetime = as.character(sensor_datetime), 
          lab_datetime = as.character(lab_datetime))
 
-write_csv(ROSS_model_data, here("data", "derived", "matchup_datasets", paste0("parsed_toc_sensor_CLP_", Sys.Date(),".csv")))
+write_csv(ROSS_model_data, here("data", "derived", "matchup_datasets", paste0("parsed_toc_sensor_clp_", Sys.Date(),".csv")))
 
 ```
 
@@ -302,7 +302,7 @@ example_ts_grab <- ggplot(example_data, aes(x = DT_round, y = value)) +
 
 example_ts_grab
 
-ggsave(plot = example_ts_grab, "data/upper_clp_dss/figures/example_sensor_timeseries_pfal.png",
+ggsave(plot = example_ts_grab, here("docs","uclp_dss", "figs", "example_sensor_timeseries_pfal.png"),
        width = 12, height = 8)
 
 ```
