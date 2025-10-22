@@ -40,7 +40,7 @@ We should functionalize this chunk so that we can easily apply the scaling as we
 
 ```{r}
 # Read in all data to create scaling parameters
-wide_data_file <- list.files("data/upper_clp_dss/sensor/prepped/", pattern = "all_sensor_data_.*\\.parquet", full.names = TRUE)%>%
+wide_data_file <- list.files(here("data","collated", "sensor"), pattern = "all_sensor_data_.*\\.parquet", full.names = TRUE)%>%
   tail(1)
 
 
@@ -88,7 +88,7 @@ apply_training_scale <- function(new_data, scaling_params) {
 # Read in Data
 
 ```{r}
-matchup_dataset <- list.files("data/upper_clp_dss/modeling/", pattern = "parsed_data_ROSS_2025", full.names = TRUE)%>%
+matchup_dataset <- list.files(here("data","derived", "matchup_datasets"), pattern = "parsed_toc_sensor_clp_", full.names = TRUE)%>%
   tail(1)
 
 # Read in all matches data
@@ -854,7 +854,8 @@ plots<- map(1:3, ~{
     plot_tvt_fold_perf(train_val, testing, fold_set = .x, fold_model = full_model[[.x]]$model, target_col = "TOC", units = "mg/L", subtitle_arg = "CLP Samples only")
 })
 plots
-  # ggsave(glue("data/upper_clp_dss/figures/toc_modeling/performance/ross_only_model_fold_{i}.png"),
+
+  # ggsave(glue(here("docs", "uclp_dss", "figs", "toc_modeling", "performance", "ross_only_model_fold_{i}.png")),
   #        plot = p, width = 10, height = 6, dpi = 500)
 
 ```
@@ -865,8 +866,7 @@ plots
 # Single plot with all folds
 wrap_plots(plots, ncol = 2, guides = "collect") &
   theme(legend.position = "bottom")
-
-# ggsave("data/upper_clp_dss/figures/toc_modeling/performance/ross_only_model_all_folds_TVT.png",
+# ggsave(here("docs","uclp_dss", "figs", toc_modeling","performance",paste0("ross_only_model_all_folds_TVT", version, ".png"),
 #        width = 14, height = 8, dpi = 500)
 ```
 
@@ -881,7 +881,7 @@ ensemble <- plot_tvt_ensemble_perf(train_val_df = train_val,
                                    units = "mg/L",
                                    subtitle_arg = "CLP Samples only")
 plot(ensemble)
-# ggsave("data/upper_clp_dss/figures/toc_modeling/performance/ross_only_model_ensemble.png",
+# ggsave(here("docs","uclp_dss", "figs", toc_modeling","performance",paste0("ross_only_model_ensemble", version, ".png"),
 #        plot = ensemble, width = 12, height = 10, dpi = 500)
 ```
 
@@ -904,7 +904,7 @@ small_models <- lapply(full_model, function(x) {
   
   return(m)
 })
-saveRDS(small_models, file = paste0("data/upper_clp_dss/modeling/model_splits/ross_only_toc_xgboost_models_light_",version,".rds"))
+saveRDS(small_models, file = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_light_",version,".rds")))
 
 ```
 
