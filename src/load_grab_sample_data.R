@@ -113,7 +113,7 @@
 #'
 
 load_grab_sample_data <- function(
-    input_all_chem_data_path = here("data", "upper_clp_dss", "modeling", "all_chem_data_2025-10-15.parquet"),
+    input_all_chem_data_path = here("data", "collated", "chem", "all_chem_data_2025-10-15.parquet"),
     input_ross_chem_data_path = NULL,
     input_fc_chem_data_path = NULL,
     update_all_data = FALSE,
