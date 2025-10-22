@@ -6,7 +6,7 @@
 #' multiple file formats and structures, standardizes column names and units, and combines
 #' chemistry data with corresponding field sampling metadata. This data extraction is
 #' based on the harmonization of the FC data that were in
-#' `02_sensor_grab_munge.Rmd` and `add_FC_TOC_baseline.Rmd`.
+#' `01_raw_data_prep.Rmd` and `add_FC_TOC_baseline.Rmd`.
 #'
 #' The function performs several key data processing steps:
 #' - Automatically detects and separates chemistry data files from field note files based on filename patterns
@@ -74,8 +74,8 @@
 #' The function will fail if these exact column names are not present in field files.
 
 generate_fc_grab_sample_data <- function(
-    raw_fc_chem_data_path = here("data", "upper_clp_dss", "fc_clp_chem"),
-    output_directory = here("data", "upper_clp_dss", "modeling"),
+    raw_fc_chem_data_path = here("data", "raw", "chem", "fc_clp_chem"),
+    output_directory = here("data", "collated"),
     update_data = FALSE
 ) {
   # Argument checks ----
