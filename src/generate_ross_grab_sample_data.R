@@ -104,7 +104,7 @@ generate_ross_grab_sample_data <- function(
     message("Created ross_output_directory: ", output_directory)
   }
 
-  # Grab and clean the ROSS chem data ----
+  # Grab and clean the ROSS chem data (originally pulled from zenodo)
   ross_chem_data <- read_ext(raw_ross_chem_data_path) %>%
     mutate(
       collector = "ROSS",
