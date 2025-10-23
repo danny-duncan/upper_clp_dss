@@ -76,9 +76,12 @@
 
 generate_fc_grab_sample_data <- function(
     raw_fc_chem_data_path = here("data", "raw", "chem", "fc_clp_chem"),
-    output_directory = here("data", "collated"),
+    output_directory = here("data", "collated", "chem"),
     update_data = FALSE
 ) {
+  # Get read_ext function ----
+  source("src/read_ext.R")
+
   # Argument checks ----
   # Check that the raw data path is real
   if (!dir.exists(raw_fc_chem_data_path)) {
@@ -137,11 +140,14 @@ generate_fc_grab_sample_data <- function(
         add_column_if_not_exists("TN") %>%
         mutate(
           Date = parse_date_time(Date, orders = c("ymd", "mdy")),
+          # Extract site code from site name (before hyphen or first 3 letters)
           site_code = if_else(
             str_detect(site_name, "-"),
             tolower(str_extract(site_name, "^[^-]+")),
             tolower(str_sub(site_name, 1, 3))
           ),
+          #removing extra spaces from names
+          site_code = str_replace_all(site_code, " ", ""),
           TOC = as.numeric(TOC),
           NO3 = (as.numeric(NO3) / 0.2259),
           SC = (as.numeric(SC) / 0.65), # converting TDS to SC
@@ -183,6 +189,8 @@ generate_fc_grab_sample_data <- function(
           ), tz = "America/Denver"), tzone = "MST"),
           # Remove numbers from site name
           site_code = tolower(gsub("\\d+", "", `Site Name`)),
+          #removing extra spaces from names
+          site_code = str_replace(site_code, " ", ""),
           DT_mst_char = as.character(DT_mst)
         )%>%
         dplyr::select(
