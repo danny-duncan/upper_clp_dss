@@ -2,11 +2,12 @@
 #'
 #' @description
 #' Reads, processes, and harmonizes water chemistry data and field notes from the City of
-#' Fort Collins Upper Cache la Poudre watershed monitoring program. This function handles
-#' multiple file formats and structures, standardizes column names and units, and combines
+#' Fort Collins Upper Cache la Poudre watershed monitoring program. This is given to us by the City of Fort Collins Watershed Team (Diana Schmidt and Jared Heath).
+#' The 2025 Dataset is not yet finalized but can likely still be used for our first models.
+#' This function handles multiple file formats and structures, standardizes column names and units, and combines
 #' chemistry data with corresponding field sampling metadata. This data extraction is
 #' based on the harmonization of the FC data that were in
-#' `02_sensor_grab_munge.Rmd` and `add_FC_TOC_baseline.Rmd`.
+#' `01_raw_data_prep.Rmd` and `add_FC_TOC_baseline.Rmd`.
 #'
 #' The function performs several key data processing steps:
 #' - Automatically detects and separates chemistry data files from field note files based on filename patterns
@@ -19,7 +20,7 @@
 #' This harmonization approach consolidates data from multiple years and file formats into
 #' a consistent structure that facilitates filtering, analysis, and modeling workflows.
 #' The function is designed to work with the data that we have available to us as of
-#' 2025-10-15, an changes to the file naming conventions or the structure of the files
+#' 2025-10-15, and changes to the file naming conventions or the structure of the files
 #' themselves could break this function.
 #'
 #' @param raw_fc_chem_data_path Character string specifying the directory path containing
@@ -74,8 +75,8 @@
 #' The function will fail if these exact column names are not present in field files.
 
 generate_fc_grab_sample_data <- function(
-    raw_fc_chem_data_path = here("data", "upper_clp_dss", "fc_clp_chem"),
-    output_directory = here("data", "upper_clp_dss", "modeling"),
+    raw_fc_chem_data_path = here("data", "raw", "chem", "fc_clp_chem"),
+    output_directory = here("data", "collated"),
     update_data = FALSE
 ) {
   # Argument checks ----

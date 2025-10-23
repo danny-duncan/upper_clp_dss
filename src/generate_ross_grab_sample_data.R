@@ -6,7 +6,7 @@
 #' sensor deployment history, updates site codes to reflect naming convention changes,
 #' and formats the data for integration with other datasets. This data extraction is
 #' based on the harmonization of the outputs from `pull_ROSS_zenodo_data()` that were in
-#' `02_sensor_grab_munge.Rmd` and `add_FC_TOC_baseline.Rmd`. Currently there is
+#' `01_raw_data_prep.Rmd` and `add_FC_TOC_baseline.Rmd`. Currently there is
 #' no direct or indirect interaction with `pull_ROSS_zenodo_data()`, though there can
 #' be in the future, if there is desire for it.
 #'
@@ -77,13 +77,13 @@
 #' The function will fail if these expected columns are not present in the input data.
 #'
 #' **Data Source:**
-#' Based on cleaning methods from `02_sensor_grab_munge.Rmd` and `add_FC_TOC_baseline.Rmd`.
+#' Based on cleaning methods from `01_raw_data_prep.Rmd` and `add_FC_TOC_baseline.Rmd`.
 #' Input data should be the most recent cleaned dataset from the ROSSyndicate Zenodo repository.
 #'
 
 generate_ross_grab_sample_data <- function(
-    raw_ross_chem_data_path = here("data", "upper_clp_dss", "ross_clp_chem", "data", "cleaned", "CLP_chemistry_up_to_20250701.csv"),
-    output_directory = here("data", "upper_clp_dss", "modeling"),
+    raw_ross_chem_data_path = here("data", "raw", "chem", "ross_clp_chem", "data", "cleaned", "CLP_chemistry_up_to_20250701.csv"),
+    output_directory = here("data", "collated", "chem"),
     update_data = FALSE
 ) {
   # Argument checks ----
@@ -104,7 +104,7 @@ generate_ross_grab_sample_data <- function(
     message("Created ross_output_directory: ", output_directory)
   }
 
-  # Grab and clean the ROSS chem data ----
+  # Grab and clean the ROSS chem data (originally pulled from zenodo)
   ross_chem_data <- read_ext(raw_ross_chem_data_path) %>%
     mutate(
       collector = "ROSS",

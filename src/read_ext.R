@@ -10,6 +10,7 @@
 #' - CSV files: Uses `readr::read_csv()` with `show_col_types = FALSE` to suppress column type messages
 #' - Excel files (.xlsx): Uses `readxl::read_xlsx()`
 #' - Parquet files: Uses `arrow::read_parquet()` with `as_data_frame = TRUE` to ensure tibble output
+#' - RDS files: Uses `readr::read_rds()`
 #'
 #' All additional arguments are passed through to the underlying read function, allowing
 #' for customization of reading behavior (e.g., specifying sheet names for Excel files,
@@ -18,7 +19,7 @@
 #' @param f Character string specifying the file path with extension. The file extension
 #'   is used to determine the appropriate read function.
 #' @param ... Additional arguments passed to the underlying read function
-#'   (`readr::read_csv()`, `readxl::read_xlsx()`, or `arrow::read_parquet()`).
+#'   (`readr::read_csv()`, `readxl::read_xlsx()`, `arrow::read_parquet()` or `readr::read_rds()`).
 #'
 #' @return A tibble or data frame containing the data from the specified file.
 #'
@@ -32,6 +33,9 @@
 #'
 #' # Read a Parquet file
 #' data_parquet <- read_ext("data/my_data.parquet")
+#'
+#' #Read a RDS file
+#' data_rds <- read_ext("data/my_data.rds")
 #'
 #' # Pass additional arguments to underlying functions
 #' data_csv_custom <- read_ext("data/my_data.csv",
@@ -60,9 +64,12 @@ read_ext <- function(f, ...) {
   if (file_extension == "parquet") {
     data <- arrow::read_parquet(f, as_data_frame = TRUE, ...)
   }
+  if (file_extension == "rds"){
+    data <- readr::read_rds(f)
+  }
 
-  if (!file_extension %in% c("csv", "xlsx", "parquet")) {
-    stop("This function only recognizes `.csv`, `.xlsx`, and `.parquet` files.")
+  if (!file_extension %in% c("csv", "xlsx", "parquet", "rds")) {
+    stop("This function only recognizes `.csv`, `.xlsx`, `.parquet`, and `.rds` files.")
   }
 
   return(data)

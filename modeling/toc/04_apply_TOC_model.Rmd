@@ -35,7 +35,8 @@ Run 03 script to create model then apply to longer/full dataset to see results
 
 ```{r}
 # Load saved scaling parameters
-scaling_params <- readRDS("data/upper_clp_dss/modeling/scaling_parameters_20250820.rds")
+#TODO: this needs to be updated to pull from whatever "complete" dataset the model was trained on
+#scaling_params <- readRDS(here("data", "derived", "matchup_dataset", "scaling_parameters_20250820.rds"))
 
 # Function to apply the same scaling to new data
 apply_training_scale <- function(new_data, scaling_params) {
@@ -56,7 +57,7 @@ apply_training_scale <- function(new_data, scaling_params) {
 
 # Read in water chem data
 ```{r}
-water_chem <- read_parquet("data/upper_clp_dss/modeling/ROSS_FC_water_chemistry.parquet")%>%
+water_chem <- load_grab_sample_data()%>%
   mutate(DT_round = round_date(DT_sample, unit = "1 hour" ))%>%
   rename(site = site_code)#%>%
 #filter(collector == "ROSS")
@@ -71,7 +72,9 @@ toc_max <- max(water_chem$TOC, na.rm = T)
 ```{r}
 #generated in 01 script (all_sensor_data_wide)
 
-prepped_data <- read_parquet("data/upper_clp_dss/sensor/prepped/all_sensor_data_2023-03-30_2025-08-27.parquet")%>%
+#update to correct file path/use a new load_sensor_data_function
+
+prepped_data <- read_parquet(here("data", "collated", "sensor", "all_sensor_data_2023-03-30_2025-08-27.parquet"))%>%
   select(site, 
          DT_round,
          FDOM = `FDOM Fluorescence`,
@@ -103,7 +106,7 @@ prepped_data_norm <- prepped_data %>%
 # Run model on sensor data to get TOC estimate
 
 ```{r}
-most_recent_file <- list.files("data/upper_clp_dss/modeling/model_splits", pattern = "toc_xgboost_models_light_.*\\.rds", full.names = TRUE) %>%
+most_recent_file <- list.files("data", "derived","models", "TOC_realtime", "working", pattern = "toc_xgboost_models_light_.*\\.rds", full.names = TRUE) %>%
   tail(1)
 model <- readRDS(file = most_recent_file)
 ```
@@ -312,7 +315,7 @@ chd_plot <- create_toc_model_plot(summary_interval = "1 hour",
 )
 
 
-ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/chambers_outflow_20250501_20250705_toc.png", 
+ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("chambers_outflow_20250501_20250705_toc.png")), 
        plot = chd_plot, 
        width = 12, 
        height = 8, 
@@ -325,7 +328,7 @@ chd_ts_plot <- create_sensor_ts_plot(example_site = "chd",
 )
 
 
-ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/chambers_outflow_20250501_20250705_sensor.png",
+ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("chambers_outflow_20250501_20250705_sensor.png")),
        plot = chd_ts_plot, 
        width = 10, 
        height = 10, 
@@ -345,7 +348,7 @@ pfal_plot <- create_toc_model_plot(site_sel = "pfal",
                                    end_DT = "2025-07-10 00:00"
 )
 
-ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pfal_20240415_20240710_toc.png", 
+ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pfal_20240415_20240710_toc.png")), 
        plot = pfal_plot, 
        width = 12, 
        height = 8, 
@@ -356,7 +359,7 @@ pfal_ts_plot <- create_sensor_ts_plot(example_site = "pfal",
                                    start_dt = "2025-04-15 00:00",
                                    end_dt = "2025-07-08 00:00"
 )
-ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pfal_20240415_20240710_sensor.png",
+ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pfal_20240415_20240710_sensor.png")),
        plot = pfal_ts_plot, 
        width = 10, 
        height = 10, 
@@ -375,7 +378,7 @@ pbr_plot <-  create_toc_model_plot(summary_interval = "1 hour",
                                    end_DT = "2025-07-08 00:00"
 )
 
-ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pbr_20250501_20250708_toc.png", 
+ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pbr_20250501_20250708_toc.png")), 
        plot = pbr_plot, 
        width = 12, 
        height = 8, 
@@ -386,7 +389,7 @@ pbr_ts_plot <- create_sensor_ts_plot(example_site = "pbr",
                                    start_dt = "2025-05-01 00:00",
                                    end_dt = "2025-07-08 00:00")
 
-ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pbr_20250501_20250708_sensor.png",
+ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pbr_20250501_20250708_sensor.png")),
        plot = pbr_ts_plot, 
        width = 10, 
        height = 10, 
@@ -406,7 +409,7 @@ sfm_plot<- create_toc_model_plot(site_sel = "sfm",
 )
 sfm_plot
 
-ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/sfm_20250424_20250615_toc.png", 
+ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("sfm_20250424_20250615_toc.png")), 
        plot = sfm_plot, 
        width = 12, 
        height = 8, 
@@ -417,7 +420,7 @@ sfm_ts_plot <- create_sensor_ts_plot(example_site = "sfm",
                                    start_dt = "2025-04-15 00:00",
                                    end_dt = "2025-06-15 00:00")
 sfm_ts_plot
-ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/sfm_20250415_20250615_sensor.png",
+ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("sfm_20250415_20250615_sensor.png")),
        plot = sfm_ts_plot, 
        width = 10, 
        height = 10, 
@@ -439,7 +442,7 @@ pman_plot<- create_toc_model_plot(site_sel = "pman",
 )
 pman_plot
 
-ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pman_20250424_20250714_toc.png", 
+ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pman_20250424_20250714_toc.png")), 
        plot = pman_plot, 
        width = 12, 
        height = 8, 
@@ -449,7 +452,7 @@ pman_ts_plot <- create_sensor_ts_plot(example_site = "pman",
                                    start_dt = "2025-04-15 00:00",
                                    end_dt = "2025-07-05 00:00")
 pman_ts_plot
-ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pman_20250415_20250705_sensor.png",
+ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pman_20250415_20250705_sensor.png")),
        plot = pman_ts_plot, 
        width = 10, 
        height = 10, 
@@ -470,7 +473,7 @@ pbd_plot<- create_toc_model_plot(site_sel = "pbd",
 
 pbd_plot
 
-ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pbd_20250415_20250705_toc.png", 
+ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pbd_20250415_20250705_toc.png")), 
        plot = pbd_plot, 
        width = 12, 
        height = 8, 
@@ -481,7 +484,7 @@ pbd_ts_plot <- create_sensor_ts_plot(example_site = "pbd",
                                    start_dt = "2025-05-20 00:00",
                                    end_dt = "2025-07-05 00:00")
 
-ggsave("data/upper_clp_dss/figures/toc_modeling/timeseries/pbd_20250520_20250705_sensor.png",
+ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pbd_20250520_20250705_sensor.png")),
        plot = pbd_ts_plot, 
        width = 10, 
        height = 10, 
