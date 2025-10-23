@@ -113,7 +113,7 @@
 #'
 
 load_grab_sample_data <- function(
-    input_all_chem_data_path = here("data", "collated", "chem", "all_chem_data_2025-10-15.parquet"),
+    input_all_chem_data_path = here("data", "collated", "chem", "all_chem_data_2025-10-23.parquet"),
     input_ross_chem_data_path = NULL,
     input_fc_chem_data_path = NULL,
     update_all_data = FALSE,
@@ -125,6 +125,11 @@ load_grab_sample_data <- function(
     output_ross_directory = NULL,
     output_fc_directory = NULL
 ){
+  # Get read_ext function ----
+  source("src/read_ext.R")
+  #Get generator functions ----
+  source("src/generate_ross_grab_sample_data.R")
+  source("src/generate_fc_grab_sample_data.R")
   # Argument checks ----
   # Check input paths (only if not NULL)
   if (!is.null(input_all_chem_data_path) && !file.exists(input_all_chem_data_path)) {
