@@ -730,13 +730,14 @@ tune_grid = expand.grid(
   min_child_weight = c(2, 4, 6),
   subsample = c(0.5,0.8)
 )
+
 ```
 
 ### Run hyperparameter tuning
 
 ```{r}
 
-full_model <- xgboost_hyperparameter_tuning(
+hyperp_results <- xgboost_hyperparameter_tuning(
   data = train_val %>% select(TOC, id, any_of(features)), 
   weights = toc_high_weights,
   tune_grid = tune_grid,
@@ -746,6 +747,61 @@ full_model <- xgboost_hyperparameter_tuning(
   units = "mg/L")
 
 ```
+
+### Choosing best grids
+
+### Fold 1
+
+```{r}
+
+hyperp_results[[1]]$perf_dist
+hyperp_results[[1]]$eval_plot
+hyperp_results[[1]]$tv_plot
+
+best_fold_1_grid <- 144
+```
+
+### Fold 2
+
+```{r}
+hyperp_results[[2]]$perf_dist
+hyperp_results[[2]]$eval_plot
+hyperp_results[[2]]$tv_plot
+
+best_fold_2_grid <- 215
+
+```
+
+### Fold 3
+
+```{r}
+hyperp_results[[3]]$perf_dist
+hyperp_results[[3]]$eval_plot
+hyperp_results[[3]]$tv_plot
+
+best_fold_3_grid <- 125
+
+```
+
+```{r}
+
+# Extract best models for each fold
+full_model <- map(1:3, function(i) {
+  
+  best_grid <- paste0("grid_", get(glue("best_fold_{i}_grid")))
+  model_info <- hyperp_results[[i]]$grid_results[[best_grid]]
+  list(
+    model = model_info$model,
+    perf = model_info$perf,
+    params = model_info$params,
+    training_data = train_val %>% filter(fold_id != i),
+    validation_data = train_val %>% filter(fold_id == i)
+  )
+})
+
+```
+
+
 
 ### Checking Results
 
@@ -769,19 +825,18 @@ print(importance_list)
 ```{r}
 
 # Function to plot SHAP values for a given fold
-plot_shap <- function(fold_set, train_val_df, fold_model, top_n = 3) {
+plot_shap <- function(fold_set, training_data, fold_model) {
+  #get features from model
+  features <- fold_model$feature_names
   # Predictions on validation/training set
-  val_data <- train_val_df %>% filter(fold_id == fold_set)
-  train_data <- anti_join(train_val_df, val_data, by = "fold_id")
-  
-  dtrain <- as.matrix(train_data[, features])
+  dtrain <- as.matrix(training_data[, features])
   
   shap_values <- shap.values(xgb_model = fold_model, X_train = dtrain)
   
   # Long-format SHAP values
   shap_long <- shap.prep(
     shap_contrib = shap_values$shap_score,
-    X_train = as.matrix(train_data[, features])
+    X_train = dtrain
   )
   #return shapley plot
   shap.plot.summary(shap_long)
@@ -790,8 +845,7 @@ plot_shap <- function(fold_set, train_val_df, fold_model, top_n = 3) {
 map(1:3, ~ plot_shap(
   fold_set = .x,
   fold_model = full_model[[.x]]$model,
-  train_val_df = train_val,
-  top_n = 3
+  training_data = full_model[[.x]]$training_data
 ))%>%
   wrap_plots(., ncol = 1, guides = "collect") &
   theme(legend.position = "bottom")
