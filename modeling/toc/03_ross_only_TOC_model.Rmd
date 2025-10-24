@@ -407,7 +407,8 @@ test_features <- function(train_val,
       watchlist = watchlist,
       early_stopping_rounds = 1000,
       print_every_n = 1000,
-      verbose = 0
+      verbose = 0,
+  nthread = 1
     )
     #Save model
     models[[i]] <- model
@@ -727,7 +728,7 @@ tune_grid = expand.grid(
   lambda = c(1,10),
   alpha = c(0, 1),
   colsample_bytree = c(0.5,0.8),
-  min_child_weight = c(2, 4, 6),
+  min_child_weight = c(2, 4),
   subsample = c(0.5,0.8)
 )
 
@@ -736,7 +737,7 @@ tune_grid = expand.grid(
 ### Run hyperparameter tuning
 
 ```{r}
-
+set.seed(123)
 hyperp_results <- xgboost_hyperparameter_tuning(
   data = train_val %>% select(TOC, id, any_of(features)), 
   weights = toc_high_weights,
@@ -758,7 +759,7 @@ hyperp_results[[1]]$perf_dist
 hyperp_results[[1]]$eval_plot
 hyperp_results[[1]]$tv_plot
 
-best_fold_1_grid <- 144
+best_fold_1_grid <- 28
 ```
 
 ### Fold 2
@@ -768,7 +769,7 @@ hyperp_results[[2]]$perf_dist
 hyperp_results[[2]]$eval_plot
 hyperp_results[[2]]$tv_plot
 
-best_fold_2_grid <- 215
+best_fold_2_grid <- 22
 
 ```
 
@@ -779,13 +780,14 @@ hyperp_results[[3]]$perf_dist
 hyperp_results[[3]]$eval_plot
 hyperp_results[[3]]$tv_plot
 
-best_fold_3_grid <- 125
+best_fold_3_grid <- 25
 
 ```
 
+## Extract best models for each fold
+
 ```{r}
 
-# Extract best models for each fold
 full_model <- map(1:3, function(i) {
   
   best_grid <- paste0("grid_", get(glue("best_fold_{i}_grid")))
@@ -801,9 +803,8 @@ full_model <- map(1:3, function(i) {
 
 ```
 
-
-
 ### Checking Results
+
 
 #### Feature Importance
 
@@ -894,12 +895,14 @@ final_plot
 
 Looking at the plots, we can see that the tuned hyperparameter model has improved performance in all folds compared to the default hyperparameter model. The validation RMSE has decreased in all folds but it foes look like model fold three is slightly less accurate at the higher ends (possible overtraining?). Overall, this is a good sign that our tuning efforts have paid off!
 
-## Save as "in_dev"
+## Save as "in_dev" and remove unneeded objects
 
 If we want to test additional ideas, we can just run 
 ```{r}
 saveRDS(full_model, file = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_full_",version,".rds")))
 
+rm(list = setdiff(ls(), c("train_val", "testing", "full_model","version","id_cols", "all_sensor_data_wide", 
+                          "apply_traning_scale","plot_tvt_fold_perf","plot_tvt_ensemble_perf" )) )
 ```
 # Evaluate on Test Set
 
