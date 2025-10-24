@@ -894,6 +894,13 @@ final_plot
 
 Looking at the plots, we can see that the tuned hyperparameter model has improved performance in all folds compared to the default hyperparameter model. The validation RMSE has decreased in all folds but it foes look like model fold three is slightly less accurate at the higher ends (possible overtraining?). Overall, this is a good sign that our tuning efforts have paid off!
 
+## Save as "in_dev"
+
+If we want to test additional ideas, we can just run 
+```{r}
+saveRDS(full_model, file = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_full_",version,".rds")))
+
+```
 # Evaluate on Test Set
 
 We should only do this once we feel good about our model and are ready to see how it performs on the unseen test set. This should only be run after big changes to the model or if we get new data (ie The model should be in a "final/working" version)
