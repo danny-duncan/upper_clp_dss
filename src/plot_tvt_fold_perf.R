@@ -91,7 +91,7 @@ plot_tvt_fold_perf <- function( train_val_df, test_df, fold_set, fold_model, tar
     mutate(across(everything(), as.numeric)) %>%
     as.matrix()
   # Define prediction column name
-  pred_col <- glue("{target}_guess_fold{fold_set}")
+  pred_col <- glue("{target_col}_guess_fold{fold_set}")
 
   # make predictions
   val_set[[pred_col]] <-  predict(fold_model, val_matrix, iterationrange = c(1, fold_model$best_iteration))

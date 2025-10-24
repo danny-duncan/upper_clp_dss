@@ -172,7 +172,8 @@ xgboost_hyperparameter_tuning <- function(data, target_col = "TOC", site_col = "
                                        ifelse(tune_grid$eta[j] >= 0.01, 500,
                                               1000)),
         print_every_n = 1000,
-        verbose = 0
+        verbose = 0,
+        nthread = 1
       )
 
       pred_col <- paste0(target_col, "_guess")
