@@ -5,7 +5,9 @@ date: "2025-08-01"
 output: html_document
 ---
 
-# Package load
+# Set Up
+
+## Package Load
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -21,7 +23,7 @@ library(glue)
 library(SHAPforxgboost)
 set.seed(123)
 #set version for saving (update when changes are significant)
-version = "20251009"
+version = "20251023"
 
 source("src/apply_sensor_transformations_toc.R")
 # function to tune xgboost hyperparameters
@@ -34,7 +36,7 @@ source("src/plot_tvt_fold_perf.R")
 source("src/plot_tvt_ensemble_perf.R")
 ```
 
-# Create scaling based on all sensor data
+## Create scaling based on all sensor data
 
 We should functionalize this chunk so that we can easily apply the scaling as we get new sensor data in the future.
 
@@ -85,7 +87,7 @@ apply_training_scale <- function(new_data, scaling_params) {
 ```
 
 
-# Read in Data
+## Read in matchup dataset
 
 ```{r}
 matchup_dataset <- list.files(here("data","derived", "matchup_datasets"), pattern = "parsed_toc_sensor_clp_", full.names = TRUE)%>%
@@ -114,7 +116,7 @@ all_matches_norm <- all_matches %>%
 
 ```
 
-# Set aside testing dataset & select features
+## Create Holdout Dataset
 
 ```{r}
 
@@ -615,12 +617,9 @@ importance_tables <- map(feature_results, ~{
 }, .id = "feature_set")
 
 #Get features with less than 0.02 gain on average across folds in fewer_features to consider removing
+cat("Features with mean gain < 0.02 in 'fewer_features':\n")
 importance_tables$fewer_features%>%
   filter(mean_gain < 0.02)
-
-importance_tables$fewer_features%>%
-  filter(mean_gain < 0.02)%>%
-  pull(Feature)
 
 ```
 
