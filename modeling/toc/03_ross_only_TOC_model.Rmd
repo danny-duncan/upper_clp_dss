@@ -875,11 +875,15 @@ Looking at the plots, we can see that the tuned hyperparameter model has improve
 
 ## Save as "in_dev" and remove unneeded objects
 
-If we want to test additional ideas, we can just run 
-```{r}
-saveRDS(full_model, file = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_full_",version,".rds")))
+If we want to test additional ideas for bias correction or look at model performance on timeseries data, we can just run this script until `model_training` and then load in the "in_dev" model file to avoid having to rerun all the tuning again.
 
-rm(list = setdiff(ls(), c("train_val", "testing", "full_model","version","id_cols", "all_sensor_data_wide", 
+```{r}
+#commented out so we don't overwrite existing model files
+# saveRDS(full_model, file = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_full_",version,".rds")))
+#if we want to reload model
+#full_model <- readRDS(here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_full_",version,".rds")))
+
+rm(list = setdiff(ls(), c("train_val", "testing", "full_model","version","id_cols", 
                           "apply_traning_scale","plot_tvt_fold_perf","plot_tvt_ensemble_perf", "apply_ml_bias_correction" )) )
 ```
 
@@ -1110,18 +1114,18 @@ COMING SOON! Need to functionalize aspects of 04 script to make this concise eno
 We will extract just the model objects from the list to save space.
 
 ```{r}
-
-small_models <- lapply(full_model, function(x) {
-  m <- x$model   # extract model (xgboost object)
-  
-  #remove large unnecessary elements 
-  if ("trainingData" %in% names(m)) m$trainingData <- NULL
-  if ("call" %in% names(m)) m$call <- NULL
-  if ("terms" %in% names(m)) m$terms <- NULL
-  
-  return(m)
-})
-saveRDS(small_models, file = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_light_",version,".rds")))
+# 
+# small_models <- lapply(full_model, function(x) {
+#   m <- x$model   # extract model (xgboost object)
+#   
+#   #remove large unnecessary elements 
+#   if ("trainingData" %in% names(m)) m$trainingData <- NULL
+#   if ("call" %in% names(m)) m$call <- NULL
+#   if ("terms" %in% names(m)) m$terms <- NULL
+#   
+#   return(m)
+# })
+# saveRDS(small_models, file = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_light_",version,".rds")))
 
 ```
 
