@@ -759,7 +759,7 @@ hyperp_results[[1]]$perf_dist
 hyperp_results[[1]]$eval_plot
 hyperp_results[[1]]$tv_plot
 
-best_fold_1_grid <- 28
+best_fold_1_grid <- 136
 ```
 
 ### Fold 2
@@ -769,7 +769,7 @@ hyperp_results[[2]]$perf_dist
 hyperp_results[[2]]$eval_plot
 hyperp_results[[2]]$tv_plot
 
-best_fold_2_grid <- 22
+best_fold_2_grid <- 165
 
 ```
 
@@ -780,7 +780,7 @@ hyperp_results[[3]]$perf_dist
 hyperp_results[[3]]$eval_plot
 hyperp_results[[3]]$tv_plot
 
-best_fold_3_grid <- 25
+best_fold_3_grid <- 77
 
 ```
 
@@ -902,7 +902,7 @@ If we want to test additional ideas, we can just run
 saveRDS(full_model, file = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_full_",version,".rds")))
 
 rm(list = setdiff(ls(), c("train_val", "testing", "full_model","version","id_cols", "all_sensor_data_wide", 
-                          "apply_traning_scale","plot_tvt_fold_perf","plot_tvt_ensemble_perf" )) )
+                          "apply_traning_scale","plot_tvt_fold_perf","plot_tvt_ensemble_perf", "apply_ml_bias_correction" )) )
 ```
 
 
