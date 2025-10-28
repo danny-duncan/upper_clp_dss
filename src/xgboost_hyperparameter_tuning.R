@@ -151,6 +151,7 @@ xgboost_hyperparameter_tuning <- function(data, target_col = "TOC", site_col = "
       params <- list(
         objective        = "reg:squarederror",
         eval_metric      = "rmse",
+        tree_method = "exact", #deterministic method for reproducibility
         eta              = tune_grid$eta[j],
         gamma            = tune_grid$gamma[j],
         alpha            = tune_grid$alpha[j],
@@ -160,6 +161,8 @@ xgboost_hyperparameter_tuning <- function(data, target_col = "TOC", site_col = "
         colsample_bytree = tune_grid$colsample_bytree[j],
         min_child_weight  = tune_grid$min_child_weight[j]
       )
+      #set seed for reproducibility
+      set.seed(123)
 
       #train model with hyper parameters
       model_ij <- xgb.train(
@@ -245,8 +248,8 @@ xgboost_hyperparameter_tuning <- function(data, target_col = "TOC", site_col = "
       #Objects for learning rate plot
       eval_log <- fold_models[[model_key]][["evaluation_log"]]
       params <- fold_models[[model_key]][["params"]]
-      #remove objective, eval metric, validate parameters
-      params <- params[!names(params) %in% c("objective", "eval_metric", "validate_parameters")]
+      #remove objective, eval metric, validate parameters, tree method, nthread from params
+      params <- params[!names(params) %in% c("objective", "eval_metric", "validate_parameters", "tree_method", "nthread")]
       # collapse params into a single string
       param_text <- paste(
         names(params), "=", unlist(params),
