@@ -57,6 +57,8 @@
 #'
 plot_tv_fold_perf <- function(fold_set, train_val_df, fold_model, target_col = "TOC", units = "mg/L") {
 
+  source("src/setup_ross_theme.R") #load theme
+
   # Split data into training and validation sets based on fold_id
   val_data <- train_val_df %>% filter(fold_set == fold_id)
   train_data <- anti_join(train_val_df, val_data, by = "fold_id")
