@@ -24,8 +24,10 @@ library(SHAPforxgboost)
 set.seed(123)
 #set version for saving (update when changes are significant)
 version = "20251023"
-
+# function to apply sensor transformations for TOC modeling
 source("src/apply_sensor_transformations_toc.R")
+#function to apply training scale
+source("src/apply_training_scale.R")
 # function to tune xgboost hyperparameters
 source("src/xgboost_hyperparameter_tuning.R")
 #function to plot performance of each fold
@@ -34,9 +36,11 @@ source("src/plot_tv_fold_perf.R")
 source("src/plot_tvt_fold_perf.R")
 #function to plot performance of each fold
 source("src/plot_tvt_ensemble_perf.R")
+#function to apply bias correction
+source("src/apply_ml_bias_correction.R")
 ```
 
-## Create scaling based on all sensor data
+## Read in sensor dataset
 
 We should functionalize this chunk so that we can easily apply the scaling as we get new sensor data in the future.
 
@@ -45,45 +49,12 @@ We should functionalize this chunk so that we can easily apply the scaling as we
 wide_data_file <- list.files(here("data","collated", "sensor"), pattern = "all_sensor_data_.*\\.parquet", full.names = TRUE)%>%
   tail(1)
 
-
-all_sensor_data_wide <- read_parquet(wide_data_file)
-
 # Use the complete sensor dataset for scaling parameters (assuming sensor has all necessary columns already)
-complete_sensor_data <- all_sensor_data_wide %>%
-  apply_sensor_transformations_toc(., dt_col = "DT_hourly_round")
+complete_sensor_data <- read_parquet(wide_data_file) %>%
+  apply_sensor_transformations_toc(., dt_col = "DT_hourly_round")%>%
+  select(-DO, -Depth, -ORP, -pH) #remove unused sensors
 
 
-# Save the original min/max values for each numeric column, removing NAs
-scaling_params <- complete_sensor_data %>%
-  select(where(is.numeric)) %>%
-  summarise(across(
-    everything(),
-    list(min = ~min(.x, na.rm = TRUE), max = ~max(.x, na.rm = TRUE)),
-    .names = "{.col}_{.fn}"
-  ))
-
-
-# Save these parameters
-#saveRDS(scaling_params, "data/upper_clp_dss/modeling/scaling_parameters_20251007.rds")
-# Load saved scaling parameters
-#scaling_params <- readRDS("data/upper_clp_dss/modeling/scaling_parameters_20250820.rds")
-
-# Function to apply the same scaling to new data
-apply_training_scale <- function(new_data, scaling_params) {
-  numeric_cols <- names(select(new_data, where(is.numeric)))
-  
-  scaled_data <- new_data
-  
-  for (col in numeric_cols) {
-    min_val <- scaling_params[[paste0(col, "_min")]]
-    max_val <- scaling_params[[paste0(col, "_max")]]
-    
-    # Apply same min-max scaling as training data
-    scaled_data[[col]] <- (new_data[[col]] - min_val) / (max_val - min_val)
-  }
-  
-  return(scaled_data)
-}
 ```
 
 
@@ -101,17 +72,34 @@ all_matches <- read_csv(file = matchup_dataset, show_col_types = F) %>%
   mutate(clean_sensor_datetime = parse_date_time(sensor_datetime, orders = c("%Y-%m-%d %H:%M:%S", "%m/%d/%y %H:%M","%Y-%m-%d" )))%>%
   mutate(sensor_datetime = force_tz(clean_sensor_datetime, tzone = 'MST'), 
          month = lubridate::month(sensor_datetime))
+```
 
-id_cols <- c("Date", "id", "sensor_datetime","lab_datetime",  "collector", "data_avail")
+## Define ID Columns, Target, and Features
 
+```{r}
+# ID columns to keep to use later on 
+id_cols <- c("Date", "id","site", "DT_hourly_round", "sensor_datetime","lab_datetime",  "collector", "data_avail")
+#What we want to predict
+target = "TOC"
+# Get feature columns from complete sensor data but remove id cols and target
+features <- setdiff(colnames(complete_sensor_data), id_cols)
+features <- features[features %nin% target]
+```
+
+## Create Scaling Parameters & Normalize Data
+
+```{r}
 # Apply scaling to dataset
 all_matches_norm <- all_matches %>%
   #Only keep columns that would be in the complete sensor dataset
-  select(any_of(id_cols), any_of(names(complete_sensor_data)))%>%
-  #normalize data based on full sensor set from 01_sensor_data_prep.rmd and the chunk above
-  apply_training_scale(., scaling_params)%>%
-  #add back in TOC (non normalized)
-  mutate(TOC = all_matches$TOC)%>%
+  select(any_of(id_cols), any_of(names(complete_sensor_data)), any_of(target))%>%
+  #apply normalization 
+  apply_training_scale(
+    new_data = .,
+    features = features,
+    full_dataset = complete_sensor_data
+  )%>%
+  #remove any columns with NAs
   na.omit()
 
 ```
@@ -119,30 +107,21 @@ all_matches_norm <- all_matches %>%
 ## Create Holdout Dataset
 
 ```{r}
-
-target  = "TOC"
-features <- setdiff(colnames(all_matches_norm), c(id_cols, target))
-
+# Trim out any known bad data or sites we don't want to include in modeling
 all_matches_trimmed <- all_matches_norm%>%
   filter(!(id == "cbri" & between(sensor_datetime, ymd("2024-10-08"), ymd("2024-10-10"))))%>% #exclude a cbri sample taken during release
   filter(!(id == "pman" & between(sensor_datetime, ymd("2025-05-28"), ymd("2025-06-01"))))%>% #exclude a pman sample with bad sensor data
   filter( id %nin% c("springcreek", "boxcreek"))
-
-
+# Create testing set from 2025 data at specific sites
 testing <- all_matches_trimmed %>%
   filter((year(sensor_datetime) == 2025 & id %in% c("chd", "sfm", "pbr", "pman", "pbd")))
-
-
+# Create training/validation set
 train_val <- all_matches_trimmed %>%
   anti_join(testing)%>%
   select(id, any_of(features),TOC, sensor_datetime, collector)%>%
-  mutate(id = ifelse(id == "archery_virridy", "archery", id)) #combine archery sites
+  mutate(id = ifelse(id == "archery_virridy", "archery", id)) #combine archery and archery_virridy since they are the same site
 
 ```
-
-
-# Model Training
-
 
 ## Set up model folds
 Since we have relatively little data, we are going to use three CV folds. Create 3 separate folds and 3 models, with one fold used for validation on each model. Generally we are looking for:
@@ -214,22 +193,35 @@ train_val <- train_val %>%
 ```
 
 
-### Visualize TOC distribution in training/validation vs testing sets
+## Visualize TOC distribution in training/validation vs testing sets
 
 Currently, our 2025 data (testing) is skewed to higher TOC values (April- July) compared to the training/validation set. This is not ideal, but we will proceed with this split for now given limited data. Future data updates in December should help even this out as TOC decreases in the fall. 
 
 ```{r}
-ggplot(train_val, aes(x = TOC, fill = collector)) +
+train_val%>%
+  mutate(group = "Train/Val")%>%
+  bind_rows(
+    testing%>%
+      mutate(group = "Testing")
+  )%>%
+ggplot(., aes(x = TOC, fill = collector)) +
   geom_histogram(bins = 30) +
-  geom_histogram(data = testing, aes(x = TOC), bins = 30, fill = "#E70870", alpha = 0.5) +
   labs(
-    title = paste0("Training/Validation Set: ", nrow(train_val), " samples                Testing Set: ", nrow(testing), " samples"),
+    title = paste0("Training/Validation Set: ", nrow(train_val), " samples              Testing Set: ", nrow(testing), " samples"),
     subtitle = paste0("Training TOC Range: ", round(min(train_val$TOC, na.rm = TRUE),2), " - ", round(max(train_val$TOC, na.rm = TRUE),2) , " mg/L (Median: ", round(median(train_val$TOC), 2), ")\nTesting TOC Range: ", round(min(testing$TOC, na.rm = TRUE),2), " - ", round(max(testing$TOC, na.rm = TRUE),2), " mg/L (Median: ", round(median(testing$TOC), 2),")"),
-    x = "TOC (mg/L)"
+    x = "TOC (mg/L)", 
+    fill = "Sample Collector"
   ) +
-  theme_minimal()
+  facet_wrap(~group, ncol = 1)+
+  ROSS_theme+
+  theme(legend.position = "bottom")
 
 ```
+
+
+# Model Training
+
+For our model training we will first do some feature tuning to see which features are most useful for predicting TOC. We will then do hyperparameter tuning on the selected features to optimize model performance.
 
 ## Feature Tuning 
 
@@ -238,55 +230,41 @@ Most products with FDOM in them are going to have higher correlation with TOC, a
 
 ```{r}
 
-#Looking at features across all data
-modeling_data <- all_matches_norm %>%
-  mutate(watershed = ifelse(id %in% c("joei", "cbri", "chd", "pfal","pbr",  "sfm", "pman", "pbd"), "UpperPoudre", "LowerPoudre"))%>%
-  filter(!id %in% c("springcreek", "boxcreek"))
-
-plot_list <- list()
-for(i in features){
+  # Combine training/validation and testing data
+  modeling_data <- train_val %>%
+    mutate(group = "Train/Val") %>%
+    bind_rows(
+      testing %>%
+        mutate(group = "Testing")
+    ) %>%
+    mutate(
+      watershed = ifelse(
+        id %in% c("joei", "cbri", "chd", "pfal", "pbr", "sfm", "pman", "pbd"),
+        "UpperPoudre", 
+        "LowerPoudre"
+      )
+    )
+map(features, function(feat) {
   
-  plot_list[[i]] <- ggplot(modeling_data, 
-                           aes(x = .data[[i]], y = TOC, color = id)) +
+
+  cor <- round(cor(modeling_data[[feat]], modeling_data$TOC, use = "complete.obs"), 2)
+
+  ggplot(modeling_data, aes(x = .data[[feat]], y = TOC, shape = collector, color = watershed)) +
     geom_point() +
-    geom_smooth(method = "lm", se = FALSE, color = "blue") +
-    stat_cor(
-      method = "pearson",
-      label.x.npc = "left", label.y.npc = 0.9,
-      aes(label = paste("r =", ..r..)),
-      color = "blue"
-    ) +
-    labs(x = i, y = "TOC (mg/L)") +
-    facet_wrap(~watershed, scales = "free") +
+    annotate(
+    "text",
+    x = mean(range(modeling_data[[feat]], na.rm = TRUE)), # middle of x range
+    y = max(modeling_data$TOC, na.rm = TRUE) * 0.95,      # 95% of y max (near top)
+    label = paste0("Corr: ", round(cor(modeling_data[[feat]], modeling_data$TOC, use = "complete.obs"), 2)),
+    hjust = 0.5,
+    vjust = 1,
+    size = 4
+  ) +
+    labs(x = feat, y = "TOC (mg/L)", shape = "Collector", color = "Watershed") +
+    #facet_wrap(~watershed, scales = "free") +
     ROSS_theme
-  
-  
-  if(i %in% c("turb_median_12hr", "turb_mean_12hr")){
-    plot_list[[i]] <- plot_list[[i]] + xlim(0,100)
-  }
-  if(i %in% c("f_temp")){
-    plot_list[[i]] <- plot_list[[i]] + xlim(0,2.5)
-  }
-}
-
-# Combine with patchwork
-g <- wrap_plots(plot_list, guides = "collect")+
-  plot_annotation(
-    caption = "Color is Site, Dashed line is linear regression fit with adjusted R2") 
-
-g
-
-#plot just seasonal vars
-wrap_plots(
-  plots = list(
-    plot_list$sin_doy,
-    plot_list$hourly_canyon_flow_cfs,
-    plot_list$daily_canyon_flow_cfs
-  ), ncol = 1,guides = "collect" ) +
-  plot_annotation(
-    caption = "Color is Site, Dashed line is linear regression fit with adjusted R²"
-  ) &
-  theme(legend.position = "right")  
+})%>%
+  wrap_plots(., guides = "collect")
 
 ```
 
