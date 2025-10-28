@@ -191,13 +191,14 @@ generate_fc_grab_sample_data <- function(
           site_code = tolower(gsub("\\d+", "", `Site Name`)),
           #removing extra spaces from names
           site_code = str_replace(site_code, " ", ""),
-          DT_mst_char = as.character(DT_mst)
+          DT_mst_char = as.character(DT_mst),
+          collector = "FC"
         )%>%
         dplyr::select(
           # DT columns
           Date, DT_sample = DT_mst, DT_mst_char,
           # ID columns
-          site_code
+          site_code, collector
         )
     }
   ) %>%
