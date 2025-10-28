@@ -1105,9 +1105,37 @@ ggplot(fold_test_corrs, aes(x = obs)) +
 ```
 
 
-## Visualize performance in timeseries space
+# Timeseries Space Performance
 
-COMING SOON! Need to functionalize aspects of 04 script to make this concise enough
+## Prep sensor timeseries
+
+```{r}
+sensor_ts <- apply_training_scale(new_data = complete_sensor_data, 
+                                  full_dataset = complete_sensor_data, features = full_model[[1]]$model$feature_names)%>%
+  select(site, DT_round = DT_hourly_round, any_of(full_model[[1]]$model$feature_names))
+```
+
+## Plot timeseries with grab samples
+
+```{r}
+source("src/load_grab_sample_data.R")
+water_chem <- load_grab_sample_data()
+source("src/plot_model_timeseries.R")
+plot_model_timeseries(model_input_df = sensor_ts, 
+                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
+                      summary_interval = "4 hour",
+                      site_sel = "pbd", 
+                      site_title = "Poudre @ Canyon Mouth",
+                      model = map(full_model, "model"),
+                      method = "Ensemble",
+                      target_col = "TOC",
+                      units = "mg/L",
+                      start_DT = "2025-05-01 12:00",
+                      end_DT = "2025-07-01 12:00",
+                      subtitle_arg = "CLP Samples Only")
+```
+
+
 
 # Save final models
 
