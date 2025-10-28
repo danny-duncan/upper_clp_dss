@@ -909,140 +909,13 @@ rm(list = setdiff(ls(), c("train_val", "testing", "full_model","version","id_col
 # Bias Correction
 Based on the methods outlined in this paper (https://www.sciencedirect.com/science/article/pii/S1364815221000499), we will apply a bias correction to our model predictions to improve accuracy on high and low values (where we do worse). We will first calcate the bias corrections on our validation set and if they seem to work, they will be applied to the predictions from the testing set to hopefully improve performance there as well.
 
-## Function for bias correction methods
-
-```{r}
-bias_correct <- function(train_val_df, testing_df, fold_model, fold_num, target_col = "TOC") {
-
-  #Get features
-  features <- fold_model$feature_names
-  # compute min and max TOC across ALL input data for ML2-res scaling
-  toc_min <- min(train_val_df[[target_col]], testing_df[[target_col]])
-  toc_max <- max(train_val_df[[target_col]], testing_df[[target_col]])
-  
-  #Get validation data
-  val_data <- train_val_df %>%
-    filter(fold_id == fold_num)%>%
-    mutate(
-      #Make predictions on set
-      predicted = predict(
-        fold_model,
-        newdata = as.matrix(select(., all_of(features)))), 
-      group = "Validation"
-    )
-  val_preds <- val_data$predicted
-  val_obs <- val_data[[target_col]]
-  
-  # Function to perform Empirical Distribution Mapping (EDM) bias correction
-  # For each guess in pred_vals: find its percentile in ref_pred_vals; then take that percentile quantile of ref_obs_vals
-  #Def: 
-  #pred_vals: our model predictions (in this case, from validation or testing set)
-  #ref_pred_vals: reference predictions (in this case, again from validation set)
-  #ref_obs_vals: reference observations (in this case, observed TOC from validation set)
-  ecdf_pred <- ecdf(val_preds) #calculate the empirical cumulative distribution function (ecdf) of the reference predictions
-  
-  val_corr <- val_data %>%
-    #get the percentiles of our predictions based on the reference predictions, then convert to quantiles of observed values
-    mutate(edm = quantile(val_obs, probs = ecdf_pred(predicted), type = 8))
-  
-  #ROE correction
-  mroe = cov(val_preds, val_obs) / var(val_preds)
-  broe = mean(val_obs) - mroe * mean(val_preds)
-  
-  val_corr <- val_corr%>%
-    mutate(roe = predicted * mroe + broe)
-  
-  #LTF correction
-  
-  mltf = cov(val_preds, val_corr$edm) / var(val_preds)
-  bltf = mean(val_obs) - mltf * mean(val_preds)
-  
-  val_corr <- val_corr%>%
-    mutate(ltf = predicted * mltf + bltf)
-  
-  #Z-score correction
-  mzz = sqrt(var(val_obs))/sqrt(var(val_preds))
-  bzz = mean(val_obs) - mzz * mean(val_preds)
-  
-  val_corr <- val_corr%>%
-    mutate(zz = predicted * mzz + bzz)
-  
-  #ml2-res correction
-  X_res <- val_data %>% 
-    mutate(predicted = rescale(val_preds, to = c(0,1), from = c(toc_min,toc_max)))%>%
-    select(all_of(features), predicted) %>% 
-    as.matrix()
-  #residuals
-  y_res <- val_obs - val_preds
-  
-  #Xgboost inputs/settings for ML2 Res model
-  dres_train <- xgb.DMatrix(data = X_res, label = y_res)
-  default_hyper_params <- list(
-    objective        = "reg:squarederror",
-    eval_metric      = "rmse",
-    eta              = 0.1,
-    gamma            = 0.6,
-    alpha            = 0,
-    lambda           = 1,
-    max_depth        = 4,
-    subsample        = 0.5,
-    colsample_bytree = 0.5,
-    min_child_weight  = 2
-  )
-  #train model on original features + predicted values  and try to predict residuals
-  ml2_res_model <- xgb.train(default_hyper_params, data = dres_train, nrounds = 100,verbose = 0)
-  #predict residuals on validation set
-  val_corr <- val_corr%>%
-    mutate(ml2_res_pred = predict(ml2_res_model, 
-                                  xgb.DMatrix(as.matrix(val_data %>% 
-                                                          mutate(predicted = rescale(val_preds, to = c(0,1), from = c(toc_min,toc_max)))%>%
-                                                          select(all_of(features), predicted)))), 
-           #add in residual predictions to original predictions
-           ml2 = predicted + ml2_res_pred, 
-           residuals = !!sym(target_col) - predicted
-    )
-
-  # Apply to testing set
-  test_corr <- testing_df%>%
-    select(id, all_of(features),!!sym(target_col))%>%
-    mutate(
-      #apply model to testing set
-      predicted = predict(
-        fold_model,
-        newdata = as.matrix(select(., all_of(features)))
-      ), 
-      #EDM
-      edm = quantile(val_obs, probs = ecdf_pred(predicted), type = 8),
-      #ROE
-      roe = predicted * mroe + broe,
-      #LTF
-      ltf = predicted * mltf + bltf,
-      #Z-score
-      zz = predicted * mzz + bzz,
-      #ML2-res
-      ml2_res_pred = predict(
-        ml2_res_model,
-        xgb.DMatrix(as.matrix(
-          select(., all_of(features)) %>% mutate(predicted = rescale(predicted, to = c(0,1), from = c(toc_min,toc_max))))
-        )
-      ), 
-      ml2 = predicted + ml2_res_pred,
-      #calculate residuals
-      residuals = !!sym(target_col) - predicted, 
-      group = "Test"
-    )
-  #return as joined dataset
-  bind_rows(val_corr, test_corr)
-}
-```
-
 ## Apply function to each fold and visualize results on Validation Set
 
-Results are visualized in the observed vs predicted space. In the paper above, they did not do TVT and so what they refer to as "Training" is actually our validation set here. We will look at each fold separately and see how the bias correction methods perform. We will also compute RMSE, MAE, and Bias metrics for each method and fold to quantify performance. 
+Results are visualized in the observed vs predicted space. In the paper above, they did not do TVT and so what they refer to as "Training" is actually our validation set here. We will look at each fold separately and see how the bias correction methods perform. We will also compute RMSE, and Bias metrics for each method and fold to quantify performance. 
 
 ```{r}
 
-fold_corrs <- map_dfr(1:3, ~bias_correct(train_val_df = train_val, 
+fold_corrs <- map_dfr(1:3, ~apply_ml_bias_correction(train_val_df = train_val, 
                                          testing_df = testing, 
                                         fold_model = full_model[[.x]]$model,
                                         fold_num = .x))
@@ -1063,15 +936,27 @@ metrics_summary <- fold_corrs_val %>%
   summarise(
     rmse_pred = rmse(obs, predicted),
     rmse_corr = rmse(obs, corrected_pred),
-    mae = mae(obs, corrected_pred),
-    bias = bias(obs, corrected_pred),
+    mae_pred = mae(obs, predicted),
+    mae_corr = mae(obs, corrected_pred),
+    bias_pred = bias(obs, predicted),
+    bias_corr = bias(obs, corrected_pred),
     .groups = "drop"
   ) %>%
   mutate( # creat label for plot
     label = paste0("Pre-RMSE: ", round(rmse_pred, 2), "\n",
                    "Post-RMSE: ", round(rmse_corr, 2)), 
-    improvement = if_else(rmse_corr <= rmse_pred, "RMSE Improved", "RMSE Not Improved")
+    rmse_imp = round(rmse_pred - rmse_corr,2),
+    mae_imp = round(mae_pred - mae_corr,2),
+    improvement = if_else(rmse_imp >= 0, "RMSE Improved", "RMSE Not Improved"), 
+    imp_rmse = if_else(rmse_imp >= 0, T, F),
+    imp_bias = if_else(abs(bias_pred) >= abs(bias_corr), T, F), 
+    imp_mae = if_else(mae_imp >= 0, T, F), 
+    all_imp = if_else(imp_rmse & imp_bias & imp_mae, T, F)
   )
+
+#Print out table of metrics
+metrics_summary%>%select( fold, method, rmse_pred,bias_pred, rmse_imp,mae_imp, imp_bias, all_imp )%>%
+  arrange(fold)
 
 ggplot(fold_corrs_val, aes(x = obs)) +
   geom_point(aes( y = corrected_pred, color = "Corrected Prediction"), size = 3) +
@@ -1155,11 +1040,95 @@ plot(ensemble)
 #        plot = ensemble, width = 12, height = 10, dpi = 500)
 ```
 
+### Bias Correction
+Now that we have seen how the bias correction methods perform on the validation set, we can apply them to the test set and see how they perform there.
+```{r}
+fold_corrs <- map_dfr(1:3, ~apply_ml_bias_correction(train_val_df = train_val, 
+                                         testing_df = testing, 
+                                        fold_model = full_model[[.x]]$model,
+                                        fold_num = .x))
+fold_test_corrs <- fold_corrs%>%
+  filter(group == "Test")%>%
+  pivot_longer(cols = c( "edm", "roe", "ltf", "zz", "ml2"),
+               names_to = "method",
+               values_to = "corrected_pred")%>%
+    mutate(fold = paste0("Fold ", fold_id))%>%
+    select(id, residuals, predicted, obs = TOC, fold, group, method, corrected_pred)
+
+
+ensemble <- fold_test_corrs%>%
+  group_by(obs,id, method)%>%
+  summarise(
+    predicted = mean(predicted),
+    corrected_pred = mean(corrected_pred),
+    .groups = "drop"
+  )%>%
+  mutate(fold = "Ensemble")
+
+fold_test_corrs <- bind_rows(fold_test_corrs, ensemble)
+
+#order the method factor levels
+fold_test_corrs$method <- factor(fold_test_corrs$method, levels = c("edm", "roe", "ltf", "zz", "ml2"))
+# Compute rmse, mae and bias metrics for each method and fold
+
+metrics_summary <- fold_test_corrs %>%
+  group_by(fold, method) %>%
+  summarise(
+    rmse_pred = rmse(obs, predicted),
+    rmse_corr = rmse(obs, corrected_pred),
+    mae = mae(obs, corrected_pred),
+    bias = bias(obs, corrected_pred),
+    .groups = "drop"
+  ) %>%
+  mutate( # creat label for plot
+    label = paste0("Pre-RMSE: ", round(rmse_pred, 2), "\n",
+                   "Post-RMSE: ", round(rmse_corr, 2)), 
+    improvement = if_else(rmse_corr <= rmse_pred, "RMSE Improved", "RMSE Not Improved")
+  )
+
+ggplot(fold_test_corrs, aes(x = obs)) +
+  geom_point(aes( y = corrected_pred, color = "Corrected Prediction"), size = 3) +
+  geom_point(aes(y = predicted, color = "Original ML Prediction"), alpha = 0.7, size = 3) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    # Add RMSE annotations
+  geom_text(
+    data = metrics_summary,
+    aes(
+      x = 2.5,  y = 8.25,
+      label = label, 
+      color = improvement
+    ),
+    inherit.aes = FALSE,
+    hjust = 0, vjust = 1,
+    size = 4
+  ) +
+  scale_color_manual(
+    values = c("RMSE Improved" = "green2", "RMSE Not Improved" = "red",
+               "Corrected Prediction" = "#E70870", "Original ML Prediction" = "#256BF5")
+  ) +
+  #facetgrid by method and fold
+  facet_grid(vars(fold), vars(method)) +
+  labs(
+    x = "Observed TOC (mg/L)",
+    y = "Predicted TOC (mg/L)",
+    title = "Comparison of Bias Correction Methods on Testing Set",
+    color = "Legend", 
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  xlim(2, 9.5) +
+  ylim(2, 9.5)
+
+
+```
+
+
 ## Visualize performance in timeseries space
 
 COMING SOON! Need to functionalize aspects of 04 script to make this concise enough
 
 # Save final models
+
 We will extract just the model objects from the list to save space.
 
 ```{r}
