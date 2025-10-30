@@ -2,12 +2,19 @@
 .Rhistory
 .RData
 .Ruserdata
-# Only ignore data folder in the project root
+
+# Ignore some folder paths
 /data/
 creds/
+env/
+KEC_Scratch/
+
 # mac artifacts
 **.DS_Store
 **.Renviron
 **credentials.sqlite
 dashboard/setup/
 dashboard/metadata/
+data
+docs
+creds
