@@ -38,6 +38,10 @@ source("src/plot_tvt_fold_perf.R")
 source("src/plot_tvt_ensemble_perf.R")
 #function to apply bias correction
 source("src/apply_ml_bias_correction.R")
+#load grab sample data function
+source("src/load_grab_sample_data.R")
+#function to plot model timeseries
+source("src/plot_model_timeseries.R")
 ```
 
 ## Read in sensor dataset
@@ -61,6 +65,7 @@ complete_sensor_data <- read_parquet(wide_data_file) %>%
 ## Read in matchup dataset
 
 ```{r}
+
 matchup_dataset <- list.files(here("data","derived", "matchup_datasets"), pattern = "parsed_toc_sensor_clp_", full.names = TRUE)%>%
   tail(1)
 
@@ -72,6 +77,7 @@ all_matches <- read_csv(file = matchup_dataset, show_col_types = F) %>%
   mutate(clean_sensor_datetime = parse_date_time(sensor_datetime, orders = c("%Y-%m-%d %H:%M:%S", "%m/%d/%y %H:%M","%Y-%m-%d" )))%>%
   mutate(sensor_datetime = force_tz(clean_sensor_datetime, tzone = 'MST'), 
          month = lubridate::month(sensor_datetime))
+
 ```
 
 ## Define ID Columns, Target, and Features
@@ -883,8 +889,11 @@ If we want to test additional ideas for bias correction or look at model perform
 #if we want to reload model
 #full_model <- readRDS(here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_full_",version,".rds")))
 
-rm(list = setdiff(ls(), c("train_val", "testing", "full_model","version","id_cols", 
-                          "apply_traning_scale","plot_tvt_fold_perf","plot_tvt_ensemble_perf", "apply_ml_bias_correction" )) )
+rm(list = setdiff(ls(), c("train_val", "testing", "full_model","version","id_cols",
+                          "complete_sensor_data",
+                          #keeping functions around
+                          "apply_training_scale","plot_tvt_fold_perf","plot_tvt_ensemble_perf",
+                          "apply_ml_bias_correction", "load_grab_sample_data", "plot_model_timeseries" )) )
 ```
 
 
@@ -1107,32 +1116,267 @@ ggplot(fold_test_corrs, aes(x = obs)) +
 
 # Timeseries Space Performance
 
-## Prep sensor timeseries
+## Prep sensor timeseries & water chem
 
 ```{r}
+#loading in all sensor data and applying training scaling
 sensor_ts <- apply_training_scale(new_data = complete_sensor_data, 
-                                  full_dataset = complete_sensor_data, features = full_model[[1]]$model$feature_names)%>%
+                                  full_dataset = complete_sensor_data, 
+                                  features = full_model[[1]]$model$feature_names)%>%
   select(site, DT_round = DT_hourly_round, any_of(full_model[[1]]$model$feature_names))
+
+water_chem <- load_grab_sample_data()
 ```
 
-## Plot timeseries with grab samples
+## Example 1: CHD 2025
 
 ```{r}
-source("src/load_grab_sample_data.R")
-water_chem <- load_grab_sample_data()
-source("src/plot_model_timeseries.R")
-plot_model_timeseries(model_input_df = sensor_ts, 
+
+chd_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
                       water_chem_df = water_chem%>%filter(collector == "ROSS"), 
                       summary_interval = "4 hour",
-                      site_sel = "pbd", 
-                      site_title = "Poudre @ Canyon Mouth",
+                      site_sel = "chd", 
+                      site_title = "Chambers Lake outflow",
                       model = map(full_model, "model"),
                       method = "Ensemble",
                       target_col = "TOC",
                       units = "mg/L",
                       start_DT = "2025-05-01 12:00",
-                      end_DT = "2025-07-01 12:00",
-                      subtitle_arg = "CLP Samples Only")
+                      end_DT = "2025-07-05 00:00",
+                      subtitle_arg = "CLP Samples Only", 
+                      plot_model_input = T)
+  
+
+ggarrange(chd_plot$model_plot, chd_plot$model_input_plot,ncol = 2)
+
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("chambers_outflow_20250501_20250705_toc.png")), 
+#        plot = chd_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("chambers_outflow_20250501_20250705_sensor.png")),
+#        plot = chd_ts_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
+
+```
+
+
+## Example 2: PFAL 2025
+
+```{r}
+
+pfal_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
+                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
+                      summary_interval = "4 hour",
+                      site_sel = "pfal", 
+                      site_title = "Poudre @ Poudre Falls",
+                      model = map(full_model, "model"),
+                      method = "Ensemble",
+                      target_col = "TOC",
+                      units = "mg/L",
+                      start_DT = "2025-04-16 00:00",
+                      end_DT = "2025-07-10 00:00",
+                      subtitle_arg = "CLP Samples Only", 
+                      plot_model_input = T)
+
+ggarrange(pfal_plot$model_plot, pfal_plot$model_input_plot,ncol = 2)
+
+
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pfal_20240415_20240710_toc.png")), 
+#        plot = pfal_plot$model_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+
+
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pfal_20240415_20240710_sensor.png")),
+#        plot = pfal_plot$model_input_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
+
+```
+
+## Example 3: PBR
+
+```{r}
+
+
+pbr_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
+                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
+                      summary_interval = "4 hour",
+                      site_sel = "pbr", 
+                      site_title = "Poudre @ Indian Meadows",
+                      model = map(full_model, "model"),
+                      method = "Ensemble",
+                      target_col = "TOC",
+                      units = "mg/L",
+                      start_DT = "2025-05-01 00:00",
+                      end_DT = "2025-07-08 00:00",
+                      subtitle_arg = "CLP Samples Only", 
+                      plot_model_input = T)
+
+ggarrange(pbr_plot$model_plot, pbr_plot$model_input_plot,ncol = 2)
+
+
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pbr_20250501_20250708_toc.png")), 
+#        plot = pbr_plot$model_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pbr_20250501_20250708_sensor.png")),
+#        plot = pbr_plot$model_input_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
+
+
+```
+
+## Example 4: SFM 2025
+
+```{r}
+
+sfm_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
+                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
+                      summary_interval = "4 hour",
+                      site_sel = "sfm", 
+                      site_title = "South Fork of the Poudre",
+                      model = map(full_model, "model"),
+                      method = "Ensemble",
+                      target_col = "TOC",
+                      units = "mg/L",
+                      start_DT = "2025-04-15 00:00",
+                      end_DT = "2025-07-01 00:00",
+                      subtitle_arg = "CLP Samples Only", 
+                      plot_model_input = T)
+
+ggarrange(sfm_plot$model_plot, sfm_plot$model_input_plot,ncol = 2)
+
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("sfm_20250424_20250615_toc.png")), 
+#        plot = sfm_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+
+#sfm_ts_plot
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("sfm_20250415_20250615_sensor.png")),
+#        plot = sfm_ts_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
+
+```
+
+
+
+## Example 4: PMAN 2025
+
+```{r}
+
+pman_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
+                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
+                      summary_interval = "4 hour",
+                      site_sel = "pman", 
+                      site_title = "Poudre at Manners",
+                      model = map(full_model, "model"),
+                      method = "Ensemble",
+                      target_col = "TOC",
+                      units = "mg/L",
+                      start_DT = "2025-04-24 00:00",
+                      end_DT = "2025-07-01 00:00",
+                      subtitle_arg = "CLP Samples Only", 
+                      plot_model_input = T)
+
+ggarrange(pman_plot$model_plot, pman_plot$model_input_plot,ncol = 2)
+
+
+
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pman_20250424_20250714_toc.png")), 
+#        plot = pman_plot$model_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pman_20250415_20250705_sensor.png")),
+#        plot = pman_plot$model_input_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
+
+```
+
+## Example 5: PBD 2025
+
+```{r}
+
+pbd_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
+                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
+                      summary_interval = "4 hour",
+                      site_sel = "pbd", 
+                      site_title = "Poudre at Canyon Mouth",
+                      model = map(full_model, "model"),
+                      method = "Ensemble",
+                      target_col = "TOC",
+                      units = "mg/L",
+                      start_DT = "2025-04-15 00:00",
+                      end_DT = "2025-07-05 00:00",
+                      subtitle_arg = "CLP Samples Only", 
+                      plot_model_input = T)
+
+ggarrange(pbd_plot$model_plot, pbd_plot$model_input_plot,ncol = 2)
+
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pbd_20250415_20250705_toc.png")), 
+#        plot = pbd_plot$model_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pbd_20250520_20250705_sensor.png")),
+#        plot = pbd_plot$model_input_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
+
+```
+
+
+## Example 6: Udall (Lincoln Ave) 2025
+
+```{r}
+
+
+udall_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
+                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
+                      summary_interval = "12 hour",
+                      site_sel = "elc", 
+                      site_title = "Poudre at Lincoln Ave",
+                      model = map(full_model, "model"),
+                      method = "Ensemble",
+                      target_col = "TOC",
+                      units = "mg/L",
+                      start_DT = "2025-04-15 00:00",
+                      end_DT = "2025-07-05 00:00",
+                      subtitle_arg = "CLP Samples Only", 
+                      plot_model_input = T)
+
+ggarrange(udall_plot$model_plot, udall_plot$model_input_plot,ncol = 2)
+
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("udall_20250415_20250705_toc.png")), 
+#        plot = udall_plot$model_plot, 
+#        width = 12, 
+#        height = 8, 
+#        dpi = 300)
+
+# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("udall_20250520_20250705_sensor.png")),
+#        plot = udall_plot$model_input_plot, 
+#        width = 10, 
+#        height = 10, 
+#        dpi = 300)
 ```
 
 
