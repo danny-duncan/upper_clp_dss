@@ -9,6 +9,7 @@ discharge). Catchments are defined using nhdplusTools.
 
 MODIS Snow Cover: https://doi.org/10.5067/MODIS/MOD10A1.061
 
+# Setup
 ```{r setup}
 source("Scratch/pySetup.R")
 # A warning message here is okay!
@@ -37,7 +38,7 @@ ee$Initialize(project = "poudre-dss")
 ```
 
 
-# define functions
+# Define functions
 
 Now, define some helpful functions. Note, these can be added to src/ later
 
@@ -213,9 +214,14 @@ ggplot(discharge, aes(x = Date, y = discharge_cfs, color = site_no)) +
 ```
 
 
-# Begin workflow to pull in MODIS Snow Cover data
+# MODIS
 
+Now, begin workflow to pull in MODIS Snow Cover data.
+
+
+### - AOI
 First, define an area of interest (AOI). Here, I select the first watershed in the NWIS watersheds as it's small and therefore quick for testing. 
+
 ```{r define_aoi}
 
 # for now, just start with first watershed
@@ -233,11 +239,12 @@ mapview(aoi_sf)
 ```
 
 
+### - MODIS crop + filter
+
 Now, use the rgee package to pull in MODIS Normalized Difference Snow Index timeseries for the AOI. Snow has strong visible reflectance and strong short-wave IR absorbing characteristics. The Normalized Difference Snow Index (NDSI) is an effective way to distinguish snow from many other surface features. This is analagous to the similar index for vegetation, the Normalized Difference Vegetation Index (NDVI). Additionally, some snow/cloud discrimination is accomplished using the NDSI.The associated dataset includes snow cover, quality assurance (QA) SDSs, latitude and longitude SDSs, and local and global attributes. The NDSI snow cover algorithm identifies snow-covered land and snow-covered ice on inland water. Read more about it here: https://modis.gsfc.nasa.gov/data/dataprod/mod10.php and here: https://modis.gsfc.nasa.gov/data/atbd/atbd_mod10.pdf.
 
 
 Things that we tried but removed from this script
-1. 
   This line created a mask that removed NDSI values below a certain threshold. However, this effectively removed no and low snow pixels which made it impossible to see changes in snow cover for the AOI below that threshold. Because we're interested in melt, we need to retain now and low snow pixels.
 
 ```{r modis}
@@ -455,7 +462,7 @@ snow_df <- data.frame(
     scale_color_colorblind(name = ""))
 
 # Multiplier for scaling melt (unitless) to discharge
-mult <- 50
+mult <- 70
   
 ggarrange(
   ggplot(snow_df, aes(x = date)) +
@@ -471,10 +478,10 @@ ggarrange(
   scale_color_colorblind(name = ""),
 ggplot(snow_df, aes(x = date)) +
   geom_line(aes(y = discharge_cfs, color = "Discharge"), lwd = 1, alpha = 0.5) +
-  geom_line(aes(y = 10 * mult * melt_ma_ma, color = "Melt_MA"), lwd = 1, alpha = 0.2) +
+  geom_line(aes(y = 10 * mult * melt_ma_ma, color = "Melt_MA"), lwd = 0.75, alpha = 0.2) +
   #geom_smooth(method = "loess", se = FALSE, aes(y = 30 * mult * melt, color = "Melt_14dayMA_plus_Loess"), span = .05, alpha = 0.8, lwd = 1) +
-  geom_line(aes(y = mult * melt_sg, color = "Melt_SGolay"), lwd = 1) +
-  geom_line(aes(y = 15 * mult * melt_fft, color = "Melt_FFT"), lwd = 1) +
+  geom_line(aes(y = mult * melt_sg, color = "Melt_SGolay"), lwd = 0.75) +
+  geom_line(aes(y = 15 * mult * melt_fft, color = "Melt_FFT"), lwd = 0.75) +
   theme_bw() +
   labs(x = "", y = "NDSI Melt (-) and Discharge (cfs)") +
   scale_color_colorblind(name = ""),
