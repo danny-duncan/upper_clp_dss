@@ -39,6 +39,7 @@
 #' )
 #'
 apply_training_scale <- function( new_data, full_dataset = NULL, scaling_params = NULL, features, scaling_param_out_dir = NULL){
+  `%nin%` <- Negate(`%in%`)
   #Check that new data  have all the features
   missing_in_new_data <- features[features %nin% colnames(new_data)]
   if(length(missing_in_new_data) > 0){
