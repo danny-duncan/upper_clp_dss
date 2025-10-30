@@ -12,19 +12,20 @@
 #' Each model object should have accessible `$feature_names` and `$best_iteration`.
 #' @param method Character. Either `"Ensemble"` (default) to compute mean and range across multiple
 #' model folds, or another string (e.g., `"Single"`) for a single model.
-#' @param summary_interval Character. The time interval for summarizing model input data (e.g.,
-#' `"1 hour"`, `"1 day"`). Must be compatible with `lubridate::round_date()`.
 #' @param site_sel Character. The lowercase site code to filter data for plotting.
-#' @param site_title Character. A site label used in plot titles (e.g., `"Cache la Poudre River"`).
+#' @param site_title Character. A site label used in plot titles (e.g., `"Poudre at Rustic"`).
 #' @param start_DT Character. Start datetime (e.g., `"2024-01-01 00:00"`) in `"MST"` timezone.
 #' @param end_DT Character. End datetime (e.g., `"2024-12-31 23:00"`) in `"MST"` timezone.
+#' @param summary_interval Character. Time interval for summarizing model input data.
+#'  Must be compatible with `lubridate::round_date()` (default `"1 hour"`).
 #' @param target_col Character. Column name of the target variable in `water_chem_df` (default `"TOC"`).
 #' @param units Character. Units of the target variable (default `"mg/L"`). This is used for the plot X axis.
 #' @param subtitle_arg Character. Subtitle text for the plot (default `"CLP Samples Only"`).
+#' @param plot_model_input Logical. If `TRUE`, the function will return two plots: one for model input data and one for model predictions. Default is `FALSE`.
 #'
 #' @details
 #' The function performs the following steps:
-#' 1. Filters and averages model input data to the desired time interval.
+#' 1. Filters and averages model input data to the desired time period, interval, and site.
 #' 2. Generates predictions using either a single model or an ensemble of models.
 #' 3. If `method = "Ensemble"`, calculates mean, min, and max predictions across folds.
 #' 4. Combines modeled and observed data for the selected site and time window.
@@ -35,9 +36,11 @@
 #' - A gray ribbon showing ensemble prediction range (min–max) if applicable (ie method = `Ensemble`).
 #' - Blue points for observed grab sample values.
 #' - A red dashed line if modeled TOC exceeds the maximum observed value.
-#' - An annotation `"PRELIMINARY RESULTS"` in red at the top right.
 #'
-#' @return A `ggplot` object visualizing model predictions and observed data.
+#' If `plot_model_input = TRUE`, the function will return two plots: one for the model input data and one for the model predictions.
+#' The model input plot will show the summarized model input data over time for the selected site and time window.
+#'
+#' @return A `ggplot` object visualizing model predictions and observed data or two plots if `plot_model_input = TRUE`.
 #'
 #' @examples
 #' \dontrun{
@@ -58,7 +61,8 @@
 
 plot_model_timeseries <- function( model_input_df, water_chem_df, model, method = "Ensemble",
                                    summary_interval = "1 hour", site_sel, site_title, start_DT, end_DT,
-                                   target_col = "TOC", units = "mg/L", subtitle_arg = "CLP Samples Only"){
+                                   target_col = "TOC", units = "mg/L", subtitle_arg = "CLP Samples Only",
+                                   plot_model_input = F){
   #load theme
   source("src/setup_ross_theme.R")
 
@@ -82,7 +86,7 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
     summarise(across(everything(), mean, na.rm = TRUE), .groups = 'drop')
 
   if(method  %in% c("Ensemble", "ensemble")){
-#browser()
+    #browser()
 
     summarized_data <- imap_dfc(model, ~{
       #get model features
@@ -95,16 +99,16 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
         predict(.x, ., iteration_range = c(1, .x$best_iteration)) %>%
         round(2)
       #get predictions as tibble
-      tibble(!!glue("{target}_guess_fold{.y}") := preds)
+      tibble(!!glue("{target_col}_guess_fold{.y}") := preds)
     }) %>%
       bind_cols(summarized_data, .) %>%
       # compute ensemble mean
       mutate(
-        !!glue("{target}_guess_ensemble") :=
-          round(rowMeans(across(matches(glue("{target}_guess_fold")))), 2)
+        !!glue("{target_col}_guess_ensemble") :=
+          round(rowMeans(across(matches(glue("{target_col}_guess_fold")))), 2)
       )
     # Columns with fold predictions
-    fold_cols <- grep(glue("{target}_guess_fold"), colnames(summarized_data), value = TRUE)
+    fold_cols <- grep(glue("{target_col}_guess_fold"), colnames(summarized_data), value = TRUE)
 
     plot_ts_data <- summarized_data %>%
       # Filter to desired time window first
@@ -117,12 +121,12 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
       ) %>%
       # Compute min/max across folds
       mutate(
-        !!glue("{target}_guess_min") := pmin(!!!syms(fold_cols), na.rm = TRUE),
-        !!glue("{target}_guess_max") := pmax(!!!syms(fold_cols), na.rm = TRUE),
-        !!glue("{target}_guess_ensemble") := pmax(0, !!sym(glue("{target}_guess_ensemble"))),
-        group = with(rle(!is.na(.data[[glue("{target}_guess_ensemble")]])), rep(seq_along(values), lengths))
+        !!glue("{target_col}_guess_min") := pmin(!!!syms(fold_cols), na.rm = TRUE),
+        !!glue("{target_col}_guess_max") := pmax(!!!syms(fold_cols), na.rm = TRUE),
+        !!glue("{target_col}_guess_ensemble") := pmax(0, !!sym(glue("{target_col}_guess_ensemble"))),
+        group = with(rle(!is.na(.data[[glue("{target_col}_guess_ensemble")]])), rep(seq_along(values), lengths))
       )
-    plot_col <- glue("{target}_guess_ensemble")
+    plot_col <- glue("{target_col}_guess_ensemble")
 
     #get correct dates for plot title
     start_DT_title <- min(plot_ts_data$DT_round, na.rm = TRUE)
@@ -134,8 +138,8 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
     model_plot <- ggplot() +
       geom_ribbon(data = plot_ts_data,
                   aes(x = DT_round,
-                      ymin = !!sym(glue("{target}_guess_min")),
-                      ymax = !!sym(glue("{target}_guess_max")),,
+                      ymin = !!sym(glue("{target_col}_guess_min")),
+                      ymax = !!sym(glue("{target_col}_guess_max")),,
                       fill = "Models Estimate Range"),
                   alpha = 0.5)+
       geom_line(
@@ -170,23 +174,23 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
         fill = guide_legend(override.aes = list(alpha = 0.5)),
         color = guide_legend(override.aes = list(size = 1))  # keep consistent
       ) +
-      annotate("text",
-               x = max(plot_ts_data$DT_round, na.rm = TRUE),
-               y = Inf,
-               label = "PRELIMINARY RESULTS",
-               hjust = 1.1,
-               vjust = 1.5,
-               size = 7,
-               fontface = "bold",
-               color = "red") +
+      # annotate("text",
+      #          x = max(plot_ts_data$DT_round, na.rm = TRUE),
+      #          y = Inf,
+      #          label = "PRELIMINARY RESULTS",
+      #          hjust = 1.1,
+      #          vjust = 1.5,
+      #          size = 7,
+      #          fontface = "bold",
+      #          color = "red") +
       ROSS_theme +
       theme(legend.position = "bottom")
 
   } else{
     #check that model is a single model
-      if(length(model$feature_names) == 0){
-        stop("For non-ensemble method, model must be a single trained model object.")
-      }
+    if(length(model$feature_names) == 0){
+      stop("For non-ensemble method, model must be a single trained model object.")
+    }
 
     features <- model$feature_names
 
@@ -197,7 +201,7 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
       predict(model, ., iteration_range = c(1, model$best_iteration)) %>%
       round(2)
 
-    plot_col <- glue("{target}_guess")
+    plot_col <- glue("{target_col}_guess")
 
     summarized_data <- summarized_data %>%
       mutate(!!sym(plot_col) := preds)
@@ -269,7 +273,7 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
 
   # combine grabs and sensor data for plotting to determine axes
   if(method  %in% c("Ensemble", "ensemble")){
-    plot_range <- c(plot_ts_data[[glue("{target}_guess_ensemble")]], plot_ts_data[[glue("{target}_guess_max")]], plot_water_chem[[target_col]])
+    plot_range <- c(plot_ts_data[[glue("{target_col}_guess_ensemble")]], plot_ts_data[[glue("{target_col}_guess_max")]], plot_water_chem[[target_col]])
   } else{
     plot_range <- c(plot_ts_data[[plot_col]], plot_water_chem[[target_col]])
   }
@@ -283,6 +287,77 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
       annotate("text", x = halfway_DT, y = max_plot_val - 0.2, label = "Max TOC Measured")
   }
 
-  return(model_plot)
+  #add secondary plot of model input data if requested
+  if(plot_model_input){
+    if(method %in% c("Ensemble", "ensemble")){
+      model <- model[[1]]  # Use the first model for input features
+    }
+    # Plot model input data
+    model_input_long <- summarized_data %>%
+      select(site, DT_round, all_of(model$feature_names)) %>%
+      # Filter to desired time window first
+      filter(between(DT_round, start_DT, end_DT)) %>%
+      # Pad missing timestamps based on summary_interval
+      pad(
+        by = "DT_round",
+        interval = summary_interval,   #  "1 hour", "1 day", etc.
+        group = NULL
+      ) %>%
+      pivot_longer(cols = -c(site, DT_round), names_to = "variable", values_to = "value") %>%
+      #create groups based on consecutive NA values for line plotting
+      mutate(
+        group = with(rle(!is.na(.data$value)), rep(seq_along(values), lengths))
+      )
+
+    # compute per-parameter ranges and rescale grab TOC values to each sensor axis
+    param_ranges <- model_input_long %>%
+      group_by(variable) %>%
+      summarise(y_min = min(value, na.rm = TRUE),
+                y_max = max(value, na.rm = TRUE),
+                .groups = "drop")
+
+    grab_rescaled <- plot_water_chem %>%
+      crossing(variable = unique(model_input_long$variable)) %>%
+      left_join(param_ranges, by = "variable") %>%
+      group_by(variable) %>%
+      mutate(
+        TOC_rescaled = rescale(
+          TOC,
+          to   = c(first(y_min), first(y_max)),
+          from = range(TOC, na.rm = TRUE)
+        )
+      ) %>%
+      ungroup()
+
+    model_input_plot <- model_input_long %>%
+      ggplot(aes(x = DT_round, y = value)) +
+      geom_point(
+        data = grab_rescaled,
+        aes(x = DT_round,
+            y = TOC_rescaled,
+            color = "Sample Values",
+            shape = collector)
+      ) +
+      geom_line(aes(group = group,color = "Input Variables"),linewidth = 1 ) +
+      labs(title = paste0("Model Input Data at ", site_title," from ", as.Date(start_DT), " - ", as.Date(end_DT)),
+           x = "Date",
+           y = "Value",
+           color = "Value",
+           shape = "Collector") +
+      scale_color_manual(
+        values = c(
+          "Input Variables" = "#E70870",
+          "Sample Values" = "#002EA3"
+        )
+      )+
+      ROSS_theme +
+      theme(legend.position = "bottom")+
+      facet_wrap(~variable, scales = "free_y")
+
+    return(list(model_input_plot = model_input_plot, model_plot = model_plot))
+  }else{
+    return(model_plot)
+  }
+
 
 }
