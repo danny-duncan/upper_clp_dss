@@ -24,7 +24,7 @@ env_exists <- any(conda_list()$python == file.path(ENV_PATH, "bin/python"))
 if (env_exists) {
   # if environment exists: activate it
   message("Conda environment found. Activating...")
-  use_miniconda(ENV_PATH)
+  use_condaenv(ENV_PATH)
   print("Conda environment activated successfully.")
 
 } else {
