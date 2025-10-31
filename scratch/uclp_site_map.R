@@ -1,4 +1,7 @@
 source("src/read_ext.R")
+library(tidyverse)
+library(sf)
+library(tmap)
 loc <- read_ext("data/raw/chem/ross_clp_chem/data/metadata//location_metadata.csv" )%>%
   mutate(site_code = tolower(site_code))%>%
   select(site_code, Lat, Long, Site_Name)%>%
@@ -17,7 +20,7 @@ loc_bbox_buf <- loc %>%
   st_buffer(dist = 6000) %>%
   st_transform(4326)
 
-# Plot with tmap
+# Plot
 tmap_mode("plot")
 
 tm <- tm_shape(loc_bbox_buf) +
@@ -34,11 +37,8 @@ shape.scale = tm_scale_categorical(
   values = c("Livesteaming" = 21,
              "Only FC Livestreaming" = 22,
              "No Livestreaming" = 1) ),
-shape.legend = tm_legend_hide()
-
-) +
+shape.legend = tm_legend_hide()) +
   tm_text("Site_Name", size = 0.7, ymod = 1.2) +
-
   tm_layout(title = "UCLP WQ Monitoring Sites",
             title.position = c("center", "top"),
             legend.position = c("right", "bottom"),
@@ -47,8 +47,6 @@ shape.legend = tm_legend_hide()
 
 tmap_save(
   tm,
-  filename = "docs/uclp_dss/figs/ross_sites_map.png",
-  width = 8,      # inches
-  height = 6,     # inches
-  dpi = 300       # print quality
+  filename = here("docs", "uclp_dss","figs","ross_sites_map.png"),
+  width = 8,height = 6, dpi = 300
 )
