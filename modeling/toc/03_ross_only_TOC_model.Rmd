@@ -878,7 +878,7 @@ final_plot
 
 ```
 
-Looking at the plots, we can see that the tuned hyperparameter model has improved performance in all folds compared to the default hyperparameter model. The validation RMSE has decreased in all folds but it foes look like model fold three is slightly less accurate at the higher ends (possible overtraining?). Overall, this is a good sign that our tuning efforts have paid off!
+Looking at the plots, we can see that the tuned hyperparameter model has improved performance in all folds compared to the default hyperparameter model. The validation RMSE has decreased in all folds but it does look like model fold three is slightly less accurate at the higher ends (possible overtraining?). Overall, this is a good sign that our tuning efforts have paid off!
 
 ## Save as "in_dev" and remove unneeded objects
 
