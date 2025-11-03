@@ -87,7 +87,7 @@ all_matches <- read_csv(file = matchup_dataset, show_col_types = F) %>%
 # ID columns to keep to use later on 
 id_cols <- c("Date", "id","site", "DT_hourly_round", "sensor_datetime","lab_datetime",  "collector", "data_avail")
 #What we want to predict
-target = "TOC"
+target <- "TOC"
 # Get feature columns from complete sensor data but remove id cols and target
 features <- setdiff(colnames(complete_sensor_data), id_cols)
 features <- features[features %nin% target]
