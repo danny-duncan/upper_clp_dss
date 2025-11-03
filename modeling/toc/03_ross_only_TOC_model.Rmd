@@ -64,6 +64,7 @@ complete_sensor_data <- read_parquet(wide_data_file) %>%
 
 ## Read in matchup dataset
 
+Matchup dataset is created in 02_sensor_grab_matchup, where we match xx data from the sensors with each available lab-anlyzed TOC sample. 
 ```{r}
 
 matchup_dataset <- list.files(here("data","derived", "matchup_datasets"), pattern = "parsed_toc_sensor_clp_", full.names = TRUE)%>%
