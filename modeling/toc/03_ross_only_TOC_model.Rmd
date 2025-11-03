@@ -46,7 +46,7 @@ source("src/plot_model_timeseries.R")
 
 ## Read in sensor dataset
 
-We should functionalize this chunk so that we can easily apply the scaling as we get new sensor data in the future.
+Here, we read in the sensor data, apply min-max scaling defined in the `apply_sensor_transformations_toc()` function, and store the dataset for use later
 
 ```{r}
 # Read in all data to create scaling parameters
