@@ -136,7 +136,8 @@ apply_ml_bias_correction <- function(train_val_df, testing_df, fold_model, fold_
   #residuals
   y_res <- val_obs - val_preds
 
-  #Xgboost inputs/settings for ML2 Res model
+  # Xgboost inputs/settings for ML2 Res model
+  # for the purposes of this function, we are not tuning, this is definitely over-fit as is, but we'll leave here as an example
   dres_train <- xgb.DMatrix(data = X_res, label = y_res)
   default_hyper_params <- list(
     objective        = "reg:squarederror",
