@@ -86,7 +86,6 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
     summarise(across(everything(), mean, na.rm = TRUE), .groups = 'drop')
 
   if(method  %in% c("Ensemble", "ensemble")){
-    #browser()
 
     summarized_data <- imap_dfc(model, ~{
       #get model features
