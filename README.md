@@ -1,6 +1,8 @@
 # UCLP DSS
 
-Repo to organize all data/code related to the Upper CLP Decision Support System. \## Primarily project goals:
+Repo to organize all data/code related to the Upper CLP Decision Support System. 
+
+## Primarily project goals:
 
 -   Create dashboard for all WQ and quanity data relevant to CLP Municipal water supplies
 
