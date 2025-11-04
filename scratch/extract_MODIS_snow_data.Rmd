@@ -239,13 +239,12 @@ mapview(aoi_sf)
 ```
 
 
-### - MODIS crop + filter
+### - MODIS crop + filter + retrieve NDSI
 
 Now, use the rgee package to pull in MODIS Normalized Difference Snow Index timeseries for the AOI. Snow has strong visible reflectance and strong short-wave IR absorbing characteristics. The Normalized Difference Snow Index (NDSI) is an effective way to distinguish snow from many other surface features. This is analagous to the similar index for vegetation, the Normalized Difference Vegetation Index (NDVI). Additionally, some snow/cloud discrimination is accomplished using the NDSI.The associated dataset includes snow cover, quality assurance (QA) SDSs, latitude and longitude SDSs, and local and global attributes. The NDSI snow cover algorithm identifies snow-covered land and snow-covered ice on inland water. Read more about it here: https://modis.gsfc.nasa.gov/data/dataprod/mod10.php and here: https://modis.gsfc.nasa.gov/data/atbd/atbd_mod10.pdf.
 
 
-Things that we tried but removed from this script
-  This line created a mask that removed NDSI values below a certain threshold. However, this effectively removed no and low snow pixels which made it impossible to see changes in snow cover for the AOI below that threshold. Because we're interested in melt, we need to retain now and low snow pixels.
+Read in and plot the first 60 images as a composite
 
 ```{r modis}
 
@@ -290,6 +289,14 @@ Map$addLayer(
   name = "Snow Cover"
   )
 
+```
+
+Now, define a processing function to extract statistics for daily rasters throughout the time period for the AOI. 
+Perform filtering using the NDSI_Snow_Cover_Basic_QA band - keep all pixels that are considered "good quality".
+
+Note: A NDSI threshold filter was tested in this script but was determined to not be useful (indicated by "gt" for greater than threshold in the following code). It was kept in because this script is exploratory and others may want to test this. Applying this threshold effectively removes no and low snow pixels which made it impossible to see changes in snow cover for the AOI below that threshold. Because we're interested in melt, we need to retain now and low snow pixels.
+
+```{r MODIS snow_properties}
 
 # Next, define a combined image processing function that performs QA masking
 # and calculates the mean NDSI for an area of interest. 
@@ -449,7 +456,9 @@ snow_df <- data.frame(
 
 ```
 
-### - Plot NDSI
+### - Plot NDSI 
+
+Note, this plot shows the issue with using an NDSI threshold (only retains high snowcover cells)
 
 ```{r plot_NDSI}
 
@@ -467,8 +476,9 @@ snow_df <- data.frame(
 ```
 
 
-```{r plot_NDSI_MELT_DISCHARGE}
 # Now plot NDSI and melt with discharge
+```{r plot_NDSI_MELT_DISCHARGE}
+
 
 # Create multiplier for scaling melt to plots - note melt is a change in fraction
 # so it is unitless. NDSI is a percentage snow cover so it is unitless also.
