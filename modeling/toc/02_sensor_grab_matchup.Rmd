@@ -12,6 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 options(dplyr.summarise.inform = FALSE)
 source("src/setup_libraries.R")
 source("src/load_grab_sample_data.R")
+source("src/apply_fdom_temp_corr.R")
 
 ```
 
@@ -105,8 +106,8 @@ This works using the wide dataset and finds the most recent (forward looking) ti
 ```{r}
 #trim waterchem to only samples with TOC and needed columns
 water_chem <- water_chem%>%
-  filter(!is.na(TOC))%>%
-  select(site_code, DT_sample, TOC, ChlA, collector)
+  filter(!is.na(TOC) & DT_sample >= ymd("2023-09-01") & site_code %in% unique(all_sensor_data_wide$site))%>%
+  select(site_code, DT_sample, SC, TN, lab_turb, TOC, ChlA, collector)
 
 #loop over waterchem to form matchup dataset
 modeling_data <- map(1:nrow(water_chem), function(i) {
@@ -242,7 +243,11 @@ ROSS_model_data <- modeling_data%>%
   #removing samples with no match up
   filter(!is.na(sensor_datetime))%>%
   mutate(sensor_datetime = as.character(sensor_datetime), 
-         lab_datetime = as.character(lab_datetime))
+         lab_datetime = as.character(lab_datetime))%>%
+  rename(lab_cond = SC)
+
+toc_dataset <- ROSS_model_data%>%
+  select(-lab_turb, -lab_cond, -TN, -ChlA)
 
 write_csv(ROSS_model_data, here("data", "derived", "matchup_datasets", paste0("parsed_toc_sensor_clp_", Sys.Date(),".csv")))
 
@@ -253,16 +258,25 @@ write_csv(ROSS_model_data, here("data", "derived", "matchup_datasets", paste0("p
 ## Binding with Virridy 
 
 ```{r}
-virridy_data <- read_csv(here("data", "derived", "matchup_datasets","parsed_data_virridy.csv"))%>%
-  dplyr::select(-"...1" )%>%
+virridy_data <- read_csv(here("data", "derived", "matchup_datasets","parsed_data_virridy.csv"), show_col_types = F)%>%
+  dplyr::select(-`...1`, -Phosphorus,-Kjeldahl,-hrs_since_last_cleaning)%>%
   mutate(id = as.character(mw_id))%>%
   select(-mw_id)%>%
-  mutate(collector = "Virridy")
+  mutate(collector = "Virridy")%>%
+  apply_fdom_temp_corr(fdom_col = "FDOM",fdom_corr_col = "FDOM_corr_25c", temp_col = "Temp")%>%
+  rename(lab_turb = Turbidity,
+         lab_cond = Conductivity,
+        `FDOM Fluorescence` = FDOM,
+         `Chl-a Fluorescence` = Chl_a,
+         Turbidity = Sensor_Turb, 
+         `Specific Conductivity` = Sensor_Cond,
+         Temperature = Temp)
+  
 
 all_matched_data <- ROSS_model_data%>%
   bind_rows(virridy_data)
 
-write_csv(all_matched_data, here("data", "derived", "matchup_datasets", paste0("parsed_toc_sensor_clp_virridy_", Sys.Date(),".csv")))
+write_csv(all_matched_data, here("data", "derived", "matchup_datasets", paste0("parsed_toc_sensor_virridy_clp_", Sys.Date(),".csv")))
 
 ```
 

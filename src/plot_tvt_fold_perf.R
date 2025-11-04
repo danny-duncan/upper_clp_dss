@@ -70,10 +70,13 @@
 
 plot_tvt_fold_perf <- function( train_val_df, test_df, fold_set, fold_model, target_col = "TOC", units = "mg/L", subtitle_arg = "CLP Samples Only") {
 
+
   #Check that train val df has fold_id column
   if(!"fold_id" %in% colnames(train_val_df)){
     stop("train_val_df must contain a 'fold_id' column indicating fold assignments.")
   }
+  source("src/setup_ross_theme.R") #load theme
+
   #split data into training, validation
   val_set <- train_val_df %>% filter(fold_id == fold_set)
   train_set <- anti_join(train_val_df, val_set, by = "id")
@@ -91,7 +94,7 @@ plot_tvt_fold_perf <- function( train_val_df, test_df, fold_set, fold_model, tar
     mutate(across(everything(), as.numeric)) %>%
     as.matrix()
   # Define prediction column name
-  pred_col <- glue("{target}_guess_fold{fold_set}")
+  pred_col <- glue("{target_col}_guess_fold{fold_set}")
 
   # make predictions
   val_set[[pred_col]] <-  predict(fold_model, val_matrix, iterationrange = c(1, fold_model$best_iteration))

@@ -151,6 +151,7 @@ xgboost_hyperparameter_tuning <- function(data, target_col = "TOC", site_col = "
       params <- list(
         objective        = "reg:squarederror",
         eval_metric      = "rmse",
+        tree_method = "exact", #deterministic method for reproducibility
         eta              = tune_grid$eta[j],
         gamma            = tune_grid$gamma[j],
         alpha            = tune_grid$alpha[j],
@@ -160,6 +161,8 @@ xgboost_hyperparameter_tuning <- function(data, target_col = "TOC", site_col = "
         colsample_bytree = tune_grid$colsample_bytree[j],
         min_child_weight  = tune_grid$min_child_weight[j]
       )
+      #set seed for reproducibility
+      set.seed(123)
 
       #train model with hyper parameters
       model_ij <- xgb.train(
@@ -172,7 +175,8 @@ xgboost_hyperparameter_tuning <- function(data, target_col = "TOC", site_col = "
                                        ifelse(tune_grid$eta[j] >= 0.01, 500,
                                               1000)),
         print_every_n = 1000,
-        verbose = 0
+        verbose = 0,
+        nthread = 1
       )
 
       pred_col <- paste0(target_col, "_guess")
@@ -214,14 +218,12 @@ xgboost_hyperparameter_tuning <- function(data, target_col = "TOC", site_col = "
       }
     }
 
-    p <- ggplot(perf) +
+    perf_dist <- ggplot(perf) +
       geom_histogram(aes(x = rmse_val, fill = "Val")) +
       geom_histogram(aes(x = rmse_train, fill = "Train")) +
       labs(title = paste("Fold", i, "Val & Train RMSE by Grid ID"),
            x = "RMSE", y = "density", fill = "Group") +
       theme_minimal()
-
-    plot(p)
 
     # --- Pick top 10 by validation RMSE ---
     top10 <- perf[order(perf$rmse_val), ][1:10, ]
@@ -246,8 +248,8 @@ xgboost_hyperparameter_tuning <- function(data, target_col = "TOC", site_col = "
       #Objects for learning rate plot
       eval_log <- fold_models[[model_key]][["evaluation_log"]]
       params <- fold_models[[model_key]][["params"]]
-      #remove objective, eval metric, validate parameters
-      params <- params[!names(params) %in% c("objective", "eval_metric", "validate_parameters")]
+      #remove objective, eval metric, validate parameters, tree method, nthread from params
+      params <- params[!names(params) %in% c("objective", "eval_metric", "validate_parameters", "tree_method", "nthread")]
       # collapse params into a single string
       param_text <- paste(
         names(params), "=", unlist(params),
@@ -388,42 +390,36 @@ xgboost_hyperparameter_tuning <- function(data, target_col = "TOC", site_col = "
     eval_grid <- wrap_plots(eval_plots, nrow = 2, ncol = 3, common.legend = TRUE) +
       theme(legend.position = "bottom")
 
-    print(eval_grid)
-
     #Create plot with top 6 perf plots
     train_val_grid <- wrap_plots(train_val_plots, nrow = 2, ncol = 3, common.legend = TRUE) +
       theme(legend.position = "bottom")
 
-    print(train_val_grid)
+    # Initialize list for this fold
+    fold_results[[i]] <- list()
+    fold_results[[i]]$tv_plot <- train_val_grid
+    fold_results[[i]]$eval_plot <- eval_grid
+    fold_results[[i]]$perf_dist <- perf_dist
 
-    #Ask user for best grid
-    best_choice <- as.integer(readline(prompt = "Enter the grid ID of the best model from the top 5 (or type 0 to select the one with smallest train-val gap): "))
 
-    #Select user's choice or default to smallest train-val gap
-    if (best_choice %in% best_rows$grid_id) {
-      best_row <- best_rows[best_rows$grid_id == best_choice, ]
-    } else {
-      best_row <- best_rows[1, ]  # Default to smallest train-val gap
-      cat("Invalid choice. Defaulting to model with smallest train-val gap.\n")
+    # Loop through each candidate model (e.g., in best_rows)
+    for (j in seq_len(nrow(best_rows))) {
+      grid_id <- best_rows$grid_id[j]
+      model_key <- paste0("fold", i, "_grid", grid_id)
+
+      # Extract model and info
+      model_obj <- fold_models[[model_key]]
+      perf_row  <- best_rows[j, ]
+      params    <- model_obj[["params"]] %>%
+        as_tibble() %>%
+        select(-c(objective, eval_metric, validate_parameters))
+
+      # Store everything in a sub-list for this grid
+      fold_results[[i]][["grid_results"]][[paste0("grid_", grid_id)]] <- list(
+        model       = model_obj,
+        perf        = perf_row,
+        params      = params
+      )
     }
-
-    model_key <- paste0("fold", i, "_grid", best_row$grid_id)
-    best_params <- fold_models[[model_key]][["params"]]%>%
-      as_tibble%>%
-      select(-c(objective, eval_metric, validate_parameters))
-    best_params[[i]] <- best_params
-
-
-    # Save only the best model for this fold
-    fold_results[[i]] <- list(
-      model = fold_models[[paste0("fold", i, "_grid", best_row$grid_id)]],
-      perf  = best_row
-    )
-
-    cat("Best params for fold", i, ":\n")
-    print(best_params[[i]])
-    cat("\n Model performance:\n")
-    print(fold_results[[i]]$perf)
     #clean up meemory
     gc()
   }
