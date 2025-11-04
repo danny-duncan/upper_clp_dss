@@ -37,6 +37,7 @@ library(sf)
 library(dplyr)
 library(lubridate)
 library(readr)
+library(leafem)
 
 # Define functions to retrieve gauge stations, observed discharge, and
 # forecast discharge:
@@ -321,6 +322,8 @@ get_hefs_forecast <- function(ID, param = c("QINE")) {
 }
 
 
+
+
 # Test workflow
 sonde_locs <- read_csv("data/metadata/sonde_location_metadata.csv") %>%
   mutate(lat = str_split(lat_long, pattern = ",", simplify = TRUE)[,1] %>% as.numeric(),
@@ -337,12 +340,20 @@ search_aoi <- sonde_locs %>%
 
 # Download and plot gauge sites in AOI
 gauge_sites <- get_hefs_gages(search_aoi)
-mapview(search_aoi %>% st_sf(name = "search_aoi",
+a <- mapview(gauge_sites,
+             col.regions = "dodgerblue") +
+  mapview(search_aoi %>% st_sf(name = "search_aoi",
                              geometry = .),
         col.regions = "hotpink",
-        alpha.regions = 0.2) +
-mapview(gauge_sites, label = gauge_sites$lid,
-        labelOptions = labelOptions(noHide = TRUE, textOnly = TRUE))
+        alpha.regions = 0.2)
+
+addStaticLabels(a,
+                label = gauge_sites$lid,
+                noHide = TRUE,
+                direction = 'right',
+                textOnly = TRUE,
+                textsize = "13px",
+                style = list("color" = "black", "font-weight" = "normal"))
 
 
 # From that map, the FTDC2 is the gauge we care most about
