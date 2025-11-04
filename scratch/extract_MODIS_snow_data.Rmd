@@ -23,10 +23,13 @@ library(mapview)
 library(dataRetrieval)
 library(signal)
 library(ggthemes)
+library(zoo)
+library(plotly)
+library(ggpubr)
 library(tidyverse)
 
 # Authenticate your GEE account - only need to do once
-# ee_Authenticate(user = "therossyndicate@gmail.com")
+#ee_Authenticate(user = "therossyndicate@gmail.com")
 
 # strange workaround here to get rgee to initialize
 # see notes here: https://github.com/r-spatial/rgee/issues/355
@@ -218,8 +221,11 @@ First, define an area of interest (AOI). Here, I select the first watershed in t
 
 ```{r define_aoi}
 
+
+
 # for now, just start with first watershed
-aoi_sf <- watersheds[3,] %>% 
+n <- 1
+aoi_sf <- watersheds[n,] %>% 
   select(geometry)
 
 # Create an eeFeatureCollection for use in GEE
@@ -438,13 +444,16 @@ snow_df <- data.frame(
                 #melt_ma_ma = ifelse(melt_ma_ma < 0, -melt_ma_ma, 0),
                 melt_fft = ifelse(melt_fft < 0, -melt_fft, 0),
                 melt_sg = ifelse(melt_sg < 0, 0, melt_sg)) %>%
-  dplyr::left_join(discharge %>% dplyr::filter(site_no == watersheds[3,]$site_no), 
+  dplyr::left_join(discharge %>% dplyr::filter(site_no == watersheds[n,]$site_no), 
                    by = c("date" = "Date"))
 
+```
 
+### - Plot NDSI
 
+```{r plot_NDSI}
 
-
+# Just view NDSI Data through time
   ggplotly(
   ggplot(snow_df, aes(x = date)) +
     geom_line(aes(y = mean_ndsi, color = "Mean NDSI")) +
@@ -455,10 +464,17 @@ snow_df <- data.frame(
     geom_point(aes(y = med_ndsi, color = "Median NDSI")) +
     theme_bw() +
     scale_color_colorblind(name = ""))
+```
 
-# Multiplier for scaling melt (unitless) to discharge
-mult <- 70
+
+```{r plot_NDSI_MELT_DISCHARGE}
+# Now plot NDSI and melt with discharge
+
+# Create multiplier for scaling melt to plots - note melt is a change in fraction
+# so it is unitless. NDSI is a percentage snow cover so it is unitless also.
   
+mult <- max(snow_df$discharge_cfs, na.rm = TRUE)
+
 ggarrange(
   ggplot(snow_df, aes(x = date)) +
   geom_line(aes(y = mult * mean_ndsi, color = "NDSI"), alpha = 0.6, lwd = 1) +
@@ -472,11 +488,11 @@ ggarrange(
   labs(x = "", y = "NDSI (-) and Discharge (cfs)") +
   scale_color_colorblind(name = ""),
 ggplot(snow_df, aes(x = date)) +
-  geom_line(aes(y = discharge_cfs, color = "Discharge"), lwd = 1, alpha = 0.5) +
-  geom_line(aes(y = 10 * mult * melt_ma_ma, color = "Melt_MA"), lwd = 0.75, alpha = 0.2) +
+  geom_line(aes(y = discharge_cfs, color = "Discharge"), lwd = 1, alpha = 0.9) +
+  geom_line(aes(y = melt_ma * mult / max(melt_ma, na.rm = TRUE), color = "Melt_MA"), lwd = 0.75, alpha = 0.2) +
   #geom_smooth(method = "loess", se = FALSE, aes(y = 30 * mult * melt, color = "Melt_14dayMA_plus_Loess"), span = .05, alpha = 0.8, lwd = 1) +
-  geom_line(aes(y = mult * melt_sg, color = "Melt_SGolay"), lwd = 0.75) +
-  geom_line(aes(y = 15 * mult * melt_fft, color = "Melt_FFT"), lwd = 0.75) +
+  geom_line(aes(y = melt_sg * mult / max(melt_sg, na.rm = TRUE), color = "Melt_SGolay"), lwd = 0.75) +
+  geom_line(aes(y = melt_fft * mult / max(melt_fft, na.rm = TRUE), color = "Melt_FFT"), lwd = 0.75) +
   theme_bw() +
   labs(x = "", y = "NDSI Melt (-) and Discharge (cfs)") +
   scale_color_colorblind(name = ""),
@@ -487,8 +503,8 @@ ncol = 1, align = "hv"
 
 ```
 
-
-Some of the noise might simply be added by QA filtering that removes cloud cover bands - and other low quality data. Here, we'll take a closer look at the number of image pixels that are removed for cloud cover.
+# Explore Clouds
+Some of the noise in NDSI might simply be added by QA filtering that removes cloud cover bands - and other low quality data. Here, we'll take a closer look at the number of image pixels that are removed for cloud cover during the time period.
 
 ```{r}
 
@@ -549,7 +565,7 @@ min_cloud_vars <- min_value_ee$get('Cloud_Fraction')$getInfo()
 
 # Now, plot the resulting fraction of time that each pixel was flagged as
 # bad data due to cloud cover 
-Map$setCenter(coords[1], coords[2], 10)
+Map$setCenter(coords[1], coords[2], 13)
 Map$addLayer(
   # 1. Limit the collection to the first 8 images
   # 2. Use sum() to combine them into a single image where pixel values are added
