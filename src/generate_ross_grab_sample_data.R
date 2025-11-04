@@ -135,7 +135,7 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
     unzip(zipfile = dwn_file, exdir = tempdir())
     unzip_file <- list.files(tempdir(), pattern = "rossyndicate", full.names = TRUE)
     #move unzip folder to raw_ross_chem_data_directory and rename to version number
-    file.rename(unzip_file, file.path(download_dir, version_name))
+    file.rename(unzip_file, file.path(raw_ross_chem_data_directory, version_name))
     message(paste0("ROSS CLP version: ", version_name, " downloaded to ", file.path(raw_ross_chem_data_directory, version_name) ) )
     #Prompt user to set update_data to TRUE to save updated data
     if(update_data == F){
