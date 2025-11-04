@@ -3,9 +3,7 @@ title: "extract_MODIS_snow_data"
 output: html_document
 ---
 
-The purpose of this markdown is to grab MODIS snow cover data using the rgee
-package and summarize it for a catchment (defined by locations of monitored 
-discharge). Catchments are defined using nhdplusTools.
+This markdown explores a workflow to grab MODIS snow cover data using the rgee package and summarizes it for a catchment to return daily values. UCLP sonde locations are used to create a search AOI for which to find NWIS gauges. Then, watershed polygons associated with each gauge are read in using nhdplusTools. Watershed polygon are then set as the AOI for which which to summarize daily MODIS NDSI snow cover statistics for a user-defined period of time - e.g., the mean daily snow cover for the AOI. The processing function filters to only include good and high quality pixels as defined by a generic QA band associated with the dataset. A melt proxy variable is then calculated from the daily snow cover fraction by differencing the NDSI snow cover through time. Because the NDSI snow cover is very noisy, smoothing must occur prior to calculating melt. At the end of the script, cloud cover is explored using a cloud band to consider how much clouds contribute to noise. 
 
 MODIS Snow Cover: https://doi.org/10.5067/MODIS/MOD10A1.061
 
