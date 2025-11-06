@@ -1,4 +1,4 @@
-name: Hourly Data Collection From APIs (HV, WET, Contrail) test
+name: Hourly Data Collection From APIs (HV, WET, Contrail)
 on:
   schedule:
     - cron: "1 * * * *"  # Every hour at minute 1 (prevents hv api call issues)
@@ -54,7 +54,7 @@ jobs:
         run: |
           git config --global user.email 'actions@github.com'
           git config --global user.name 'GitHub Actions'
-          git add dashboard/data/data_backup.parquet
+          git add -f dashboard/data/data_backup.parquet
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else

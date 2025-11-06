@@ -130,13 +130,12 @@ sites <- c("pbd")
 
 # When we are getting all the 2025 data across the network for modeling, use these sites
 #sites <- c("pbd", "salyer", "udall", "riverbend", "cottonwood", "springcreek" , "elc", "boxcreek",  "archery", "riverbluffs")
-source(file = here("src", "api_puller.R"))
 
 message(paste("....Collation Step Update:", "Attempting to pull data from HydroVu API"))
 walk(sites,
      function(site) {
        message("Requesting HV data for: ", site)
-       api_puller(
+       fcw.qaqc::api_puller(
          site = site,
          start_dt = utc_start_DT, # api puller needs UTC dates
          end_dt = utc_end_DT,
@@ -370,13 +369,22 @@ for (chunk_idx in seq_along(intrasensor_data_chunks)) {
 }
 
 # Network Check and Final Flags
-#custom network check while fcw.qaqc package is being updated
-source("src/network_check.R")
+site_order_list <- list(
+  clp = c("joei", "cbri", "chd", "pfal", "sfm", "pbr_fc", "pman", "pbd",
+          "bellvue", "salyer", "udall", "riverbend", "cottonwood", "elc",
+          "archery", "riverbluffs"),
+  springcreek = c("riverbend", "springcreek", "cottonwood"),
+  boxcreek = c("elc", "boxcreek", "archery"),
+  sfm = c("sfm"),
+  mtn_campus = c("mtn_campus")
+)
 
 # apply network-level quality control
 network_flags <- intrasensor_flags_list %>%
   # network check compares patterns across sites
-  purrr::map(~network_check(df = .,network = "uclp_dashboard", intrasensor_flags_arg = intrasensor_flags_list)) %>%
+  purrr::map(~fcw.qaqc::network_check(df = .,
+                                      intrasensor_flags_arg = intrasensor_flags_list,
+                                      site_order_arg = site_order_list)) %>%
   rbindlist(fill = TRUE) %>%
   # clean up flag column formatting
   tidy_flag_column() %>%

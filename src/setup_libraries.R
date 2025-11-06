@@ -1,6 +1,8 @@
 #this file contains all the packages,metadata, groupings and color palettes that are used in downstream scripts
 
 knitr::opts_chunk$set(echo = TRUE)
+
+#Installing and loading all packages
 package_loader <- function(x) {
   if (x %in% installed.packages()) {
     suppressMessages({
@@ -15,7 +17,6 @@ package_loader <- function(x) {
 }
 
 
-
 invisible(
   lapply(c(
     # Date/time handling
@@ -24,13 +25,13 @@ invisible(
     # Data cleaning and utilities
     "janitor",
     "broom",
-    "here",
     # Stats/modeling
     "stats",
     "RcppRoll",
     "trend",
     "xgboost",
     "scales",
+    "slider",
     # Spatial packages
     "sf",
     "nhdplusTools",
@@ -49,7 +50,6 @@ invisible(
     "ggbeeswarm",
     "plotly",
     "ggpmisc",
-    "flextable",
     # Web scraping/data retrieval
     "rvest",
     "httr",
@@ -58,26 +58,46 @@ invisible(
     "jsonlite",
     "dataRetrieval",
     "RSelenium",
-    # "cdssr",
     "yaml",
     # Development tools
     "devtools",
     "here",
+    "tools",
     # Core data manipulation
     "tidyverse",
     "data.table",
     "arrow",
     "readxl",
-    "furrr",
-    "fcw.qaqc"
+    "furrr"
   ),
   package_loader)
 )
 
+#library non CRAN packages
+non_cran_packages <- c("rossyndicate/fcw.qaqc",
+                       "anguswg-ucsb/cdssr")
+invisible(
+  lapply(non_cran_packages, function(x) {
+    pack_name <- unlist(strsplit(x, "/"))[2] #get package name (no GH username)
+
+    if (pack_name %in% installed.packages()) {
+      suppressMessages({
+        library(pack_name, character.only = TRUE)
+      })
+    } else {
+      suppressMessages({
+        devtools::install_github(x)
+        library(pack_name, character.only = TRUE)
+      })
+    }
+  })
+)
+rm(non_cran_packages, package_loader) #clean up
+
+
 # Helper function
 `%nin%` <- Negate(`%in%`)
-#Simple function to negate %in%
-`%nin%` = Negate(`%in%`)
+
 
 ### ----- Meta Data ----- ###
 
@@ -110,29 +130,5 @@ sensor_meta <- tibble(
 
 #Seasonal Color values
 #season_color_vals =c('#047E82','#397534','#59B851','#DEB907','#FA850E')
-require(tidyverse)
-require(ggthemes)
-# basic theme for all ggplots, if Roboto is not installed, just use default, but message
-if ({
-  require(systemfonts)
-  ("Roboto" %in% system_fonts()$family)
-}) {
-  ROSS_theme <- theme_bw() + #or theme_few()
-    theme(plot.title = element_text(hjust = 0.5, face = 'bold', family = "Roboto"),
-          plot.subtitle = element_text(hjust = 0.5, family = "Roboto"))
-} else {
-  message("You do not have the Roboto font family installed on your computer, currenly using ggplot default text family.
-          See ROSS_themes.R for directions to install the font family on your computer.")
-  ROSS_theme <- theme_bw() + #or theme_few()
-    theme(plot.title = element_text(hjust = 0.5, face = 'bold'),
-          plot.subtitle = element_text(hjust = 0.5))
-}
 
-ROSS_lt_pal <- c("#002EA3", "#E70870", "#256BF5",
-                 "#745CFB", "#1E4D2B", "#56104E")
-
-ROSS_dk_pal <- c("#1E4D2B", "#E70870", "#256BF5",
-                 "#FFCA3A", "#745CFB", "#C3F73A")
-
-ROSS_acc_pal <- c("#56104E", "#745CFB", "#FFCA3A", "#1E4D2B")
 
