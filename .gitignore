@@ -6,10 +6,10 @@
 **.Renviron
 
 # ignore data, creds, docs, env folders in the project root
-data/
-creds/
+data
+creds
 **credentials.sqlite
-docs/
+docs
 env/
 
 # ignore some dashboard stuff
