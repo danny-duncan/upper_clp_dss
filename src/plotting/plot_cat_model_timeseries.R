@@ -186,41 +186,4 @@ plot_cat_model_timeseries <- function( model_input_df, water_chem_df, target_col
     )
 
   p
-
-  # # ---- Plotly plot ----
-  # plot_ly() |>
-  #   # Add categorical tiles
-  #   add_trace(
-  #     data = df%>%filter(site == "Site_A"),
-  #     x = ~datetime,
-  #     y = ~category,
-  #     type = "heatmap",
-  #     z = ~as.numeric(category),
-  #     colors = cat_colors,
-  #     showscale = FALSE,
-  #     hoverinfo = "text",
-  #     text = ~paste("Site:", site,
-  #                   "<br>Date:", datetime,
-  #                   "<br>Category:", category)) |>
-  #   # Add sample stars
-  #   add_trace(
-  #     data = sample_df%>% filter(site == "Site_A"),
-  #     x = ~datetime,
-  #     y = ~category,
-  #     type = "scatter",
-  #     mode = "markers",
-  #     symbol = I("circle"),
-  #     marker = list(size = 10, color = "black", line = list(color = "white", width = 1)),
-  #     name = "Sample Data",
-  #     hoverinfo = "text",
-  #     text = ~paste("Site:", site,
-  #                   "<br>Date:", datetime,
-  #                   "<br>Sample Category:", category)
-  #   ) |>
-  #   layout(
-  #     title = list(text = "TOC Categorical Model Predictions<br><sub>*synthetic data*</sub>"),
-  #     xaxis = list(title = "Date"),
-  #     yaxis = list(title = "Category", categoryorder = "array", categoryarray = categories),
-  #     legend = list(title = list(text = ""), orientation = "v")
-  #   )
 }
