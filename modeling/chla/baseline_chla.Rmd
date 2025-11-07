@@ -15,42 +15,43 @@ library(Metrics)
 library(sf)
 library(nhdplusTools)
 library(mapview)
+library(arrow)
 library(tidyverse)
 
 version_date = Sys.Date()
+
+source("src/load_grab_sample_data.r")
 ```
 
 # Chlorophyll-a Grab Samples
 
-```{r}
-# grab chemistry data - this is from the zenodo pull
-ross_chla <- read_csv(here("data/upper_clp_dss/ross_clp_chem/data/cleaned/CLP_chemistry_up_to_20250701.csv")) %>% 
-  rename(site_name = Site,
-         date = Date) %>% 
-  select(site_code, site_name = site_name, date = date,
-         ChlA, Field_DO_mgL, Field_Temp_C, 
-         distance_upstream_km, Lat:location_type, -watershed) %>% 
-  mutate(collector = "ROSS",
-         doy = yday(date),
-         location_type = factor(location_type)) %>% 
-  filter(!is.na(ChlA)) %>% 
-  filter(Field_DO_mgL < 40) # remove the oddball in do
+Get all chl-a grab samples from our collated data set (`load_grab_sample_data()`)
 
-ggplot(ross_chla, aes(x = yday(date), y = ChlA)) +
+```{r}
+grab_chla <- load_grab_sample_data() %>% 
+  select(site_code, site_name, date = Date,
+         ChlA, distance_upstream_km, Lat:flag) %>% 
+  filter(!is.na(ChlA))
+
+# check for flags
+unique(grab_chla$flag)
+
+ggplot(grab_chla, aes(x = yday(date), y = ChlA)) +
   geom_point()+
   facet_grid(location_type ~ .)
 
-plot(ross_chla %>% select(ChlA, Field_DO_mgL, Field_Temp_C))
 ```
 
 ```{r}
-walk(unique(ross_chla$location_type), function(loc) {
-  gg <- ross_chla %>% 
+walk(unique(grab_chla$location_type), function(loc) {
+  
+  gg <- grab_chla %>% 
     filter(location_type == loc) %>% 
     ggplot(. , aes(x = yday(date), y = ChlA, color = factor(year(date)))) +
     geom_point() +
     facet_wrap(site_name ~ ., scales = "free_y")
   print(gg)
+  
 })
 
 ```
@@ -83,37 +84,44 @@ mapview(flowlines) + mapview(waterbodies) + mapview(xy)
 # Find NHD comid for each coordinate. NOTE: resolution not great for some sites (see Comanche/Hourglass
 # complex)... Some samples are along the same flowline, and are therefore represented with the same
 # information. 
-distance_upstream_waterbody <- pmap_dfr(list(comid = xy$comid, geom = xy$geometry, site_code = xy$site_code),
-         function(comid, geom, site_code) {
-           # get flowlines upstream of point
-           upstream_of_point <- get_UT(flowlines, comid)
-           # and grab those as a sf
-           upstream_fl <- get_nhdplus(comid = upstream_of_point) %>% 
-             get_tocomid(., add = TRUE) %>%
-             mutate(ID=comid, toID=tocomid, length=lengthkm)
-           # filter waterbodies for those that intersect the fl
-           upstream_wb <- waterbodies[upstream_fl, ] %>% 
-             filter(onoffnet == 1)
-           # if there is at least one wb upstream, calculate the distance
-           if(nrow(upstream_wb) >= 1) {
-             art_path_outlet <- map_dfr(.x = upstream_wb$comid,
-                                        ~ tryCatch(get_wb_outlet(.x, upstream_fl),
-                                                   error = function(e) {} ))
-             end_point <- get_node(art_path_outlet) %>% 
-               mutate(comid = art_path_outlet$comid)
-             mapview(upstream_wb) + mapview(end_point) + mapview(geom)
-             distance <- get_pathlength(upstream_fl) %>% 
-               rename(comid = ID) %>% 
-               right_join(end_point, by = "comid") %>% 
-               arrange(pathlength) %>% 
-               first() %>% 
-               mutate(site_code = site_code) %>% 
-               select(site_code, dist_to_up_wb_km = pathlength)
-           } else {
-             distance <- tibble("site_code" = site_code, "dist_to_up_wb_km" = NA)
-           }
-           distance
-         })
+distance_upstream_waterbody <- pmap_dfr(
+  list(comid = xy$comid, geom = xy$geometry, site_code = xy$site_code),
+  function(comid, geom, site_code) {
+    
+    # get flowlines upstream of point
+    upstream_of_point <- get_UT(flowlines, comid)
+    # and grab those as a sf
+    upstream_fl <- get_nhdplus(comid = upstream_of_point) %>% 
+      get_tocomid(., add = TRUE) %>%
+      mutate(ID=comid, toID=tocomid, length=lengthkm)
+    # filter waterbodies for those that intersect the fl
+    upstream_wb <- waterbodies[upstream_fl, ] %>% 
+      filter(onoffnet == 1)
+    
+    # if there is at least one wb upstream, calculate the distance
+    if(nrow(upstream_wb) >= 1) {
+      art_path_outlet <- map_dfr(.x = upstream_wb$comid,
+                                 ~ tryCatch(get_wb_outlet(.x, upstream_fl),
+                                            error = function(e) {} ))
+      end_point <- get_node(art_path_outlet) %>% 
+        mutate(comid = art_path_outlet$comid)
+      mapview(upstream_wb) + mapview(end_point) + mapview(geom)
+      distance <- get_pathlength(upstream_fl) %>% 
+        rename(comid = ID) %>% 
+        right_join(end_point, by = "comid") %>% 
+        arrange(pathlength) %>% 
+        first() %>% 
+        mutate(site_code = site_code) %>% 
+        select(site_code, dist_to_up_wb_km = pathlength)
+      
+    } else {
+      
+      distance <- tibble("site_code" = site_code, "dist_to_up_wb_km" = NA)
+      
+    }
+    
+    distance
+  })
 
 ```
 
@@ -123,22 +131,28 @@ https://github.com/rossyndicate/CLP_waterchem_data/blob/v2025.07.01/scripts/dist
 
 ```{r}
 distance_to_major_trib <- function(site) {
+  
   flowline <- get_nhdplus(AOI = xy %>% filter(site_code == site))
+  
   mainstem <- get_UM(flowlines, flowline$comid)
+  
   mainstem_fl <- get_nhdplus(comid = mainstem) %>% 
     get_tocomid(., add = TRUE) %>%
     mutate(ID=comid, toID=tocomid, length=lengthkm,
            perc_change = ((totdasqkm -  flowline$totdasqkm) / flowline$totdasqkm) * 100) %>%
     select(comid, ID, toID, length, perc_change)
+  
   mainstem_big_trib <- mainstem_fl %>%
     filter(perc_change <= -20) %>%
     select(comid, perc_change) %>%
     filter(perc_change == max(perc_change, na.rm = TRUE))
+  
   trib_fl <- get_nhdplus(comid = tribs) %>%
     get_tocomid(., add = TRUE) %>%
     mutate(ID=comid, toID=tocomid, length=lengthkm,
            perc_change = ((totdasqkm -  flowline$totdasqkm) / flowline$totdasqkm) * 100) %>%
     select(comid, ID, toID, length, perc_change)
+  
   if(nrow(mainstem_big_trib) >= 1) {
     distance <- get_pathlength(mainstem_fl) %>% 
       filter(ID == mainstem_big_trib$comid) %>%
@@ -146,15 +160,16 @@ distance_to_major_trib <- function(site) {
   } else {
     distance <- NA
   }
-
-  # mapview(mainstem_big_trib, color = "red") + mapview(trib_fl) + mapview(mainstem_fl %>% filter(comid != mainstem_big_trib$comid), zcol = "perc_change") 
-
+  
   meta <- xy %>% filter(site_code == site) %>%
     mutate(dist_to_maj_trib = distance)
+  
   return(meta)
+  
 }
+
 distance_meta <- xy$site_code %>%
-    map(~distance_to_major_trib(.))
+  map(~distance_to_major_trib(.))
 ```
 
 watershed area:reservoir area
