@@ -1,3 +1,48 @@
+#' @title Plot Categorical Model Predictions Over Time
+#'
+#' @description
+#' Creates a time series plot showing categorical model predictions and
+#' observed water chemistry data for a selected site. Supports multi-class
+#' XGBoost models (`"multi:softprob"` or `"multi:softmax"`) and combines
+#' multiple model folds using soft or hard voting.
+#'
+#' @param model_input_df Data frame of model input features, including `site`
+#'   and `DT_round` datetime columns.
+#' @param water_chem_df Data frame of observed chemistry data with `site_code`,
+#'   `DT_sample`, and the target categorical variable (e.g., `"TOC_cat"`).
+#' @param target_col Character name of the categorical target variable.
+#'   Default is `"TOC_cat"`.
+#' @param models List of trained XGBoost models (e.g., cross-validation folds).
+#' @param voting_method Character, either `"soft"` (average probabilities)
+#'   or `"hard"` (majority vote). Default is `"soft"`.
+#' @param summary_interval Character time unit for rounding and summarizing
+#'   datetimes (default `"1 hour"`).
+#' @param site_sel Character site code to filter for plotting.
+#' @param site_title Character site name for the plot title.
+#' @param start_DT,end_DT Character datetimes defining the plotted range.
+#' Use YMD HM format in "MST"
+#' @param subtitle_arg Character text for the plot subtitle.
+#'   Default `"CLP Samples Only"`.
+#' @param title Character optional title for the plot.
+#' @param units Character units label for the y-axis. Default `"mg/L"`.
+#' @param cat_colors Named character vector giving fill colors for each category.
+#'
+#' @return A `ggplot` object showing predicted categorical classes over time
+#'   as colored tiles, with observed chemistry samples overlaid as black diamonds
+#'
+#' @examples
+#' \dontrun{
+#' plot_cat_model_timeseries(
+#'   model_input_df = sensor_data,
+#'   water_chem_df = chem_data,
+#'   models = map(full_model, "model),
+#'   site_sel = "sfm",
+#'   site_title = "South Fork CLP ",
+#'   start_DT = "2025-06-01 00:00",
+#'   end_DT = "2025-07-01 00:00"
+#' )
+#' }
+#'
 plot_cat_model_timeseries <- function( model_input_df, water_chem_df, target_col = "TOC_cat", models, voting_method = "soft",
                                        summary_interval = "1 hour", site_sel, site_title, start_DT, end_DT,
                                        subtitle_arg = "CLP Samples Only", title = "", units = "mg/L",
