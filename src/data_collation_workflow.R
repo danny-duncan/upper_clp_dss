@@ -66,7 +66,7 @@ if (mm_DT_tz == "UTC") {
 # This comes through the WET API service.
 # Pulled in by the function `pull_wet_api()`.
 invalid_wet_values <- c(-9999, 638.30, -99.99)
-source(file = here("src", "pull_WET_api.R"))
+source(file = here("src","api_pull", "pull_WET_api.R"))
 
 wet_sites <- c("sfm", "chd", "pfal")
 
@@ -172,7 +172,7 @@ hv_data <- list.files(staging_directory, full.names = TRUE, pattern = ".parquet"
 message(paste("....Collation Step Update:", "successfully pulled and munged HydroVu API data"))
 
 ## Contrail Data ----
-source(file = here("src", "pull_contrail_api.R"))
+source(file = here("src","api_pull", "pull_contrail_api.R"))
 
 contrail_un <- Sys.getenv("CONTRAIL_CLIENT_ID")
 contrail_pw <- Sys.getenv("CONTRAIL_CLIENT_SECRET")
