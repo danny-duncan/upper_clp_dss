@@ -1,53 +1,58 @@
-#' @title XGboost model training with site-stratified hyperparameter tuning
+#' Site-Stratified XGBoost Hyperparameter Tuning for Categorical Targets
 #'
-#' @description
-#' This script with take in training/validation data, hyper parameters, site info on train/val splits and column info and then train/hypertune XGBoost models using caret
+#' This function performs site-stratified hyperparameter tuning (grid search) for an XGBoost
+#' classification model on a categorical target variable. It trains models on
+#' multiple folds of the data, evaluates performance using accuracy, Kappa,
+#' F-score, and log-loss, and visualizes the results for top-performing hyperparameter sets.
 #'
-#' @param data Data frame containing the features and target variable. This data should be normalized/standardized already and should not contain any testing data
+#' @param data A data frame containing features, target column, site column, and a `fold_id` column for cross-validation.
+#' @param target_col Character string specifying the column name of the target variable. Default is `"TOC_cat"`.
+#' @param site_col Character string specifying the column name of the site identifier. Default is `"id"`.
+#' @param weights NULL or a function that returns observation weights. Default is `NULL`, which assigns equal weight to all rows.
+#' @param tune_grid Optional data frame of hyperparameter combinations to try. Each row should contain values for: `objective`, `eval_metric`, `nrounds`, `eta`, `gamma`, `alpha`, `lambda`, `max_depth`, `subsample`, `colsample_bytree`, `min_child_weight`. If `NULL`, default parameters are used.
+#' @param units Character string describing the units of the target variable. Default is `"mg/L"`.
+#' @param class_levels Character vector specifying the factor levels of the target variable. Default is `c("0-2", "2-4", "4-8", "8+")`.
 #'
-#' @param weights Optional weighting scheme for observations.
-#'   - `NULL`: all observations receive equal weight (default).
-#'   - A numeric vector of length `nrow(data)`: each observation is assigned the
-#'     corresponding weight, which will be subset by fold during training/validation.
-#'   - A function that takes a data.frame and returns a numeric vector of weights.
-#' @param tune_grid expanded grid of hyperparameters to tune over. Please double check with `caret` and `xgboost` packages before inputting hyperparameters.
-#' If NULL, a default grid will be used.
+#' @return A list of results for each fold. Each fold contains:
+#' \itemize{
+#'   \item `tv_plot`: Combined train vs validation performance plots for top hyperparameter models.
+#'   \item `eval_plot`: Combined evaluation plots showing learning curves for top models.
+#'   \item `perf_dist`: Histogram of train and validation log-loss across all hyperparameter combinations.
+#'   \item `grid_results`: Sub-list for each selected hyperparameter combination containing:
+#'     \itemize{
+#'       \item `model`: The trained XGBoost model object.
+#'       \item `perf`: Performance metrics for this hyperparameter combination.
+#'       \item `params`: Hyperparameters used in the model.
+#'     }
+#' }
 #'
-#' @param target_col Character string indicating column of the target variable to be predicted.
-#'
-#' @param site_col Character string indicating column of the site ids to retrieve data for.
-#'
-#' @param units Character string indicating the units of the target parameter (for plotting purposes only).
-#'
-#' @param fold_ids dataframe containing the fold number and a list of the corresponding validation site ids
-#'
-#' @return A caret model object containing the trained XGBoost model for each fold and performance metrics (train/val RMSE, MAE, Bias).
-#' Best performing models determined by taking the top 10 val RMSE scores and then selecting the one with the smallest train-val gap.
-#'
+#' @details
+#' - The function splits data based on `fold_id` for site-stratified cross-validation.
+#' - For each fold, multiple hyperparameter combinations are tested. Models are trained using early stopping based on validation log-loss.
+#' - Top models are selected based on high validation Kappa and minimal train-validation accuracy difference.
+#' - Generates plots for top hyperparameter models, including learning curves and train/validation performance by class.
+#' - Designed for categorical targets with multi-class classification (`multi:softmax` or `multi:softprob`).
 #'
 #' @examples
-#' folds <- tibble(
-#'   fold = 1:4,
-#'   val_ids = list(val_set_1, val_set_2, val_set_3, val_set_4)
-#'  )
+#' \dontrun{
+#' results <- xgboost_hyperparameter_tuning_cat(
+#'   data = my_data,
+#'   target_col = "TOC_cat",
+#'   site_col = "site_id",
+#'   units = "mg/L"
+#' )
+#' # Access top fold results
+#' results[[1]]$tv_plot
+#' results[[1]]$eval_plot
+#' }
+#'
+#' @import xgboost
+#' @import dplyr
+#' @import ggplot2
+#' @import patchwork
+#' @import yardstick
+#' @export
 
-#' model <- xgboost_site_stratified_tuning(
-#'    data = train_val %>% select(TOC, id, any_of(features)),
-#'    tune_grid = expand.grid(
-#'      nrounds = 10000,
-#'      max_depth = c(2, 3, 4),
-#'      eta = c(0.005, 0.01, 0.1),
-#'      gamma = c(0.6, 0.8),
-#'      colsample_bytree = c(0.5, 0.8),
-#'      min_child_weight = c(2,4, 6),
-#'      subsample = c(0.5, 0.8)
-#'    ),
-#'  target_col = "TOC",
-#'  site_col = "id",
-#' fold_ids =  folds,
-#' units = "mg/L",
-#' class_levels = c("0-2", "2-4", "4-8", "8+")
-#')
 
 xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site_col = "id", weights = NULL,
                                               tune_grid = NULL, units = "mg/L",class_levels = c("0-2", "2-4", "4-8", "8+")) {
