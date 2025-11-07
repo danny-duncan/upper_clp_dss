@@ -1,3 +1,58 @@
+#' Plot Ensemble Model Accuracy for Train and Test Sets
+#'
+#' This function evaluates an ensemble of XGBoost multi-class classification models
+#' on training and test datasets. It supports both soft voting (averaging probabilities)
+#' and hard voting (majority class vote) and produces confusion matrix plots annotated
+#' with accuracy, F1-score, and Cohen's Kappa. See `src/plotting/plot_tvt_fold_acc.R` for
+#' plotting of individual fold accuracy.
+#'
+#' @param models A list of trained XGBoost models (with `multi:softmax` or `multi:softprob` objectives).
+#' @param voting_method Character string specifying the ensemble voting method: `"soft"` for averaging predicted probabilities, `"hard"` for majority class vote. Default is `"soft"`.
+#' @param train_df Data frame containing training features and target variable.
+#' @param test_df Data frame containing test features and target variable.
+#' @param target_col Character string specifying the column name of the target variable. Default is `"TOC_cat"`.
+#' @param units Character string describing the units of the target variable. Default is `"mg/L"`.
+#' @param title Character string for the overall plot title. Default is `""`.
+#' @param class_levels Character vector specifying the factor levels of the target variable. Default is `c("0-2", "2-4", "4-8", "8+")`.
+#'
+#' @return A list containing:
+#' \itemize{
+#'   \item `t_plot`: Confusion matrix plot for the training set ensemble predictions.
+#'   \item `test_plot`: Confusion matrix plot for the test set ensemble predictions.
+#' }
+#'
+#' @details
+#' - Supports only multi-class classification objectives (`multi:softmax` and `multi:softprob`).
+#' - Predictions from each model are combined either by averaging class probabilities (`soft` voting)
+#'   or by majority vote of predicted classes (`hard` voting).
+#' - Confusion matrix plots are annotated with per-class accuracy, overall accuracy, F1-score, and Cohen's Kappa.
+#' - Designed to work with XGBoost models trained on categorical target variables with defined class levels.
+#'
+#' @examples
+#' \dontrun{
+#' # Evaluate ensemble models on train and test sets
+#' ensemble_plots <- plot_train_test_ensemble_acc(
+#'   models = list(model1, model2, model3),
+#'   voting_method = "soft",
+#'   train_df = train_data,
+#'   test_df = test_data,
+#'   target_col = "TOC_cat"
+#' )
+#'
+#' # Display training set confusion matrix
+#' ensemble_plots$t_plot
+#'
+#' # Display test set confusion matrix
+#' ensemble_plots$test_plot
+#' }
+#'
+#' @import xgboost
+#' @import dplyr
+#' @import ggplot2
+#' @import purrr
+#' @import tidyr
+#' @import yardstick
+#'
 plot_train_test_ensemble_acc <- function(models, voting_method = "soft", train_df,test_df,
                                          target_col = "TOC_cat", units = "mg/L",title = "",
                                          class_levels = c("0-2", "2-4", "4-8", "8+")) {
