@@ -51,7 +51,7 @@
 #' print(p)
 #' }
 
-plot_tvt_ensemble_perf <- function( train_val_df, test_df, fold_models, target_col = "TOC", units = "mg/L", subtitle_arg = "CLP Samples Only") {
+plot_train_test_ensemble_perf <- function( train_val_df, test_df, fold_models, target_col = "TOC", units = "mg/L", subtitle_arg = "CLP Samples Only") {
 
   source("src/setup_ross_theme.R") #load theme
 
