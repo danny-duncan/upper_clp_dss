@@ -18,7 +18,7 @@ library(caret)
 library(glue)
 set.seed(123)
 
-source("src/apply_sensor_transformations_toc.R")
+source("src/modeling/apply_sensor_transformations_toc.R")
 
 sites <- c("chd", "joei", "cbri", "sfm", "penn", "lbea", "pfal", "pbr", "pman", "pbd", "udall", "archery")
 id_cols <- c("site", "DT_round", "id", "sensor_datetime", "lab_datetime")
