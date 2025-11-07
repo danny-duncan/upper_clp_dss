@@ -25,23 +25,23 @@ set.seed(123)
 #set version for saving (update when changes are significant)
 version = "20251023"
 # function to apply sensor transformations for TOC modeling
-source("src/apply_sensor_transformations_toc.R")
+source("src/modeling/apply_sensor_transformations_toc.R")
 #function to apply training scale
-source("src/apply_training_scale.R")
+source("src/modeling/apply_training_scale.R")
 # function to tune xgboost hyperparameters
-source("src/xgboost_hyperparameter_tuning.R")
+source("src/modeling/xgboost_hyperparameter_tuning.R")
 #function to plot performance of each fold
-source("src/plot_tv_fold_perf.R")
+source("src/plotting/plot_tv_fold_perf.R")
 #function to plot performance of each fold
-source("src/plot_tvt_fold_perf.R")
+source("src/plotting/plot_tvt_fold_perf.R")
 #function to plot performance of each fold
-source("src/plot_tvt_ensemble_perf.R")
+source("src/plotting/plot_train_test_ensemble_perf.R")
 #function to apply bias correction
-source("src/apply_ml_bias_correction.R")
+source("src/modeling/apply_ml_bias_correction.R")
 #load grab sample data function
-source("src/load_grab_sample_data.R")
+source("src/collation/load_grab_sample_data.R")
 #function to plot model timeseries
-source("src/plot_model_timeseries.R")
+source("src/plotting/plot_model_timeseries.R")
 ```
 
 ## Read in sensor dataset
@@ -1021,7 +1021,7 @@ wrap_plots(plots, ncol = 2, guides = "collect") &
 
 ```{r}
 # Plot ensemble
-ensemble <- plot_tvt_ensemble_perf(train_val_df = train_val,
+ensemble <- plot_train_test_ensemble_perf(train_val_df = train_val,
                                    test_df = testing,
                                    fold_models = map(full_model, "model"),
                                    target_col = "TOC",
