@@ -34,10 +34,9 @@
 library(httr)
 library(jsonlite)
 library(sf)
-library(dplyr)
-library(lubridate)
-library(readr)
 library(leafem)
+library(mapview)
+library(tidyverse)
 
 # Define functions to retrieve gauge stations, observed discharge, and
 # forecast discharge:
