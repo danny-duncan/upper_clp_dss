@@ -47,8 +47,7 @@
 #' }
 #'
 #' @import xgboost
-#' @import dplyr
-#' @import ggplot2
+#' @import tidyverse
 #' @import patchwork
 #' @import yardstick
 #' @export
@@ -56,6 +55,10 @@
 
 xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site_col = "id", weights = NULL,
                                               tune_grid = NULL, units = "mg/L",class_levels = c("0-2", "2-4", "4-8", "8+")) {
+  #plotting function
+  source("src/plotting/plot_tvt_fold_acc.R")
+  #theme function
+  source("src/setup_ross_theme.R")
 
   # Create default grid if not provided
   if (is.null(tune_grid)) {
@@ -155,8 +158,8 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
         nrounds = tune_grid$nrounds[j],
         watchlist = watchlist,
         #change early stopping rounds based on eta (smaller eta, larger rounds)
-        early_stopping_rounds = ifelse(tune_grid$eta[j] >= 0.1, 250,
-                                       ifelse(tune_grid$eta[j] >= 0.01, 500,
+        early_stopping_rounds = if_else(tune_grid$eta[j] >= 0.1, 250,
+                                       if_else(tune_grid$eta[j] >= 0.01, 500,
                                               1000)),
         print_every_n = 1000,
         verbose = 0,
@@ -199,7 +202,7 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
           !!true_sym := as.factor(!!true_sym),
           !!pred_sym := factor(!!pred_sym, levels = levels(!!true_sym))
         ) %>%
-        yardstick::conf_mat(truth = !!true_sym, estimate = !!pred_sym)
+        conf_mat(truth = !!true_sym, estimate = !!pred_sym)
 
       performance <- summary(conf_table)
       #extracting metrics
@@ -331,7 +334,6 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
                 plot.title = element_text(hjust = 0.5, face = "bold"))
       }
       # Create train vs val plot
-      source("src/plotting/plot_tvt_fold_acc.R")
       train_val_plots[[k]]<- plot_tvt_fold_acc(train_df = train_data,
                                         val_df = val_data,
                                         fold_model = fold_models[[model_key]],
@@ -376,7 +378,7 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
         params      = params
       )
     }
-    #clean up meemory
+    #clean up memory
     gc()
   }
 
