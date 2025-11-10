@@ -603,7 +603,8 @@ Map$addLegend(
 ```
 
 
-Code is provided to plot elevation for the AOI. Not surprisingly, cloud cover correlates to elevation.The question is then, does this impact the resulting average melt we are calculating? For an AOI that spans a large elevation range, higher elevation cells will more often be screened out due to cloud cover. If they are tend to be screened out during melt periods, then melt estimates will be biased low,  or towards low elevation areas. For example, it might record no melt during spring if high elevation areas are cloudy and low elevation areas, which have already melted, record minimal change in snow cover. This analysis could be expanded to look at seasonal cloud cover fractions. Alternatively, elevation could be incorporated into the analysis when calculating the mean to achieve a representative sample across elevations. For now, this is likely unnecessary.
+Code is provided to plot elevation for the AOI and extract elevation/cloud cover 
+at random locations in the watershed. 
 ```{r elevation}
 
 #library(elevatr)
