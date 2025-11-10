@@ -324,7 +324,7 @@ get_hefs_forecast <- function(ID, param = c("QINE")) {
 
 
 # Test workflow
-sonde_locs <- read_csv("data/metadata/sonde_location_metadata.csv") %>%
+sonde_locs <- read_csv("data/raw/spatial/metadata/sonde_location_metadata.csv") %>%
   mutate(lat = str_split(lat_long, pattern = ",", simplify = TRUE)[,1] %>% as.numeric(),
          lng = str_split(lat_long, pattern = ",", simplify = TRUE)[,2] %>% as.numeric()) %>%
   st_as_sf(coords = c("lng","lat"), crs = 4326)
