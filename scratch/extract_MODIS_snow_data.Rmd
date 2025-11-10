@@ -610,11 +610,52 @@ at random locations in the watershed.
 ```{r elevation}
 
 #library(elevatr)
+aoi_elev <- get_elev_raster(aoi_sf, z = 8)
+mapview(aoi_elev) + mapview(watersheds[n,])
 
-#aoi_elev <- elevatr::get_elev_raster(aoi_sf, z = 14)
-#mapview(aoi_elev) + mapview(watersheds[1,])
+# The following has been commented out for the purposes of this workflow, it 
+# is just for a proof-of-concept - this was completed with n = 3, the entire CLP watershed
+# # Extract random points from elevation
+# masked_raster <- mask(aoi_elev, watersheds[n, ])
+# set.seed(7)
+# sampled_df <- data.frame(sampleRandom(masked_raster, size = 1000, xy = TRUE))
+# 
+# # Project these points as sf then as an ee colleciton
+# pts_sf <- st_as_sf(data.frame(sampled_df), coords = c("x", "y"), crs = 4326) %>% 
+#   select(geometry)
+# pts_fc <- sf_as_ee(pts_sf)
+# 
+# # Sample image values at points
+# sampled_values <- cloud_fraction_image$sampleRegions(
+#   collection = pts_fc,
+#   scale = 500,
+#   geometries = FALSE
+# )
+# 
+# # for whatever reason I couldn't get the info from EE from this collection, so I
+# # exported the table to drive and manually downloaded just to check hypothesis.
+# # we can troubleshoot/fix later if we need to.
+# task <- ee_table_to_drive(
+#   collection = sampled_values,
+#   description = "export_cloud_fraction",
+#   folder = "GEE_outputs"
+# )
+# task$start()
+# 
+# cloud_fraction <- read_csv("data/derived/remote_sensing/modis_snowcover/example_cloud_fraction.csv") %>% 
+#   select(Cloud_Fraction) %>% 
+#   pull(Cloud_Fraction)
+# 
+# sampled_df$cloud_fraction = cloud_fraction
+# 
+# sampled_df <- sampled_df %>% 
+#   rename(elevation = file322c65a0addf)
+# 
+# write_csv(sampled_df, "data/derived/remote_sensing/modis_snowcover/sampled_elevation_cloud.csv")
 
-
+sampled_df <- read_csv("data/derived/remote_sensing/modis_snowcover/sampled_elevation_cloud.csv")
+ggplot(sampled_df, aes(x = elevation, y = cloud_fraction)) + 
+  geom_point()
 ```
 Not surprisingly, cloud cover correlates to elevation.The question is then, does this impact the resulting average melt we are calculating? For an AOI that spans a large elevation range, higher elevation cells will more often be screened out due to cloud cover. If they are tend to be screened out during melt periods, then melt estimates will be biased low,  or towards low elevation areas. For example, it might record no melt during spring if high elevation areas are cloudy and low elevation areas, which have already melted, record minimal change in snow cover. This analysis could be expanded to look at seasonal cloud cover fractions. Alternatively, elevation could be incorporated into the analysis when calculating the mean to achieve a representative sample across elevations. For now, this is likely unnecessary.
 
