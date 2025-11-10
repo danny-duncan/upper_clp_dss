@@ -117,7 +117,7 @@ get_hefs_gages <- function(aoi, base_url = "https://api.water.noaa.gov/nwps/v1/g
   }
 
   # --- 6. Convert to SF Object ---
-  # Extract the gages data, convert to a standard data frame (tibble),
+  # Extract the gauges data, convert to a standard data frame (tibble),
   # and then to an sf object using the 'longitude' and 'latitude' columns.
   gauge_data <- gauge_data$gauges %>%
     dplyr::as_tibble() %>%
