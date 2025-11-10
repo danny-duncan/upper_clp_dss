@@ -433,7 +433,7 @@ snow_df <- data.frame(
     ndsi_sg = sgolayfilt(
       x = mean_ndsi,
       p = 1,  # Polynomial order (3 = cubic smoothing)
-      n = 41),   # Filter length (7-day window, must be odd)
+      n = 41),   # Filter length (41-day window, must be odd)
     # 3. Fourier transform low frequency filter
     ndsi_fft = fft_smooth(mean_ndsi, cutoff = 30),
     # Calculate melt as negative changes in snow cover
