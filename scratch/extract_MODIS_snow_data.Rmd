@@ -7,6 +7,10 @@ This markdown explores a workflow to grab MODIS snow cover data using the rgee p
 
 MODIS Snow Cover: https://doi.org/10.5067/MODIS/MOD10A1.061
 
+# Requirements
+
+This workflow requires that you have access to the ROSSyndicate Google Account (ask for PW if you need it) and that you have set up a symlink to the Poudre_ROSS Sharepoint Document Library. See the Sharepoint site for directions to set this up.
+
 # Setup
 ```{r setup}
 source("Scratch/pySetup.R")
