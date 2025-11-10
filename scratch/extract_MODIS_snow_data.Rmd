@@ -420,8 +420,8 @@ snow_df <- data.frame(
     # calculate proportion of clear pixels
     prop_clear_pix = n_pixels_clear/max(n_pixels_clear)
     ) %>%
-    # Only keep clear pixels - can comment out if not
-    filter(n_pixels_clear > quantile(n_pixels_clear, .4, na.rm = TRUE)) %>%
+  # Only keep images with greater than 50% coverage of the area
+  filter(prop_clear_pix > .5) %>%
     # Now fill gaps for any missing dates with interpolated value.
     tidyr::complete(date = seq.Date(min(date, na.rm = TRUE), max(date, na.rm = TRUE), by = "day")) %>%
     mutate(mean_ndsi = na.approx(mean_ndsi)) %>%
