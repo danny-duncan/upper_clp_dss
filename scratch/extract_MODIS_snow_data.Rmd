@@ -477,7 +477,7 @@ Note, this plot shows the issue with using an NDSI threshold (only retains high 
 
 
 # Now plot NDSI and melt with discharge
-```{r plot_NDSI_MELT_DISCHARGE}
+```{r plot_NDSI_melt_discharge}
 
 
 # Create multiplier for scaling melt to plots - note melt is a change in fraction
