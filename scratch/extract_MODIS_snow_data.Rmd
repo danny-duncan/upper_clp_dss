@@ -430,7 +430,7 @@ snow_df <- data.frame(
     # 1. Moving Average (frollmean)
     ndsi_ma = frollmean(mean_ndsi, 14, align = "right"), 
     # 2. Savitzky-Golay Filter 
-    ndsi_sg = signal::sgolayfilt(
+    ndsi_sg = sgolayfilt(
       x = mean_ndsi,
       p = 1,  # Polynomial order (3 = cubic smoothing)
       n = 41),   # Filter length (7-day window, must be odd)
