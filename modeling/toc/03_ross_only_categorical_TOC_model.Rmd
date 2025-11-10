@@ -7,7 +7,7 @@ output: html_document
 
 # Purpose
 
-We are testing the development of a categorical TOC model for the UCLP DSS using sensor data and grab samples from the our and Fort Collins Cache la Poudre campaigns. This model will classify TOC into four categories: low (0-2 mg/L), medium (2-4 mg/L), high (4-8 mg/L), and extreme (\>8 mg/L). These categories correspond to the TOC and alkalinity matrix that treatment operators much use to assess TOC removal rates. The goal is to apply this to live sensor data to provide decision support/heads up to operators. We are hoping that my using a categorical approach we can increase trust in the system and have higher accuracy than in our continuous predictions.
+We are testing the development of a categorical TOC model for the UCLP DSS using sensor data and grab samples from the our and Fort Collins Cache la Poudre campaigns. This model will classify TOC into four categories: low (0-2 mg/L), medium (2-4 mg/L), high (4-8 mg/L), and extreme (>8 mg/L). These categories correspond to the TOC and alkalinity matrix that treatment operators much use to assess TOC removal rates. The goal is to apply this to live sensor data to provide decision support/heads up to operators. We are hoping that my using a categorical approach we can increase trust in the system and have higher accuracy than in our continuous predictions.
 
 General workflow:
 
