@@ -222,9 +222,6 @@ Now, begin workflow to pull in MODIS Snow Cover data.
 First, define an area of interest (AOI). Here, I select the first watershed in the NWIS watersheds as it's small and therefore quick for testing. 
 
 ```{r define_aoi}
-
-
-
 # for now, just start with first watershed
 n <- 1
 aoi_sf <- watersheds[n,] %>% 
