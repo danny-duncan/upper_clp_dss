@@ -55,6 +55,7 @@
 
 xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site_col = "id", weights = NULL,
                                               tune_grid = NULL, units = "mg/L",class_levels = c("0-2", "2-4", "4-8", "8+")) {
+  # ---- Sourcing ----
   #plotting function
   source("src/plotting/plot_tvt_fold_acc.R")
   #theme function
@@ -90,19 +91,19 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
   fold_results <- list()
   best_params <- list()
 
+  # ---- Loop through folds ----
   # Run through each train/val fold and hypertune
   for (i in seq(1,n_folds)) {
     cat(paste0("Tuning fold ", i, " of ", n_folds, "...\n"))
 
     #setup performance dataframe
     perf <- data.frame()
-
     # Split data into training and validation sets based on indices above
-
     train_data <- data%>%filter(fold_id != i)
     val_data   <- data%>%filter(fold_id == i)
 
-    # set up weights (if none provided, default to 1)
+    #---- set up weights ----
+    #(if none provided, default to 1)
     if (is.null(weights)) {
       w_train <- rep(1, nrow(train_data))
       w_val   <- rep(1, nrow(val_data))
@@ -114,7 +115,8 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
       stop("`weights` must be NULL or a function(data) -> numeric")
     }
 
-    # set up data matrix for xgb
+
+    # ---- Set up data matrix for xgb ----
     dtrain <- xgb.DMatrix(
       data = as.matrix(train_data[, features]),
       label = train_data[[target_col]],
@@ -132,7 +134,7 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
 
     #run through all hyper parameters and save to fold_models with name foldi_gridj
     for (j in 1:nrow(tune_grid)) {
-
+      # ---- Train Model  ----
       #setup parameters for tune
       params <- list(
         objective        = tune_grid$objective[j],
@@ -168,7 +170,7 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
 
       pred_col <- paste0(target_col, "_guess")
 
-      # --- Validation Predictions ---
+      # ---- Validation Predictions ----
       pred_raw <- predict(model_ij, dval, iterationrange = c(1, model_ij$best_iteration))
 
       if (params$objective == "multi:softprob") {
@@ -179,19 +181,7 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
       } else {
         val_data[[pred_col]] <- pred_raw
       }
-
-      # --- Training Predictions ---
-      pred_raw <- predict(model_ij, dtrain, iterationrange = c(1, model_ij$best_iteration))
-
-      if (params$objective == "multi:softprob") {
-        num_class <- params$num_class
-        pred_mat <- matrix(pred_raw, nrow = nrow(train_data), ncol = num_class, byrow = TRUE)
-        train_data[[pred_col]] <- max.col(pred_mat) - 1
-        train_data[[paste0(pred_col, "_probs")]] <- apply(pred_mat, 1, max)
-      } else {
-        train_data[[pred_col]] <- pred_raw
-      }
-      # --- Validation Metrics ---
+      # ---- Validation Metrics ----
       mlogloss_val <- model_ij$evaluation_log$eval_mlogloss[model_ij$best_iteration]
       # Convert to symbols for tidy evaluation
       true_sym <- sym(target_col)
@@ -215,7 +205,20 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
       acc_val <- performance %>%
         filter(.metric == "accuracy") %>%
         pull(.estimate)
-      # --- Training Metrics ---
+
+      # ---- Training Predictions ----
+      pred_raw <- predict(model_ij, dtrain, iterationrange = c(1, model_ij$best_iteration))
+
+      if (params$objective == "multi:softprob") {
+        num_class <- params$num_class
+        pred_mat <- matrix(pred_raw, nrow = nrow(train_data), ncol = num_class, byrow = TRUE)
+        train_data[[pred_col]] <- max.col(pred_mat) - 1
+        train_data[[paste0(pred_col, "_probs")]] <- apply(pred_mat, 1, max)
+      } else {
+        train_data[[pred_col]] <- pred_raw
+      }
+
+      # ---- Training Metrics ----
       mlogloss_train <- model_ij$evaluation_log$train_mlogloss[model_ij$best_iteration]
       # Convert to symbols for tidy evaluation
       true_sym <- sym(target_col)
@@ -226,7 +229,7 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
           !!true_sym := as.factor(!!true_sym),
           !!pred_sym := factor(!!pred_sym, levels = levels(!!true_sym))
         ) %>%
-        yardstick::conf_mat(truth = !!true_sym, estimate = !!pred_sym)
+        conf_mat(truth = !!true_sym, estimate = !!pred_sym)
 
       performance <- summary(conf_table)
       #extracting metrics
@@ -240,7 +243,7 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
         filter(.metric == "accuracy") %>%
         pull(.estimate)
 
-      # --- Combine ---
+      # ---- Save to performance df ----
       perf <- rbind(perf, data.frame(
         fold          = i,
         grid_id       = j,
@@ -270,10 +273,11 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
            x = "mlogloss", y = "density", fill = "Group") +
       theme_minimal()
 
-    # --- Pick top 10 by validation high to low kappa values ---
+    # ---- Choosing Best Models ----
+    #Pick top 10 by validation high to low kappa values
     top10 <- perf[order(perf$kappa_val,decreasing = T), ][1:10, ]
 
-    # --- From those, choose 6 smallest train-val gap in accuracy ---
+    #From those, choose 6 smallest train-val gap in accuracy
     best_rows  <- top10[order(top10$diff_acc), ][1:6,]
 
     #order from highest to lowest kappa
@@ -283,6 +287,7 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
     eval_plots <- list()
     train_val_plots <- list()
 
+    # ---- Making Output Plots ----
     for (k in 1:nrow(best_rows)) {
       # find fold and grid id
       fold_id <- best_rows$fold[k]
@@ -351,6 +356,8 @@ xgboost_hyperparameter_tuning_cat <- function(data, target_col = "TOC_cat", site
     train_val_grid <- wrap_plots(train_val_plots, nrow = 2, ncol = 3) +
                  plot_layout( guides = "collect") &
       theme(legend.position = "bottom")
+
+    # ---- Saving tuning models and plots to results list ----
 
     # Initialize list for this fold
     fold_results[[i]] <- list()
