@@ -1,9 +1,35 @@
 ---
-title: "Testing TOC preds"
+title: "Categorical TOC Predictions"
 author: "Sam Struthers-ROSSyndicate"
-date: "2025-08-01"
+date: "2025-11-01"
 output: html_document
 ---
+
+# Purpose
+
+We are testing the development of a categorical TOC model for the UCLP DSS using sensor data and grab samples from the our and Fort Collins Cache la Poudre campaigns. This model will classify TOC into four categories: low (0-2 mg/L), medium (2-4 mg/L), high (4-8 mg/L), and extreme (\>8 mg/L). These categories correspond to the TOC and alkalinity matrix that treatment operators much use to assess TOC removal rates. The goal is to apply this to live sensor data to provide decision support/heads up to operators. We are hoping that my using a categorical approach we can increase trust in the system and have higher accuracy than in our continuous predictions.
+
+General workflow:
+
+1.   Load in datasets created in previous scripts (01/02)
+
+2.   Set up training/validation and testing datasets
+
+3.  Create folds for cross-validation
+
+4.   Do feature testing to see which features improve model performance
+
+5.  Tune hyperparameters and weights
+
+6.   Assess model performance on validation
+
+    1.  Repeat steps 3-6 to attempt to improve performance on validation
+
+    2.  Save model when working version is finalized
+
+7.  Apply model to testing set
+
+8.  Apply model to timeseries space & visualize
 
 # Set Up
 
@@ -54,11 +80,9 @@ source("src/plotting/plot_cat_model_timeseries.R")
 version = "20251105"
 ```
 
-
 ## Read in sensor dataset
 
 Here, we read in the sensor data, apply min-max scaling defined in the `apply_sensor_transformations_toc()` function, and store the dataset for use later
-
 
 ```{r}
 # Read in all data to create scaling parameters
@@ -87,7 +111,7 @@ all_matches <- read_csv(file = matchup_dataset, show_col_types = F) %>%
   filter(!is.na(TOC))%>%
   mutate(clean_sensor_datetime = parse_date_time(sensor_datetime, orders = c("%Y-%m-%d %H:%M:%S", "%m/%d/%y %H:%M","%Y-%m-%d" )))%>%
   mutate(sensor_datetime = force_tz(clean_sensor_datetime, tzone = 'MST'), 
-         month = lubridate::month(sensor_datetime),
+         month = month(sensor_datetime),
          #create categorical TOC
          TOC_cat  = cut(TOC, breaks = c(0, 2, 4, 8, 15), labels = c('low', 'medium', 'high',"extreme")),
          TOC_cat = as.numeric(as.factor(TOC_cat))-1
@@ -99,8 +123,8 @@ all_matches <- read_csv(file = matchup_dataset, show_col_types = F) %>%
 
 ```{r}
 # ID columns to keep to use later on 
-id_cols <- c("Date", "id","site", "DT_hourly_round", "sensor_datetime","lab_datetime",  "collector", "data_avail")
-#What we want to predict
+id_cols <- c("Date", "id", "site", "DT_hourly_round", "sensor_datetime", "lab_datetime", "collector", "data_avail")
+# What we want to predict
 target = "TOC_cat"
 # Get feature columns from complete sensor data but remove id cols and target
 features <- setdiff(colnames(complete_sensor_data), id_cols)
@@ -108,14 +132,15 @@ features <- features[features %nin% target]
 ```
 
 ## Create Scaling Parameters & Normalize Data
+
 Normalization is applied based on min-max scaling from the complete sensor dataset using the `apply_training_scale()` function.
 
 ```{r}
 # Apply scaling to dataset
 all_matches_norm <- all_matches %>%
-  #Only keep columns that would be in the complete sensor dataset
+  # Only keep columns that would be in the complete sensor dataset
   select(any_of(id_cols), any_of(names(complete_sensor_data)), any_of(target))%>%
-  #apply normalization 
+  # Apply normalization 
   apply_training_scale(
     new_data = .,
     features = features,
@@ -134,7 +159,7 @@ For this model version, we will create a holdout testing set from specific sites
 all_matches_trimmed <- all_matches_norm%>%
   filter(!(id == "cbri" & between(sensor_datetime, ymd("2024-10-08"), ymd("2024-10-10"))))%>% #exclude a cbri sample taken during release
   filter(!(id == "pman" & between(sensor_datetime, ymd("2025-05-28"), ymd("2025-06-01"))))%>% #exclude a pman sample with bad sensor data
-  #These are not applicable sites for modeling Upper CLP streams and will just introduce error
+# These are not applicable sites for modeling Upper CLP streams and will just introduce error
   filter( id %nin% c("springcreek", "boxcreek"))
 # Create testing set from 2025 data at specific sites
 testing <- all_matches_trimmed %>%
@@ -143,16 +168,13 @@ testing <- all_matches_trimmed %>%
 train_val <- all_matches_trimmed %>%
   anti_join(testing)%>%
   select(id, any_of(features), TOC_cat, sensor_datetime, collector)%>%
-  mutate(id = ifelse(id == "archery_virridy", "archery", id)) #combine archery and archery_virridy since they are the same site
+  mutate(id = if_else(id == "archery_virridy", "archery", id)) #combine archery and archery_virridy since they are the same site
 
 ```
 
 ## Set up model folds
 
-Since we have relatively little data, we are going to use three CV folds. Create 3 separate folds and 3 models, with one fold used for validation on each model. Generally we are looking for:
-- Each fold to have ~30-35% of the total data in validation
-- Each validation set to have a similar TOC distribution as its training set (median, range)
-- Each should have a mix of Upper Mainstem (SFM, PFAL, PBD), Upper Trib (CBRI, CHD, LBEA, PENN) & Lower Mainstem (salyer, udall, riverbend, elc, archery, riverbluffs)
+Since we have relatively little data, we are going to use three CV folds. Create 3 separate folds and 3 models, with one fold used for validation on each model. Generally we are looking for: - Each fold to have \~30-35% of the total data in validation - Each validation set to have a similar TOC distribution as its training set (median, range) - Each should have a mix of Upper Mainstem (SFM, PFAL, PBD), Upper Trib (CBRI, CHD, LBEA, PENN) & Lower Mainstem (salyer, udall, riverbend, elc, archery, riverbluffs)
 
 ```{r}
 val_sets <- list(
@@ -217,10 +239,9 @@ train_val <- train_val %>%
 
 ```
 
-
 ## Visualize TOC distribution in training/validation vs testing sets
 
-Currently, our 2025 data (testing) is skewed to higher TOC values (April- July) compared to the training/validation set. This is not ideal, but we will proceed with this split for now given limited data. Future data updates in December should help even this out as TOC decreases in the fall. 
+Currently, our 2025 data (testing) is skewed to higher TOC values (April- July) compared to the training/validation set. This is not ideal, but we will proceed with this split for now given limited data. Future data updates in December should help even this out as TOC decreases in the fall.
 
 ```{r}
 heat_data <- train_val %>%
@@ -250,12 +271,6 @@ ggplot(heat_data, aes(x = factor(TOC_cat_range), y = group, fill = prop)) +
       "Training/Validation Set: ", nrow(train_val), " samples              ",
       "Testing Set: ", nrow(testing), " samples"
     ),
-    # subtitle = paste0(
-    #   "Training TOC Range: ", round(min(train_val$TOC, na.rm = TRUE), 2), " - ",
-    #   round(max(train_val$TOC, na.rm = TRUE), 2), " mg/L (Median: ", round(median(train_val$TOC), 2), ")\n",
-    #   "Testing TOC Range: ", round(min(testing$TOC, na.rm = TRUE), 2), " - ",
-    #   round(max(testing$TOC, na.rm = TRUE), 2), " mg/L (Median: ", round(median(testing$TOC), 2), ")"
-    # ),
     x = "TOC (mg/L) Category",
     y = "Model Group",
     fill = "Proportion"
@@ -268,12 +283,11 @@ ggplot(heat_data, aes(x = factor(TOC_cat_range), y = group, fill = prop)) +
 
 ```
 
-
 # Model Training
 
 For our model training we will first do some feature tuning to see which features are most useful for predicting TOC. We will then do hyperparameter tuning on the selected features to optimize model performance.
 
-## Feature Tuning 
+## Feature Tuning
 
 ### View correlations between features and target
 
@@ -322,9 +336,9 @@ map(features, function(feat) {
 })%>%
   wrap_plots(., guides = "collect")
 
-``` 
+```
 
-### Pruning Features with high correlations 
+### Pruning Features with high correlations
 
 We want to avoid using too many highly correlated features in the model, as this can lead to overfitting and instability. We will look at the correlation matrix and remove some of the more redundant features.
 
@@ -386,6 +400,7 @@ high_corr_pairs
 First, we will start with our base model (live sensor data only) and then test adding in other features to see if they improve performance. We will use the default hyperparameters below for all models to keep things consistent. Once we have tested all the features together, we will want to trim it down a bit so we are not using too many highly correlated features or overfitting the model due to lack of data
 
 #### Function to test features & defaults
+
 This just runs a basic xgboost model with the specified features and default hyperparameters. It returns feature importance, shap values, and best iteration info for each fold.
 
 ```{r}
@@ -568,7 +583,7 @@ target = "TOC_cat"
 
 #### Run across folds testing different features to see which improve performance
 
-Here I run the function and am going to look at feature importance and shap values to see which features are most useful, then trim features back to reduce our correlative and overfitting issues. 
+Here I run the function and am going to look at feature importance and shap values to see which features are most useful, then trim features back to reduce our correlative and overfitting issues.
 
 ```{r}
 
@@ -611,10 +626,9 @@ feature_results <- map(
 
 #### Feature Set Results
 
-##### mlogloss 
+##### mlogloss
 
-We compare across folds to see if there is big differences in folds (ie unbalanced data) and also compare each feature set against "base" model of general features (sensors). Looking for features that make meaningful improvements in mlogloss across all folds. If our mlogloss improves but that is related to only a single fold, we may want to reevaluate the feature set as it is likely overfitting to a given site(s). 
-Keep in mind that this is weighted mlogloss so it may be higher than unweighted mlogloss you see in other places.
+We compare across folds to see if there is big differences in folds (ie unbalanced data) and also compare each feature set against "base" model of general features (sensors). Looking for features that make meaningful improvements in mlogloss across all folds. If our mlogloss improves but that is related to only a single fold, we may want to reevaluate the feature set as it is likely overfitting to a given site(s). Keep in mind that this is weighted mlogloss so it may be higher than unweighted mlogloss you see in other places.
 
 ```{r}
 # Highlight differences between folds in mlogloss
@@ -652,7 +666,7 @@ mlogloss_table <- map_dfr(feature_results, ~{
 
 ##### Feature Importance
 
-This comes directly from the xgboost package and is based on Gain, Cover, and Frequency of splits. We summarize across folds to see which features are most important across all folds. 
+This comes directly from the xgboost package and is based on Gain, Cover, and Frequency of splits. We summarize across folds to see which features are most important across all folds.
 
 ```{r}
 #table with all importances
@@ -683,7 +697,6 @@ importance_tables$fewest%>%
   filter(mean_gain < 0.02)
 
 ```
-
 
 ##### Shapley Values
 
@@ -764,9 +777,10 @@ ft_tv_plot <- map(1:3, ~plot_tvt_fold_acc(fold_model = best_models[[.x]],
 
 ```
 
-Fold one and two appear to be performing the worst on the validation set (lower kappa & accuracy).Fold one is primarily made up of classes 3-4,4-8 and appears to be getting a bit confused on which to predict.  Fold two has the JOEI samples so it is not doing great on the low end of TOC there. We will see if hyperparameter tuning can help improve this.
+Fold one and two appear to be performing the worst on the validation set (lower kappa & accuracy). Fold one is primarily made up of classes 2-4, 4-8 and appears to be getting a bit confused on which to predict. Fold two has the JOEI samples so it is not doing great on the low end of TOC there. We will see if hyperparameter tuning can help improve this.
 
 ## Hyperparameter Tuning
+
 Now that we have a feature set, we can do some hyperparameter tuning to see if we can improve model performance. This will take a while to run, so we will save the results and load them in later.
 
 ### Run hyperparameter tuning
@@ -780,10 +794,10 @@ tune_grid = expand.grid(
   objective = "multi:softprob",
   eval_metric = "mlogloss",
   nrounds = 10000,
-  max_depth = c(2, 3,4),
-  eta = c( 0.01,0.05, 0.1),
+  max_depth = c(2, 3, 4),
+  eta = c( 0.01, 0.05, 0.1),
   gamma = c(0.8),
-  lambda = c(1,10),
+  lambda = c(1, 10),
   alpha = c(0, 1),
   colsample_bytree = c(0.8),
   min_child_weight = c(2, 4),
@@ -865,7 +879,6 @@ full_model <- map(1:3, function(i) {
 
 ### Checking Results
 
-
 #### Feature Importance
 
 ```{r}
@@ -943,6 +956,7 @@ map(1:3, ~ plot_shap(
 ```
 
 ### Plots of TV Performance
+
 Now let's look at our performance in TV space.
 
 ```{r}
@@ -965,7 +979,7 @@ hp_tv_plot
 
 #### Against base hyperparameters
 
-We should hope that all our tuning efforts have improved the model!! 
+We should hope that all our tuning efforts have improved the model!!
 
 ```{r}
 # Compare best hyperparameter model to default hyperparameter model
@@ -985,8 +999,7 @@ final_plot
 
 ```
 
-Looking at the plots, we can see that the tuned hyperparameter model has improved performance in all folds compared to the default hyperparameter model. The validation accuracy has increased in all folds but it does look like model fold two is slightly less accurate than other folds (possible issue with distribution). Fold three's training accuracy decreased but we did see improvement in the validation set and the highest category was actually guessed correctly, which is more important!
-Overall, this is a good sign that our tuning efforts have paid off!
+Looking at the plots, we can see that the tuned hyperparameter model has improved performance in all folds compared to the default hyperparameter model. The validation accuracy has increased in all folds but it does look like model fold two is slightly less accurate than other folds (possible issue with distribution). Fold three's training accuracy decreased but we did see improvement in the validation set and the highest category was actually guessed correctly, which is more important! Overall, this is a good sign that our tuning efforts have paid off!
 
 ## Save as "in_dev" and remove unneeded objects
 
@@ -1002,9 +1015,8 @@ rm(list = setdiff(ls(), c("train_val", "testing", "full_model","version","id_col
                           "complete_sensor_data",
                           #keeping functions around
                           "apply_training_scale","plot_tvt_fold_acc","plot_train_test_ensemble_acc",
-                         "load_grab_sample_data", "plot_cat_model_timeseries" )) )
+                          "load_grab_sample_data", "plot_cat_model_timeseries")))
 ```
-
 
 # Evaluate on Test Set
 
@@ -1013,7 +1025,6 @@ We should only do this once we feel good about our model and are ready to see ho
 ## Visualize Train Val Test
 
 ### Individual folds
-
 
 ```{r}
 plots <- map(1:3, ~{
@@ -1029,8 +1040,8 @@ plots <- map(1:3, ~{
   #      plot = p , width = 10, height = 6, dpi = 500)
   p
 })
+#Print plots
 plots
-
 
 ```
 
@@ -1107,7 +1118,6 @@ chd_plot
 #        dpi = 300)
 
 ```
-
 
 ## Example 2: PFAL 2025
 
@@ -1195,8 +1205,6 @@ sfm_plot
 
 ```
 
-
-
 ## Example 5: PMAN 2025
 
 ```{r}
@@ -1251,7 +1259,6 @@ pbd_plot
 
 ```
 
-
 ## Example 6: Udall (Lincoln Ave) 2025
 
 ```{r}
@@ -1278,4 +1285,3 @@ udall_plot
 #   plot = udall_plot, width = 12, height = 8, dpi = 300
 # )
 ```
-
