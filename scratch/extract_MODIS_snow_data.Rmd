@@ -456,7 +456,7 @@ snow_df <- data.frame(
 
 ```
 
-### - Plot NDSI 
+## Plot NDSI 
 
 Note, this plot shows the issue with using an NDSI threshold (only retains high snowcover cells)
 
