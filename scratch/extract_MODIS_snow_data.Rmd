@@ -28,6 +28,8 @@ library(ggthemes)
 library(zoo)
 library(plotly)
 library(ggpubr)
+library(elevatr)
+library(raster)
 library(tidyverse)
 
 # Authenticate your GEE account - only need to do once
