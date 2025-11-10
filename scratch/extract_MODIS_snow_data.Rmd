@@ -423,7 +423,7 @@ snow_df <- data.frame(
   # Only keep images with greater than 50% coverage of the area
   filter(prop_clear_pix > .5) %>%
     # Now fill gaps for any missing dates with interpolated value.
-    tidyr::complete(date = seq.Date(min(date, na.rm = TRUE), max(date, na.rm = TRUE), by = "day")) %>%
+   complete(date = seq.Date(min(date, na.rm = TRUE), max(date, na.rm = TRUE), by = "day")) %>%
     mutate(mean_ndsi = na.approx(mean_ndsi)) %>%
     # NDSI Smoothing
     mutate(
