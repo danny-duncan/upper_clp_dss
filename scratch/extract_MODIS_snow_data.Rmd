@@ -299,9 +299,6 @@ Note: A NDSI threshold filter was tested in this script but was determined to no
 
 ```{r MODIS snow_properties}
 
-# Next, define a combined image processing function that performs QA masking
-# and calculates the mean NDSI for an area of interest. 
-
 get_prop_snow <- function(img) {
   
     # 1. Define Bands
