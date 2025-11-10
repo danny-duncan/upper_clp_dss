@@ -449,7 +449,7 @@ snow_df <- data.frame(
                 #melt_ma_ma = ifelse(melt_ma_ma < 0, -melt_ma_ma, 0),
                 melt_fft = ifelse(melt_fft < 0, -melt_fft, 0),
                 melt_sg = ifelse(melt_sg < 0, 0, melt_sg)) %>%
-  dplyr::left_join(discharge %>% dplyr::filter(site_no == watersheds[n,]$site_no), 
+ left_join(discharge %>%filter(site_no == watersheds[n,]$site_no), 
                    by = c("date" = "Date"))
 
 ```
