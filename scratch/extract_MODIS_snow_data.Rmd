@@ -218,7 +218,7 @@ ggplot(discharge, aes(x = Date, y = discharge_cfs, color = site_no)) +
 Now, begin workflow to pull in MODIS Snow Cover data.
 
 
-### - AOI
+## AOI
 First, define an area of interest (AOI). Here, I select the first watershed in the NWIS watersheds as it's small and therefore quick for testing. 
 
 ```{r define_aoi}
