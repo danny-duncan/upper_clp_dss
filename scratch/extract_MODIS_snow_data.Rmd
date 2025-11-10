@@ -417,6 +417,8 @@ snow_df <- data.frame(
     date = as.Date(date),
     across(.cols = columns_to_extract[2:num_inputs],
            .fns = ~ as.numeric(.))
+    # calculate proportion of clear pixels
+    prop_clear_pix = n_pixels_clear/max(n_pixels_clear)
     ) %>%
     # Only keep clear pixels - can comment out if not
     filter(n_pixels_clear > quantile(n_pixels_clear, .4, na.rm = TRUE)) %>%
