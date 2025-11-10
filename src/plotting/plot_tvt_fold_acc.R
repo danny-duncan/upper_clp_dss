@@ -68,7 +68,7 @@ plot_tvt_fold_acc <- function(fold_model, fold_num,
   #See if there are any datasets
   input_datasets <- list(train_df = train_df, val_df = val_df, test_df = test_df)
 
-  if (all(purrr::map_lgl(input_datasets, is.null))) {
+  if (all(map_lgl(input_datasets, is.null))) {
     stop("At least one dataset (train_df, val_df, or test_df) must be provided.")
   }
 
@@ -104,7 +104,7 @@ plot_tvt_fold_acc <- function(fold_model, fold_num,
 
   #Predict for available datasets
   sets <- input_datasets %>%
-    purrr::imap(~predict_classes(.x))
+    imap(~predict_classes(.x))
 
   #confusion matrix plot
   conf_plot <- function(pred_df, plot_title) {
@@ -113,7 +113,7 @@ plot_tvt_fold_acc <- function(fold_model, fold_num,
     df <- pred_df %>%
       mutate(pred_cat = factor(pred_cat, levels = levels(target_cat)))
     #compute performance metrics
-    conf_table <- yardstick::conf_mat(df, truth = target_cat, estimate = pred_cat)
+    conf_table <- conf_mat(df, truth = target_cat, estimate = pred_cat)
     performance <- summary(conf_table)
 
     acc  <- performance %>% filter(.metric == "accuracy") %>% pull(.estimate)
@@ -146,7 +146,7 @@ plot_tvt_fold_acc <- function(fold_model, fold_num,
         color = "red", size = 4, fontface = "bold"
       ) +
       scale_fill_gradient(low = "white", high = "blue",
-                          labels = scales::percent, limits = c(0, 1)) +
+                          labels = percent, limits = c(0, 1)) +
       labs(
         x = paste0("True Class (", units, ")"),
         y = paste0("Predicted Class (", units, ")"),
@@ -171,7 +171,7 @@ plot_tvt_fold_acc <- function(fold_model, fold_num,
     v_plot = if (!is.null(sets$val_df))   conf_plot(sets$val_df,   paste0(title, "Fold ", fold_num, " Val Set")) else NULL,
     test_plot = if (!is.null(sets$test_df)) conf_plot(sets$test_df, paste0(title, "Fold ", fold_num, " Test Set")) else NULL
   ) %>%
-    purrr::compact()  # removes NULL entries
+    compact()  # removes NULL entries
 
   return(results)
 }
