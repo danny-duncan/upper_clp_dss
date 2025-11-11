@@ -11,8 +11,8 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 options(dplyr.summarise.inform = FALSE)
 source("src/setup_libraries.R")
-source("src/load_grab_sample_data.R")
-source("src/apply_fdom_temp_corr.R")
+source("src/collation/load_grab_sample_data.R")
+source("src/sensor_qaqc/apply_fdom_temp_corr.R")
 
 ```
 

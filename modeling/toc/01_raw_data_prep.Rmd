@@ -13,17 +13,17 @@ options(dplyr.summarise.inform = FALSE)
 # load libraries
 source("src/setup_libraries.R")
 # custom function to reduce overflagging
-source("src/apply_cleaning_filters.R")
+source("src/sensor_qaqc/apply_cleaning_filters.R")
 # custom function to apply interpolation for missing data
-source("src/apply_interpolation_missing_data.R")
+source("src/sensor_qaqc/apply_interpolation_missing_data.R")
 # custom function to apply low pass binomial filter
-source("src/apply_low_pass_binomial_filter.R")
+source("src/sensor_qaqc/apply_low_pass_binomial_filter.R")
 # custom function to calculate medians in data
-source("src/apply_timestep_median.R")
+source("src/sensor_qaqc/apply_timestep_median.R")
 # custom function to calculate lagged parameters
-source("src/calc_lagged_parameter.R")
+source("src/modeling/calc_lagged_parameter.R")
 #custom function to apply fdom temp correction
-source("src/apply_fdom_temp_corr.R")
+source("src/sensor_qaqc/apply_fdom_temp_corr.R")
 ```
 
 The purpose of this script is to pull in all verified sensor data from 2023 and 2024, as well as auto QAQC'ed data from 2025, apply some additional cleaning steps (interpolation, smoothing, hourly median) and then combine into a single long format dataset as well as a wide format dataset with some additional lagged parameters calculated. Finally, we will add in flow data from the Canyon Mouth guage. 

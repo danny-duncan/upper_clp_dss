@@ -16,8 +16,9 @@ env/
 dashboard/setup/
 dashboard/metadata/
 
-# ignore baseline TOC with Q for now (B's copy)
+# ignore some specific paths/scratch folders
 scratch/baseline_TOC_addQ.rmd
+KEC_Scratch/
 
 # mac artifacts
 **.DS_Store
