@@ -66,7 +66,7 @@ if (mm_DT_tz == "UTC") {
 # This comes through the WET API service.
 # Pulled in by the function `pull_wet_api()`.
 invalid_wet_values <- c(-9999, 638.30, -99.99)
-source(file = here("src","api_pull", "pull_WET_api.R"))
+source(file = here("src","api_pull", "pull_wet_api.R"))
 
 wet_sites <- c("sfm", "chd", "pfal")
 
