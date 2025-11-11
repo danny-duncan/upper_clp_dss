@@ -79,8 +79,16 @@ generate_fc_grab_sample_data <- function(
     output_directory = here("data", "collated", "chem"),
     update_data = FALSE
 ) {
+
   # Get read_ext function ----
   source("src/collation/read_ext.R")
+
+  # Check for ross.wq.tools package
+  if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
+  if (!requireNamespace("ross.wq.tools", quietly = TRUE)) {
+    # Install a package from GitHub
+    remotes::install_github("rossyndicate/ross.wq.tools")
+  }
 
   # Argument checks ----
   # Check that the raw data path is real
@@ -132,12 +140,12 @@ generate_fc_grab_sample_data <- function(
           TN = any_of(c("TN_calc"))
         ) %>%
         # Add chemical columns for those that may not be found across all the data
-        add_column_if_not_exists("TOC") %>%
-        add_column_if_not_exists("NO3") %>%
-        add_column_if_not_exists("SC") %>%
-        add_column_if_not_exists("Cl") %>%
-        add_column_if_not_exists("lab_turb") %>%
-        add_column_if_not_exists("TN") %>%
+        ross.wq.tools::add_column_if_not_exists("TOC") %>%
+        ross.wq.tools::add_column_if_not_exists("NO3") %>%
+        ross.wq.tools::add_column_if_not_exists("SC") %>%
+        ross.wq.tools::add_column_if_not_exists("Cl") %>%
+        ross.wq.tools:: add_column_if_not_exists("lab_turb") %>%
+        ross.wq.tools::add_column_if_not_exists("TN") %>%
         mutate(
           Date = parse_date_time(Date, orders = c("ymd", "mdy")),
           # Extract site code from site name (before hyphen or first 3 letters)
@@ -149,15 +157,14 @@ generate_fc_grab_sample_data <- function(
           #removing extra spaces from names
           site_code = str_replace_all(site_code, " ", ""),
           TOC = as.numeric(TOC),
-          NO3 = (as.numeric(NO3) / 0.2259),
-          SC = (as.numeric(SC) / 0.65), # converting TDS to SC
+          NO3 = (as.numeric(NO3) / 0.2259), # renamed from NO3_N above
+          SC = (as.numeric(SC) / 0.65), # converting TDS to SC - TDS renamed above
           Cl = as.numeric(Cl),
           lab_turb = as.numeric(lab_turb),
           TN = as.numeric(TN),
-          collector = "FC",
-          flag = NA
+          collector = "FC"
         ) %>%
-        add_flag(is.na(TOC), "ND") %>%
+        ross.wq.tools::add_flag(is.na(TOC), "ND") %>%
         # set final order of the columns
         select(
           # DT columns
@@ -193,8 +200,8 @@ generate_fc_grab_sample_data <- function(
           site_code = str_replace(site_code, " ", ""),
           DT_mst_char = as.character(DT_mst),
           collector = "FC"
-        )%>%
-        dplyr::select(
+        ) %>%
+        select(
           # DT columns
           Date, DT_sample = DT_mst, DT_mst_char,
           # ID columns
