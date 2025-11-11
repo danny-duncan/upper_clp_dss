@@ -477,7 +477,10 @@ Note, this plot shows the issue with using an NDSI threshold (only retains high 
 ```
 
 
-# Now plot NDSI and melt with discharge
+# Visualize
+
+Here, we'll plot the snowmelt and discharge (to put them on the same axes, we
+use a multiplier).
 ```{r plot_NDSI_melt_discharge}
 
 
