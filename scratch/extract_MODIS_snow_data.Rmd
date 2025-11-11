@@ -446,7 +446,8 @@ snow_df <- data.frame(
     ),
     melt_fft = c(NA, diff(ndsi_fft))
   ) %>%
-  dplyr::mutate(#melt_ma_ma = frollmean(melt_ma, 14, align = right),
+ mutate(
+    #melt_ma_ma = frollmean(melt_ma, 14, align = right),
                 melt_ma = ifelse(melt_ma < 0, -melt_ma, 0),
                 #melt_ma_ma = ifelse(melt_ma_ma < 0, -melt_ma_ma, 0),
                 melt_fft = ifelse(melt_fft < 0, -melt_fft, 0),
