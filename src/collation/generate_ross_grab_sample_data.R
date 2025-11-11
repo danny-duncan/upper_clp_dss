@@ -96,7 +96,7 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
   if (!requireNamespace("zen4R", quietly = TRUE)) install.packages("zen4R")
 
   # Get read_ext function ----
-  source("src/read_ext.R")
+  source("src/collation/read_ext.R")
   # Argument checks ----
   # Check that the raw data path is real
   if (!dir.exists(raw_ross_chem_data_directory)) {

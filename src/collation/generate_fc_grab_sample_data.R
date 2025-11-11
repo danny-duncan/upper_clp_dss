@@ -80,7 +80,7 @@ generate_fc_grab_sample_data <- function(
     update_data = FALSE
 ) {
   # Get read_ext function ----
-  source("src/read_ext.R")
+  source("src/collation/read_ext.R")
 
   # Argument checks ----
   # Check that the raw data path is real
