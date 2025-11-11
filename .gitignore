@@ -7,6 +7,7 @@
 /data/
 creds/
 env/
+KEC_Scratch/
 
 # mac artifacts
 **.DS_Store
