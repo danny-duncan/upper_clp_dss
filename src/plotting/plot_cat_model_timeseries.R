@@ -35,7 +35,7 @@
 #' plot_cat_model_timeseries(
 #'   model_input_df = sensor_data,
 #'   water_chem_df = chem_data,
-#'   models = map(full_model, "model),
+#'   models = map(full_model, "model"),
 #'   site_sel = "sfm",
 #'   site_title = "South Fork CLP ",
 #'   start_DT = "2025-06-01 00:00",
