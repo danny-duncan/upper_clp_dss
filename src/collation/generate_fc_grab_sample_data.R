@@ -2,12 +2,16 @@
 #'
 #' @description
 #' Reads, processes, and harmonizes water chemistry data and field notes from the City of
-#' Fort Collins Upper Cache la Poudre watershed monitoring program. This is given to us by the City of Fort Collins Watershed Team (Diana Schmidt and Jared Heath).
+#' Fort Collins Upper Cache la Poudre watershed monitoring program. This is
+#' given to us by the City of Fort Collins Watershed Team (Diana Schmidt and Jared Heath).
 #' The 2025 Dataset is not yet finalized but can likely still be used for our first models.
 #' This function handles multiple file formats and structures, standardizes column names and units, and combines
 #' chemistry data with corresponding field sampling metadata. This data extraction is
 #' based on the harmonization of the FC data that were in
 #' `01_raw_data_prep.Rmd` and `add_FC_TOC_baseline.Rmd`.
+#'
+#' This function relies on functions from {ross.wq.tools}, which can be accessed
+#' using: `remotes::install_github("rossyndicate/ross.wq.tools")`
 #'
 #' The function performs several key data processing steps:
 #' - Automatically detects and separates chemistry data files from field note files based on filename patterns
@@ -74,6 +78,7 @@
 #'
 #' The function will fail if these exact column names are not present in field files.
 
+
 generate_fc_grab_sample_data <- function(
     raw_fc_chem_data_path = here("data", "raw", "chem", "fc_clp_chem"),
     output_directory = here("data", "collated", "chem"),
@@ -82,20 +87,6 @@ generate_fc_grab_sample_data <- function(
 
   # Get read_ext function ----
   source("src/collation/read_ext.R")
-
-  # Check for ross.wq.tools package
-  if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
-  if (!requireNamespace("ross.wq.tools", quietly = TRUE)) {
-    # Install a package from GitHub
-    remotes::install_github("rossyndicate/ross.wq.tools")
-  }
-
-  # Check for ross.wq.tools package
-  if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
-  if (!requireNamespace("ross.wq.tools", quietly = TRUE)) {
-    # Install a package from GitHub
-    remotes::install_github("rossyndicate/ross.wq.tools")
-  }
 
   # Argument checks ----
   # Check that the raw data path is real
@@ -147,12 +138,12 @@ generate_fc_grab_sample_data <- function(
           TN = any_of(c("TN_calc"))
         ) %>%
         # Add chemical columns for those that may not be found across all the data
-        ross.wq.tools::add_column_if_not_exists("TOC") %>%
-        ross.wq.tools::add_column_if_not_exists("NO3") %>%
-        ross.wq.tools::add_column_if_not_exists("SC") %>%
-        ross.wq.tools::add_column_if_not_exists("Cl") %>%
-        ross.wq.tools:: add_column_if_not_exists("lab_turb") %>%
-        ross.wq.tools::add_column_if_not_exists("TN") %>%
+        add_column_if_not_exists("TOC") %>%
+        add_column_if_not_exists("NO3") %>%
+        add_column_if_not_exists("SC") %>%
+        add_column_if_not_exists("Cl") %>%
+        add_column_if_not_exists("lab_turb") %>%
+        add_column_if_not_exists("TN") %>%
         mutate(
           Date = parse_date_time(Date, orders = c("ymd", "mdy")),
           # Extract site code from site name (before hyphen or first 3 letters)
@@ -171,7 +162,7 @@ generate_fc_grab_sample_data <- function(
           TN = as.numeric(TN),
           collector = "FC"
         ) %>%
-        ross.wq.tools::add_flag(is.na(TOC), "ND") %>%
+        add_flag(is.na(TOC), "ND") %>%
         # set final order of the columns
         select(
           # DT columns

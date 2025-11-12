@@ -99,18 +99,11 @@ load_grab_sample_data <- function(
 ){
 
   # Get read_ext function ----
-<<<<<<< HEAD:src/load_grab_sample_data.R
-  source("src/read_ext.R")
-  # Get generator functions ----
-  source("src/generate_ross_grab_sample_data.R")
-  source("src/generate_fc_grab_sample_data.R")
-
-=======
   source("src/collation/read_ext.R")
   #Get generator functions ----
   source("src/collation/generate_ross_grab_sample_data.R")
   source("src/collation/generate_fc_grab_sample_data.R")
->>>>>>> current:src/collation/load_grab_sample_data.R
+
   # Argument checks ----
 
   # Check input paths (only if not NULL)

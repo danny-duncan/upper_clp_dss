@@ -16,11 +16,13 @@ library(sf)
 library(nhdplusTools)
 library(mapview)
 library(arrow)
+library(ross.wq.tools)
+# remotes::install_github("rossyndicate/ross.wq.tools")
 library(tidyverse)
 
 version_date = Sys.Date()
 
-source("src/load_grab_sample_data.r")
+source("src/collation/load_grab_sample_data.r")
 ```
 
 # Chlorophyll-a Grab Samples
@@ -28,9 +30,10 @@ source("src/load_grab_sample_data.r")
 Get all chl-a grab samples from our collated data set (`load_grab_sample_data()`)
 
 ```{r}
+# grab some specific columns
 grab_chla <- load_grab_sample_data() %>% 
   select(site_code, site_name, date = Date,
-         ChlA, distance_upstream_km, Lat:flag) %>% 
+         ChlA, Field_DO_mgL:distance_upstream_km, Lat:flag) %>% 
   filter(!is.na(ChlA))
 
 # check for flags
@@ -75,19 +78,26 @@ waterbodies <- waterbodies[flowlines, ]
 mapview(waterbodies)
 
 # Pull in site coordinates
-xy <- ross_chla %>%
+xy <- grab_chla %>%
   select(site_code, site_name, Lat, Long, Campaign, location_type) %>% 
   distinct() %>% 
-  st_as_sf(coords=c('Long','Lat'), crs=4326) 
+  st_as_sf(coords = c('Long','Lat'), crs = 4326) %>% 
+  rowwise() %>% 
+  mutate(comid = get_nhdplus(AOI = geometry, t_srs = 4326) %>%
+           st_drop_geometry() %>%
+           pull(comid)) %>% 
+  ungroup()
+
 mapview(flowlines) + mapview(waterbodies) + mapview(xy)
 
-# Find NHD comid for each coordinate. NOTE: resolution not great for some sites (see Comanche/Hourglass
-# complex)... Some samples are along the same flowline, and are therefore represented with the same
-# information. 
-distance_upstream_waterbody <- pmap_dfr(
-  list(comid = xy$comid, geom = xy$geometry, site_code = xy$site_code),
+# Find NHD comid for each coordinate. NOTE: resolution not great for some sites 
+# (see Comanche/Hourglass complex)... Some samples are along the same flowline, 
+# and are therefore represented with the same information. 
+distance_upstream_waterbody <- pmap(
+  list(comid = xy$comid, 
+       geom = xy$geometry, 
+       site_code = xy$site_code),
   function(comid, geom, site_code) {
-    
     # get flowlines upstream of point
     upstream_of_point <- get_UT(flowlines, comid)
     # and grab those as a sf
@@ -115,13 +125,13 @@ distance_upstream_waterbody <- pmap_dfr(
         select(site_code, dist_to_up_wb_km = pathlength)
       
     } else {
-      
       distance <- tibble("site_code" = site_code, "dist_to_up_wb_km" = NA)
-      
     }
     
-    distance
-  })
+    return(distance)
+    
+  }) %>% 
+  bind_rows()
 
 ```
 
@@ -132,44 +142,52 @@ https://github.com/rossyndicate/CLP_waterchem_data/blob/v2025.07.01/scripts/dist
 ```{r}
 distance_to_major_trib <- function(site) {
   
-  flowline <- get_nhdplus(AOI = xy %>% filter(site_code == site))
+  # grab site info by site_code
+  one_site <- xy %>% filter(site_code == site)
   
+  # get flowline for site
+  flowline <- get_nhdplus(AOI = one_site)
+  
+  # get comids for upstream mainstem
   mainstem <- get_UM(flowlines, flowline$comid)
   
+  # get flowlines for upstream mainstem
   mainstem_fl <- get_nhdplus(comid = mainstem) %>% 
     get_tocomid(., add = TRUE) %>%
-    mutate(ID=comid, toID=tocomid, length=lengthkm,
-           perc_change = ((totdasqkm -  flowline$totdasqkm) / flowline$totdasqkm) * 100) %>%
-    select(comid, ID, toID, length, perc_change)
+    arrange(comid) %>% 
+    mutate(ID = comid, 
+           toID = tocomid, 
+           length = lengthkm) %>%
+    arrange(totdasqkm) %>% 
+    # calculate the difference in drainage area between segments
+    mutate(diff_da = diff(c(0, totdasqkm))) %>% 
+    select(comid, ID, toID, length, diff_da)
   
+  # determine where the largest change is - this might not work in every basin
+  # but it worked for all that I tried in CLP that were on the mainstem
   mainstem_big_trib <- mainstem_fl %>%
-    filter(perc_change <= -20) %>%
-    select(comid, perc_change) %>%
-    filter(perc_change == max(perc_change, na.rm = TRUE))
+    arrange(-diff_da) %>% 
+    slice(1)
   
-  trib_fl <- get_nhdplus(comid = tribs) %>%
+  # get the flowline of the comid with largest change
+  trib_fl <- get_nhdplus(comid = mainstem_big_trib$comid) %>%
     get_tocomid(., add = TRUE) %>%
-    mutate(ID=comid, toID=tocomid, length=lengthkm,
-           perc_change = ((totdasqkm -  flowline$totdasqkm) / flowline$totdasqkm) * 100) %>%
-    select(comid, ID, toID, length, perc_change)
+    mutate(ID=comid, toID=tocomid, length=lengthkm) %>% 
+    select(comid, ID, toID, length)
   
-  if(nrow(mainstem_big_trib) >= 1) {
-    distance <- get_pathlength(mainstem_fl) %>% 
-      filter(ID == mainstem_big_trib$comid) %>%
-      pull(pathlength)
-  } else {
-    distance <- NA
-  }
+  # calculate distance from point to that segment, if 
+  distance <- get_pathlength(mainstem_fl) %>% 
+    filter(ID == trib_fl$comid) %>%
+    pull(pathlength)
   
-  meta <- xy %>% filter(site_code == site) %>%
+  one_site %>%
     mutate(dist_to_maj_trib = distance)
-  
-  return(meta)
   
 }
 
 distance_meta <- xy$site_code %>%
   map(~distance_to_major_trib(.))
+
 ```
 
 watershed area:reservoir area
