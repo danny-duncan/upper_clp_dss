@@ -18,6 +18,7 @@ dashboard/metadata/
 
 # ignore some specific paths/scratch folders
 scratch/baseline_TOC_addQ.rmd
+scratch/snotel_summary.csv
 KEC_Scratch/
 
 # mac artifacts
