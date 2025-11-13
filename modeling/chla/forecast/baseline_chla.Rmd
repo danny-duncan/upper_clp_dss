@@ -1,0 +1,447 @@
+---
+title: "Creating a Baseline Chlorophyll-a Model"
+output: html_document
+---
+
+# Purpose
+
+The purpose of this markdown is meant to create a baseline chl-a model across the 
+mainstem of the upper CLP.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, error = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, error = FALSE)
+library(readxl)
+library(here)
+library(mgcv)
+library(Metrics)
+library(sf)
+library(nhdplusTools)
+library(mapview)
+library(arrow)
+library(ross.wq.tools)
+# remotes::install_github("rossyndicate/ross.wq.tools")
+library(tidyverse)
+
+version_date = Sys.Date()
+source(here("src/collation/load_grab_sample_data.r"))
+```
+
+# Chlorophyll-a Grab Samples
+
+Get all chl-a grab samples from our collated data set (`load_grab_sample_data()`)
+
+```{r}
+# grab some specific columns
+grab_chla <- load_grab_sample_data() %>% 
+  select(site_code, site_name, date = Date,
+         ChlA, Field_DO_mgL:distance_upstream_km, Lat:flag) %>% 
+  filter(!is.na(ChlA))
+
+# check for flags
+unique(grab_chla$flag)
+```
+
+Plot the data to see what it looks like
+
+```{r}
+ggplot(grab_chla, aes(x = yday(date), y = ChlA)) +
+  geom_point()+
+  facet_grid(location_type ~ ., scales = "free_y") +
+  theme_bw()
+
+ggplot(grab_chla, aes(x = yday(date), y = ChlA)) +
+  geom_point()+
+  facet_grid(Campaign ~ ., scales = "free_y") +
+  theme_bw()
+
+```
+
+And also by site/location type
+
+```{r}
+walk(unique(grab_chla$location_type), function(loc) {
+  
+  gg <- grab_chla %>% 
+    filter(location_type == loc) %>% 
+    ggplot(. , aes(x = yday(date), y = ChlA, color = factor(year(date)))) +
+    geom_point() +
+    facet_wrap(site_name ~ ., scales = "free_y")
+  print(gg)
+  
+})
+
+```
+
+And look at just the mainstem upper poudre, which is what we care about
+
+```{r}
+grab_chla %>% 
+  filter(Campaign == "Mainstem - Upper") %>% 
+  ggplot(. , aes(x = yday(date), 
+                 y = ChlA, 
+                 color = site_code, 
+                 shape = factor(year(date)))) +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d()
+
+```
+
+# Calculate some additional metrics per site
+
+Grab some info from NHD that we need for some crawling!
+
+```{r}
+# Poudre HUC
+huc8 <- get_huc(id="10190007", type = "huc08")
+mapview(huc8)
+
+# Pull all NHDPlusV2 flowines within Poudre Watershed
+flowlines <- get_nhdplus(AOI = huc8, realization = "flowline", t_srs = 4326)
+mapview(flowlines)
+
+# Grab all waterbodies
+waterbodies <- get_waterbodies(AOI = huc8, t_srs = 4326)
+mapview(waterbodies)
+# filter to those intersecting with flowlines
+waterbodies <- waterbodies[flowlines, ]
+mapview(waterbodies)
+
+# Pull in site coordinates
+xy <- grab_chla %>%
+  select(site_code, site_name, Lat, Long, Campaign, location_type) %>% 
+  distinct() %>% 
+  st_as_sf(coords = c('Long','Lat'), crs = 4326) %>% 
+  rowwise() %>% 
+  mutate(comid = get_nhdplus(AOI = geometry, t_srs = 4326) %>%
+           st_drop_geometry() %>%
+           pull(comid)) %>% 
+  ungroup()
+
+mapview(flowlines) + mapview(waterbodies) + mapview(xy)
+
+```
+
+Calculate the distance to the nearest upstream reservoir. Basically looking for
+instances where there will be changes based on proximity to reservoir.
+
+```{r}
+# NOTE: resolution not great for some sites 
+# (see Comanche/Hourglass complex)... Some samples are along the same flowline 
+# section, and are therefore represented with the same information. 
+
+distance_to_up_waterbody <- function(site) {
+  #one site
+  one_site <- xy %>% filter(site_code == site) %>% first()
+  # get flowlines upstream of point
+  upstream_of_point <- get_UT(flowlines, one_site$comid)
+  # and grab those as a sf
+  upstream_fl <- get_nhdplus(comid = upstream_of_point) %>% 
+    get_tocomid(., add = TRUE) %>%
+    mutate(ID=comid, toID=tocomid, length=lengthkm)
+  # filter waterbodies for those that intersect the fl
+  upstream_wb <- waterbodies[upstream_fl, ] %>% 
+    filter(onoffnet == 1)
+  
+  # if there is at least one wb upstream, calculate the distance
+  if(nrow(upstream_wb) >= 1) {
+    art_path_outlet <- map_dfr(.x = upstream_wb$comid,
+                               ~ tryCatch(get_wb_outlet(.x, upstream_fl),
+                                          error = function(e) {} ))
+    end_point <- get_node(art_path_outlet) %>% 
+      mutate(comid = art_path_outlet$comid)
+    mapview(upstream_wb) + mapview(end_point) + mapview(one_site$geometry)
+    distance <- get_pathlength(upstream_fl) %>% 
+      rename(comid = ID) %>% 
+      right_join(end_point, by = "comid") %>% 
+      arrange(pathlength) %>% 
+      first() %>% 
+      mutate(site_code = site) %>% 
+      select(site_code, dist_to_up_wb_km = pathlength)
+    
+  } else {
+    # otherwise, store distance as NA for the site code
+    distance <- tibble("site_code" = site, "dist_to_up_wb_km" = NA)
+  }
+  
+  return(distance)
+  
+}
+
+distance_upstream_waterbody <- map(xy$site_code,
+                                   ~ distance_to_up_waterbody(.)) %>% 
+  bind_rows()
+
+```
+
+Calculate the distance to the nearest upstream tributary - basically looking for
+possible step changes in chem/nuts.
+
+```{r}
+distance_to_major_trib <- function(site) {
+  
+  # grab site info by site_code
+  one_site <- xy %>% filter(site_code == site) %>% first()
+  
+  # get flowline for site
+  flowline <- get_nhdplus(AOI = one_site)
+  
+  # make sure there are upstream tribs
+  if (flowline$streamorde > 1) {
+    
+    # get comids for upstream mainstem
+    mainstem <- get_UM(flowlines, flowline$comid)
+    
+    # get flowlines for upstream mainstem
+    mainstem_fl <- get_nhdplus(comid = mainstem) %>% 
+      get_tocomid(., add = TRUE) %>%
+      arrange(comid) %>% 
+      mutate(ID = comid, 
+             toID = tocomid, 
+             length = lengthkm) %>%
+      arrange(totdasqkm) %>% 
+      # calculate the difference in drainage area between segments
+      mutate(diff_da = diff(c(0, totdasqkm))) %>% 
+      select(comid, ID, toID, length, diff_da)
+    
+    # determine where the largest change is - this might not work in every basin
+    # but it worked for all that I tried in CLP that were on the mainstem
+    mainstem_big_trib <- mainstem_fl %>%
+      arrange(-diff_da) %>% 
+      slice(1)
+    
+    # get the flowline of the comid with largest change
+    trib_fl <- get_nhdplus(comid = mainstem_big_trib$comid) %>%
+      get_tocomid(., add = TRUE) %>%
+      mutate(ID=comid, toID=tocomid, length=lengthkm) %>% 
+      select(comid, ID, toID, length)
+    
+    # calculate distance from point to that segment, if 
+    distance <- get_pathlength(mainstem_fl) %>% 
+      filter(ID == trib_fl$comid) %>%
+      pull(pathlength)
+    
+    one_site <- one_site %>%
+      mutate(dist_to_maj_trib = distance)
+    
+  } else {
+    
+    one_site <- one_site %>%
+      mutate(dist_to_maj_trib = NA)
+    
+  }
+  
+  return(one_site)
+  
+}
+
+distance_meta <- map(xy$site_code, ~ distance_to_major_trib(.)) %>% 
+  bind_rows()
+
+```
+
+And add that info to the grab data.
+
+```{r}
+grab_site_info <- grab_chla %>% 
+  left_join(., 
+            distance_meta %>% select(site_code, dist_to_maj_trib), 
+            relationship = "many-to-many") %>% 
+  left_join(., 
+            distance_upstream_waterbody,
+            relationship = "many-to-many")
+```
+
+# Simplistic models for Chlorophyll-a
+
+Try some simplistic methods for predicting Chlorophyll-a. The relationship looks
+like a shallow polynomial equation, so we'll just give that a shot.
+
+```{r}
+chla_ms_site_info <- grab_site_info %>% 
+  filter(Campaign == "Mainstem - Upper") %>% 
+  mutate(doy = yday(date))
+
+chl_model <- lm(log(ChlA) ~ poly(doy, degree=3), 
+                data = chla_ms_site_info)
+summary(chl_model)
+
+plot(chl_model$residuals)
+
+chla_ms_site_info <- chla_ms_site_info %>% 
+  mutate(baseline_chla = predict(chl_model, newdata = .),
+         residuals = exp(baseline_chla) - ChlA)
+
+ggplot(chla_ms_site_info, aes(x = doy)) +
+  geom_point(aes(y = ChlA)) +
+  geom_point(aes(y = exp(baseline_chla)), color = "blue") +
+  theme_bw()
+
+ggplot(chla_ms_site_info, aes(x = dist_to_maj_trib, y = residuals)) +
+  geom_point() +
+  theme_bw()
+
+ggplot(chla_ms_site_info, aes(x = dist_to_up_wb_km, y = residuals)) +
+  geom_point() +
+  theme_bw()
+
+ggplot(chla_ms_site_info, aes(x = distance_upstream_km, y = residuals)) +
+  geom_point() +
+  theme_bw()
+
+```
+
+It's usually pretty bad practice to apply polynomial equation to environmental
+data (because there generally is not an explainable reason for it), this relationship
+is probably related to solar radiation and water temperature, which have a similar
+pattern that is better characterized by a sinusoidal curve. Let's try an NLS model
+with those assumptions. We're going to do this more rigorously by holding out the
+2025 data to test this development on.
+
+```{r}
+test <- chla_ms_site_info %>% 
+  filter(year(date) == 2025)
+
+train <- anti_join(chla_ms_site_info, test)
+
+fit_nls <- nls(
+  log(ChlA) ~ A * sin(2 * pi * (doy - C) / 365) + D,
+  data = train,
+  start = list(
+    A = (max(log(train$ChlA)) - min(log(train$ChlA))) / 2, # amplitude
+    D = mean(log(train$ChlA)), # mean level
+    C = 100 # phase shift guess (day)
+  )
+)
+
+summary(fit_nls)
+plot(fit_nls)
+AIC(fit_nls)
+BIC(fit_nls)
+```
+
+And let's see what this looks like when compared with the observed data.
+
+```{r}
+train <- train %>% 
+  mutate(baseline_chla = exp(predict(fit_nls, newdata = .)),
+         residuals = baseline_chla - ChlA)
+
+ggplot(train, aes(x = doy)) +
+  geom_point(aes(y = ChlA)) +
+  geom_point(aes(y = baseline_chla), color = "blue") +
+  theme_bw()
+
+ggplot(train, aes(x = dist_to_maj_trib, y = residuals)) +
+  geom_point() +
+  theme_bw()
+
+ggplot(train, aes(x = dist_to_up_wb_km, y = residuals)) +
+  geom_point() +
+  theme_bw()
+
+ggplot(train, aes(x = distance_upstream_km, y = residuals)) +
+  geom_point() +
+  theme_bw()
+```
+
+These residuals look fine enough, let's apply to the test set.
+
+```{r}
+test <- test %>% 
+  mutate(baseline_chla = exp(predict(fit_nls, newdata = .)),
+         residuals = baseline_chla - ChlA)
+
+ggplot(test, aes(x = doy)) +
+  geom_point(aes(y = ChlA)) +
+  geom_point(aes(y = baseline_chla), color = "blue") +
+  theme_bw()
+
+ggplot(test, aes(x = dist_to_maj_trib, y = residuals)) +
+  geom_point() +
+  theme_bw()
+
+ggplot(test, aes(x = dist_to_up_wb_km, y = residuals)) +
+  geom_point() +
+  theme_bw()
+
+ggplot(test, aes(x = distance_upstream_km, y = residuals)) +
+  geom_point() +
+  theme_bw()
+```
+
+Okay, we're generally under predicting chl-a, but that's okay, we know this 
+won't be perfect.
+
+Calculate performance metrics.
+
+```{r}
+rmse_nls = rmse(test$ChlA, test$baseline_chla)
+mae_nls = mae(test$ChlA, test$baseline_chla)
+bias_nls = bias(test$ChlA, test$baseline_chla)
+```
+
+Let's compare this with the same polynomial equation as above and see if the 
+AIC/BIC could be lower.
+
+```{r}
+fit_poly <- lm(log(ChlA) ~ poly(doy, degree = 3), data = train)
+
+summary(fit_poly)
+plot(fit_poly$residuals)
+
+AIC(fit_poly)
+BIC(fit_poly)
+
+train <- train %>% 
+  mutate(baseline_chla_p = exp(predict(fit_nls, newdata = .)),
+         residuals_p = baseline_chla_p - ChlA)
+
+ggplot(train, aes(x = doy)) +
+  geom_point(aes(y = ChlA)) +
+  geom_point(aes(y = baseline_chla), color = "blue") +
+  theme_bw()
+
+```
+
+And apply to the test/calculate metrics
+
+```{r}
+test <- test %>% 
+  mutate(baseline_chla_p = exp(predict(fit_poly, newdata = .)),
+         residuals_p = baseline_chla_p - ChlA)
+
+ggplot(test, aes(x = doy)) +
+  geom_point(aes(y = ChlA)) +
+  geom_point(aes(y = baseline_chla_p), color = "blue") +
+  theme_bw()
+
+ggplot(test, aes(x = dist_to_maj_trib, y = residuals_p)) +
+  geom_point() +
+  theme_bw()
+
+ggplot(test, aes(x = dist_to_up_wb_km, y = residuals_p)) +
+  geom_point() +
+  theme_bw()
+
+ggplot(test, aes(x = distance_upstream_km, y = residuals_p)) +
+  geom_point() +
+  theme_bw()
+
+rmse_poly = rmse(test$ChlA, test$baseline_chla_p)
+mae_poly = mae(test$ChlA, test$baseline_chla_p)
+bias_poly = bias(test$ChlA, test$baseline_chla_p)
+
+```
+
+Performance is basically the same across both models. Because the nls model 
+incoporates a sinusoidal relationship which is more justifiable than the poly
+model, let's stick with that one. 
+
+```{r}
+write_rds(fit_nls, 
+          here(paste0("data/derived/models/chla_baseline/working/sinusoidal_doy_v", 
+                      version_date,
+                      ".rds")))
+```
+
