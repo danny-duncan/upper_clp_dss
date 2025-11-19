@@ -2,12 +2,16 @@
 #'
 #' @description
 #' Reads, processes, and harmonizes water chemistry data and field notes from the City of
-#' Fort Collins Upper Cache la Poudre watershed monitoring program. This is given to us by the City of Fort Collins Watershed Team (Diana Schmidt and Jared Heath).
+#' Fort Collins Upper Cache la Poudre watershed monitoring program. This is
+#' given to us by the City of Fort Collins Watershed Team (Diana Schmidt and Jared Heath).
 #' The 2025 Dataset is not yet finalized but can likely still be used for our first models.
 #' This function handles multiple file formats and structures, standardizes column names and units, and combines
 #' chemistry data with corresponding field sampling metadata. This data extraction is
 #' based on the harmonization of the FC data that were in
 #' `01_raw_data_prep.Rmd` and `add_FC_TOC_baseline.Rmd`.
+#'
+#' This function relies on functions from {ross.wq.tools}, which can be accessed
+#' using: `remotes::install_github("rossyndicate/ross.wq.tools")`
 #'
 #' The function performs several key data processing steps:
 #' - Automatically detects and separates chemistry data files from field note files based on filename patterns
@@ -74,11 +78,13 @@
 #'
 #' The function will fail if these exact column names are not present in field files.
 
+
 generate_fc_grab_sample_data <- function(
     raw_fc_chem_data_path = here("data", "raw", "chem", "fc_clp_chem"),
     output_directory = here("data", "collated", "chem"),
     update_data = FALSE
 ) {
+
   # Get read_ext function ----
   source("src/collation/read_ext.R")
 
@@ -149,13 +155,12 @@ generate_fc_grab_sample_data <- function(
           #removing extra spaces from names
           site_code = str_replace_all(site_code, " ", ""),
           TOC = as.numeric(TOC),
-          NO3 = (as.numeric(NO3) / 0.2259),
-          SC = (as.numeric(SC) / 0.65), # converting TDS to SC
+          NO3 = (as.numeric(NO3) / 0.2259), # renamed from NO3_N above and converting to NO3 from NO3_N here
+          SC = (as.numeric(SC) / 0.65), # converting TDS to SC - TDS renamed above
           Cl = as.numeric(Cl),
           lab_turb = as.numeric(lab_turb),
           TN = as.numeric(TN),
-          collector = "FC",
-          flag = NA
+          collector = "FC"
         ) %>%
         add_flag(is.na(TOC), "ND") %>%
         # set final order of the columns
@@ -193,8 +198,8 @@ generate_fc_grab_sample_data <- function(
           site_code = str_replace(site_code, " ", ""),
           DT_mst_char = as.character(DT_mst),
           collector = "FC"
-        )%>%
-        dplyr::select(
+        ) %>%
+        select(
           # DT columns
           Date, DT_sample = DT_mst, DT_mst_char,
           # ID columns

@@ -97,10 +97,11 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
 
   # Get read_ext function ----
   source("src/collation/read_ext.R")
-  # Argument checks ----
+
+    # Argument checks ----
   # Check that the raw data path is real
   if (!dir.exists(raw_ross_chem_data_directory)) {
-    stop(raw_ross_chem_data_path, "(raw_ross_chem_data_directory) does not exist.")
+    stop(raw_ross_chem_data_path, " (raw_ross_chem_data_directory) does not exist.")
   }
 
   # Check that an output directory was supplied if update_data is TRUE
@@ -114,6 +115,7 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
     dir.create(output_directory, recursive = TRUE)
     message("Created ross_output_directory: ", output_directory)
   }
+
   ### Checking that we have downloaded the most recent version from Zenodo ###
   #fixed DOI for the ROSS CLP data
   DOI = "10.5281/zenodo.11100085"
@@ -126,6 +128,7 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
 
   #if we don't have this version saved, download it to a folder with the version name in the raw_ross_chem_data_directory
   if(!dir.exists(here(raw_ross_chem_data_directory, version_name))){
+
     message(paste0("Downloading ROSS CLP version: ", version_name) )
     #Download if version is not in download directory
     suppressMessages(rec$downloadFiles(path = tempdir()))
@@ -136,7 +139,8 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
     unzip_file <- list.files(tempdir(), pattern = "rossyndicate", full.names = TRUE)
     #move unzip folder to raw_ross_chem_data_directory and rename to version number
     file.rename(unzip_file, file.path(raw_ross_chem_data_directory, version_name))
-    message(paste0("ROSS CLP version: ", version_name, " downloaded to ", file.path(raw_ross_chem_data_directory, version_name) ) )
+    message(paste0("ROSS CLP version: ", version_name, " downloaded to ", file.path(raw_ross_chem_data_directory, version_name)))
+
     #Prompt user to set update_data to TRUE to save updated data
     if(update_data == F){
       update <- readline(prompt = "Note: You have downloaded a new version of the ROSS CLP data.Update_data is currently F.\nPress Y to set update_data to T:  ")
@@ -144,15 +148,22 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
         update_data = T
       }
     }
+
   }
 
   ### Grabbing and cleaning the ROSS chem data ###
 
   #find the csv file in the cleaned directory of the most recent version
-  raw_ross_chem_data_path <- list.files(path = here(raw_ross_chem_data_directory, version_name,"data","cleaned"), full.names = TRUE, pattern = ".csv")
+  raw_ross_chem_data_path <- list.files(path = here(raw_ross_chem_data_directory,
+                                                    version_name,
+                                                    "data",
+                                                    "cleaned"),
+                                        full.names = TRUE,
+                                        pattern = ".csv")
 
   if(length(raw_ross_chem_data_path) == 0){
-    stop("No cleaned data file found. Please check the directory: ", here(raw_ross_chem_data_directory, version_name,"data","cleaned"))
+    stop("No cleaned data file found. Please check the directory: ",
+         here(raw_ross_chem_data_directory, version_name,"data","cleaned"))
   }
 
   # Grab and clean the ROSS chem data (originally pulled from zenodo)
@@ -184,6 +195,8 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
       site_name = Site, site_code, collector,
       # TOC and Chemical Data Columns
       TOC, DOC, NO3, SC, Cl, TN, lab_turb = Turbidity, ChlA, NH4, PO4, TSS,
+      # in-situ field measurements
+      Field_DO_mgL, Field_Cond_uS_cm = Field_Cond_µS_cm, Field_Temp_C,
       # Spatial information columns
       distance_upstream_km,
       # Coordinate columns
@@ -203,4 +216,5 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
   }
 
   return(ross_chem_data)
+
 }

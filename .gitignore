@@ -1,20 +1,26 @@
+# R Studio artifacts
 .Rproj.user
 .Rhistory
 .RData
 .Ruserdata
+**.Renviron
 
-# Ignore some folder paths
-/data/
-creds/
+# ignore data, creds, docs, env folders in the project root
+data
+creds
+**credentials.sqlite
+docs
 env/
+
+# ignore some dashboard stuff
+dashboard/setup/
+dashboard/metadata/
+
+# ignore some specific paths/scratch folders
+scratch/baseline_TOC_addQ.rmd
+scratch/snotel_summary.csv
 KEC_Scratch/
 
 # mac artifacts
 **.DS_Store
-**.Renviron
-**credentials.sqlite
-dashboard/setup/
-dashboard/metadata/
-data
-docs
-creds
+

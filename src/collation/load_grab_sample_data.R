@@ -91,22 +91,26 @@
 load_grab_sample_data <- function(
     input_all_chem_data_path = list.files(here("data", "collated","chem"),
                                           full.names = T, pattern = "all_chem_data")%>%
-                                utils::tail(1),
+      utils::tail(1),
     update_data = FALSE,
     raw_ross_chem_data_path = here("data", "raw", "chem", "ross_clp_chem"),
     raw_fc_chem_data_path = here("data", "raw", "chem", "fc_clp_chem"),
     output_directory = here("data", "collated", "chem")
 ){
+
   # Get read_ext function ----
-  source("src/collation/read_ext.R")
+  source(here("src/collation/read_ext.R"))
   #Get generator functions ----
-  source("src/collation/generate_ross_grab_sample_data.R")
-  source("src/collation/generate_fc_grab_sample_data.R")
+  source(here("src/collation/generate_ross_grab_sample_data.R"))
+  source(here("src/collation/generate_fc_grab_sample_data.R"))
+
   # Argument checks ----
+
   # Check input paths (only if not NULL)
   if (!is.null(input_all_chem_data_path) && !file.exists(input_all_chem_data_path)) {
     stop("input_all_chem_data_path does not exist:\n  ", input_all_chem_data_path)
   }
+
   # Check raw path arguments (file or directory must exist)
   if (!is.null(raw_ross_chem_data_path) && !file.exists(raw_ross_chem_data_path)) {
     stop("raw_ross_chem_data_path does not exist:\n  ", raw_ross_chem_data_path)
@@ -115,6 +119,7 @@ load_grab_sample_data <- function(
   if (!is.null(raw_fc_chem_data_path) && !file.exists(raw_fc_chem_data_path)) {
     stop("raw_fc_chem_data_path does not exist:\n  ", raw_fc_chem_data_path)
   }
+
   # Check update arguments are logical
   if (!is.logical(update_data)) {
     stop("update_data must be TRUE or FALSE, not: ", update_data)
@@ -156,12 +161,15 @@ load_grab_sample_data <- function(
 
     # Return the data
     return(all_data)
-  }else{
+
+  } else {
+
     # If update all is F then just read in the data from the input path
     all_data <- read_ext(input_all_chem_data_path)
 
     # Return the data
     return(all_data)
+
   }
 
 }
