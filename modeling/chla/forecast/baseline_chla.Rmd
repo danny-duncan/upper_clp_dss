@@ -35,7 +35,7 @@ Get all chl-a grab samples from our collated data set (`load_grab_sample_data()`
 grab_chla <- load_grab_sample_data() %>% 
   select(site_code, site_name, date = Date,
          ChlA, Field_DO_mgL:distance_upstream_km, Lat:flag) %>% 
-  filter(!is.na(ChlA))
+  filter(!is.na(ChlA), !Campaign %in% c("Mainstem - Lower", "Lower Tributary")
 
 # check for flags
 unique(grab_chla$flag)
@@ -216,7 +216,7 @@ distance_to_major_trib <- function(site) {
       mutate(ID=comid, toID=tocomid, length=lengthkm) %>% 
       select(comid, ID, toID, length)
     
-    # calculate distance from point to that segment, if 
+    # calculate distance from point to that segment
     distance <- get_pathlength(mainstem_fl) %>% 
       filter(ID == trib_fl$comid) %>%
       pull(pathlength)
@@ -433,7 +433,14 @@ mae_poly = mae(test$ChlA, test$baseline_chla_p)
 bias_poly = bias(test$ChlA, test$baseline_chla_p)
 
 ```
-
+Poly performance: 
+RMSE: `r round(rmse_poly,2)`
+MAE: `r round(mae_poly,2)`
+Bias: `r round(bias_poly,2)`
+NLS performance: 
+RMSE: `r round(rmse_nls,2)`
+MAE: `r round(mae_nls,2)`
+Bias: `r round(bias_nls,2)`
 Performance is basically the same across both models. Because the nls model 
 incoporates a sinusoidal relationship which is more justifiable than the poly
 model, let's stick with that one. 

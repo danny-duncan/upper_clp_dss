@@ -155,7 +155,7 @@ generate_fc_grab_sample_data <- function(
           #removing extra spaces from names
           site_code = str_replace_all(site_code, " ", ""),
           TOC = as.numeric(TOC),
-          NO3 = (as.numeric(NO3) / 0.2259), # renamed from NO3_N above
+          NO3 = (as.numeric(NO3) / 0.2259), # renamed from NO3_N above and converting to NO3 from NO3_N here
           SC = (as.numeric(SC) / 0.65), # converting TDS to SC - TDS renamed above
           Cl = as.numeric(Cl),
           lab_turb = as.numeric(lab_turb),
