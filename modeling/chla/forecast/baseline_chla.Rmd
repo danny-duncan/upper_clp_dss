@@ -433,7 +433,14 @@ mae_poly = mae(test$ChlA, test$baseline_chla_p)
 bias_poly = bias(test$ChlA, test$baseline_chla_p)
 
 ```
-
+Poly performance: 
+RMSE: `r round(rmse_poly,2)`
+MAE: `r round(mae_poly,2)`
+Bias: `r round(bias_poly,2)`
+NLS performance: 
+RMSE: `r round(rmse_nls,2)`
+MAE: `r round(mae_nls,2)`
+Bias: `r round(bias_nls,2)`
 Performance is basically the same across both models. Because the nls model 
 incoporates a sinusoidal relationship which is more justifiable than the poly
 model, let's stick with that one. 
