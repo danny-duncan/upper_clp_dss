@@ -35,7 +35,7 @@ Get all chl-a grab samples from our collated data set (`load_grab_sample_data()`
 grab_chla <- load_grab_sample_data() %>% 
   select(site_code, site_name, date = Date,
          ChlA, Field_DO_mgL:distance_upstream_km, Lat:flag) %>% 
-  filter(!is.na(ChlA), !Campaign %in% c("Mainstem - Lower", "Lower Tributary")
+  filter(!is.na(ChlA), !Campaign %in% c("Mainstem - Lower", "Lower Tributary"))
 
 # check for flags
 unique(grab_chla$flag)
@@ -107,6 +107,11 @@ mapview(waterbodies)
 waterbodies <- waterbodies[flowlines, ]
 mapview(waterbodies)
 
+# remove the one waterbody for the fish hatchery
+fish <- "17496521"
+waterbodies <- waterbodies %>% 
+  filter(comid != fish)
+
 # Pull in site coordinates
 xy <- grab_chla %>%
   select(site_code, site_name, Lat, Long, Campaign, location_type) %>% 
@@ -126,13 +131,19 @@ Calculate the distance to the nearest upstream reservoir. Basically looking for
 instances where there will be changes based on proximity to reservoir.
 
 ```{r}
-# NOTE: resolution not great for some sites 
-# (see Comanche/Hourglass complex)... Some samples are along the same flowline 
-# section, and are therefore represented with the same information. 
+# NOTE: resolution not great for some sites... Some samples are along the same 
+# flowline section, and are therefore represented with the same information. 
 
 distance_to_up_waterbody <- function(site) {
+  
   #one site
   one_site <- xy %>% filter(site_code == site) %>% first()
+  
+  # if the site type is a reservoir, return a value of 0
+  if (one_site$location_type == "Reservoir") {
+      return(tibble("site_code" = site, "dist_to_up_wb_km" = 0))
+  }
+  
   # get flowlines upstream of point
   upstream_of_point <- get_UT(flowlines, one_site$comid)
   # and grab those as a sf
@@ -175,7 +186,7 @@ distance_upstream_waterbody <- map(xy$site_code,
 ```
 
 Calculate the distance to the nearest upstream tributary - basically looking for
-possible step changes in chem/nuts.
+possible step changes in chemistry and nutrients.
 
 ```{r}
 distance_to_major_trib <- function(site) {
