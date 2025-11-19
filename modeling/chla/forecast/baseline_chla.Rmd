@@ -35,7 +35,7 @@ Get all chl-a grab samples from our collated data set (`load_grab_sample_data()`
 grab_chla <- load_grab_sample_data() %>% 
   select(site_code, site_name, date = Date,
          ChlA, Field_DO_mgL:distance_upstream_km, Lat:flag) %>% 
-  filter(!is.na(ChlA))
+  filter(!is.na(ChlA), !Campaign %in% c("Mainstem - Lower", "Lower Tributary")
 
 # check for flags
 unique(grab_chla$flag)
