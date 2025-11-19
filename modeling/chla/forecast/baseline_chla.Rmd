@@ -216,7 +216,7 @@ distance_to_major_trib <- function(site) {
       mutate(ID=comid, toID=tocomid, length=lengthkm) %>% 
       select(comid, ID, toID, length)
     
-    # calculate distance from point to that segment, if 
+    # calculate distance from point to that segment
     distance <- get_pathlength(mainstem_fl) %>% 
       filter(ID == trib_fl$comid) %>%
       pull(pathlength)
