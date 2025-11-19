@@ -300,7 +300,8 @@ with those assumptions. We're going to do this more rigorously by holding out th
 
 ```{r}
 test <- chla_ms_site_info %>% 
-  filter(year(date) == 2025)
+  filter(year(date) == 2025 & site_code %in% c("pbr","pbd","sfm","pman","chd") )
+  
 
 train <- anti_join(chla_ms_site_info, test)
 
