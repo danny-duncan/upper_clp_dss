@@ -141,7 +141,7 @@ distance_to_up_waterbody <- function(site) {
   
   # if the site type is a reservoir, return a value of 0
   if (one_site$location_type == "Reservoir") {
-      return(tibble("site_code" = site, "dist_to_up_wb_km" = 0))
+    return(tibble("site_code" = site, "dist_to_up_wb_km" = 0))
   }
   
   # get flowlines upstream of point
@@ -312,7 +312,6 @@ with those assumptions. We're going to do this more rigorously by holding out th
 ```{r}
 test <- chla_ms_site_info %>% 
   filter(year(date) == 2025 & site_code %in% c("pbr","pbd","sfm","pman","chd") )
-  
 
 train <- anti_join(chla_ms_site_info, test)
 
@@ -330,6 +329,56 @@ summary(fit_nls)
 plot(fit_nls)
 AIC(fit_nls)
 BIC(fit_nls)
+
+train1 <- train %>% filter(year(date) %in% c(2022, 2025))
+train2 <- train %>% filter(year(date) %in% c(2023, 2025))
+train3 <- train %>% filter(year(date) %in% c(2024, 2025))
+
+fit_nls1 <- nls(
+  log(ChlA) ~ A * sin(2 * pi * (doy - C) / 365) + D,
+  data = train1,
+  start = list(
+    A = (max(log(train1$ChlA)) - min(log(train1$ChlA))) / 2, # amplitude
+    D = mean(log(train1$ChlA)), # mean level
+    C = 100 # phase shift guess (day)
+  )
+)
+
+summary(fit_nls1)
+plot(fit_nls1)
+AIC(fit_nls1)
+BIC(fit_nls1)
+
+fit_nls2 <- nls(
+  log(ChlA) ~ A * sin(2 * pi * (doy - C) / 365) + D,
+  data = train2,
+  start = list(
+    A = (max(log(train2$ChlA)) - min(log(train2$ChlA))) / 2, # amplitude
+    D = mean(log(train2$ChlA)), # mean level
+    C = 100 # phase shift guess (day)
+  )
+)
+
+summary(fit_nls2)
+plot(fit_nls2)
+AIC(fit_nls2)
+BIC(fit_nls2)
+
+fit_nls3 <- nls(
+  log(ChlA) ~ A * sin(2 * pi * (doy - C) / 365) + D,
+  data = train3,
+  start = list(
+    A = (max(log(train3$ChlA)) - min(log(train3$ChlA))) / 2, # amplitude
+    D = mean(log(train3$ChlA)), # mean level
+    C = 100 # phase shift guess (day)
+  )
+)
+
+summary(fit_nls3)
+plot(fit_nls3)
+AIC(fit_nls3)
+BIC(fit_nls3)
+
 ```
 
 And let's see what this looks like when compared with the observed data.
@@ -357,27 +406,64 @@ ggplot(train, aes(x = distance_upstream_km, y = residuals)) +
   theme_bw()
 ```
 
-These residuals look fine enough, let's apply to the test set.
+
+And also as the ensemble
+
+```{r}
+train <- train %>% 
+  mutate(baseline_chla_1 = exp(predict(fit_nls1, newdata = .)),
+         baseline_chla_2 = exp(predict(fit_nls2, newdata = .)),
+         baseline_chla_3 = exp(predict(fit_nls3, newdata = .)),
+         baseline_chla_ens = (baseline_chla_1 + baseline_chla_2 + baseline_chla_3)/3,
+         residuals_ens = baseline_chla_ens - ChlA)
+
+ggplot(train, aes(x = doy)) +
+  geom_point(aes(y = ChlA)) +
+  geom_point(aes(y = baseline_chla_ens), color = "blue") +
+  theme_bw()
+
+ggplot(train, aes(x = dist_to_maj_trib, y = residuals_ens)) +
+  geom_point() +
+  theme_bw()
+
+ggplot(train, aes(x = dist_to_up_wb_km, y = residuals_ens)) +
+  geom_point() +
+  theme_bw()
+
+ggplot(train, aes(x = distance_upstream_km, y = residuals_ens)) +
+  geom_point() +
+  theme_bw()
+```
+
+
+These residuals look fine enough - the ensemble looks a bit better, let's apply
+that ensemble to the test set.
 
 ```{r}
 test <- test %>% 
-  mutate(baseline_chla = exp(predict(fit_nls, newdata = .)),
+  mutate(baseline_chla_1 = exp(predict(fit_nls1, newdata = .)),
+         baseline_chla_2 = exp(predict(fit_nls2, newdata = .)),
+         baseline_chla_3 = exp(predict(fit_nls3, newdata = .)),
+         baseline_chla_ens = (baseline_chla_1 + baseline_chla_2 + baseline_chla_3)/3,
+         residuals_ens = baseline_chla_ens - ChlA,
+         baseline_chla = exp(predict(fit_nls, newdata = .)),
          residuals = baseline_chla - ChlA)
 
 ggplot(test, aes(x = doy)) +
   geom_point(aes(y = ChlA)) +
   geom_point(aes(y = baseline_chla), color = "blue") +
+  geom_point(aes(y = baseline_chla_ens), color = "orange") +
   theme_bw()
 
-ggplot(test, aes(x = dist_to_maj_trib, y = residuals)) +
+ggplot(test, aes(x = dist_to_maj_trib, y = residuals_ens)) +
   geom_point() +
   theme_bw()
 
-ggplot(test, aes(x = dist_to_up_wb_km, y = residuals)) +
+ggplot(test, aes(x = dist_to_up_wb_km, y = residuals_ens)) +
   geom_point() +
   theme_bw()
 
-ggplot(test, aes(x = distance_upstream_km, y = residuals)) +
+ggplot(test, aes(x = distance_upstream_km, y = residuals_ens)) +
   geom_point() +
   theme_bw()
 ```
@@ -391,82 +477,79 @@ Calculate performance metrics.
 rmse_nls = rmse(test$ChlA, test$baseline_chla)
 mae_nls = mae(test$ChlA, test$baseline_chla)
 bias_nls = bias(test$ChlA, test$baseline_chla)
+
+rmse_nls_ens = rmse(test$ChlA, test$baseline_chla_ens)
+mae_nls_ens = mae(test$ChlA, test$baseline_chla_ens)
+bias_nls_ens = bias(test$ChlA, test$baseline_chla_ens)
 ```
-
-Let's compare this with the same polynomial equation as above and see if the 
-AIC/BIC could be lower.
-
-```{r}
-fit_poly <- lm(log(ChlA) ~ poly(doy, degree = 3), data = train)
-
-summary(fit_poly)
-plot(fit_poly$residuals)
-
-AIC(fit_poly)
-BIC(fit_poly)
-
-train <- train %>% 
-  mutate(baseline_chla_p = exp(predict(fit_nls, newdata = .)),
-         residuals_p = baseline_chla_p - ChlA)
-
-ggplot(train, aes(x = doy)) +
-  geom_point(aes(y = ChlA)) +
-  geom_point(aes(y = baseline_chla), color = "blue") +
-  theme_bw()
-
-```
-
-And apply to the test/calculate metrics
-
-```{r}
-test <- test %>% 
-  mutate(baseline_chla_p = exp(predict(fit_poly, newdata = .)),
-         residuals_p = baseline_chla_p - ChlA)
-
-ggplot(test, aes(x = doy)) +
-  geom_point(aes(y = ChlA)) +
-  geom_point(aes(y = baseline_chla_p), color = "blue") +
-  theme_bw()
-
-ggplot(test, aes(x = dist_to_maj_trib, y = residuals_p)) +
-  geom_point() +
-  theme_bw()
-
-ggplot(test, aes(x = dist_to_up_wb_km, y = residuals_p)) +
-  geom_point() +
-  theme_bw()
-
-ggplot(test, aes(x = distance_upstream_km, y = residuals_p)) +
-  geom_point() +
-  theme_bw()
-
-rmse_poly = rmse(test$ChlA, test$baseline_chla_p)
-mae_poly = mae(test$ChlA, test$baseline_chla_p)
-bias_poly = bias(test$ChlA, test$baseline_chla_p)
-
-```
-
-
-Poly performance: 
-
-RMSE: `r round(rmse_poly,2)`
-MAE: `r round(mae_poly,2)`
-Bias: `r round(bias_poly,2)`
 
 NLS performance:
 
-RMSE: `r round(rmse_nls,2)`
-MAE: `r round(mae_nls,2)`
-Bias: `r round(bias_nls,2)`
+RMSE: `r round(rmse_nls, 2)`
+MAE: `r round(mae_nls, 2)`
+Bias: `r round(bias_nls, 2)`
 
-Performance is basically the same across both models. Because the nls model 
-incoporates a sinusoidal relationship which is more justifiable than the poly
-model, let's stick with that one. 
+NLS ensemble performance:
+
+RMSE: `r round(rmse_nls_ens, 2)`
+MAE: `r round(mae_nls_ens, 2)`
+Bias: `r round(bias_nls_ens, 2)`
+
+Performance is much better in the ensemble. This makes sense because the AIC 
+and BIC values were all smaller than the non-ensemble version (because there was
+a lot less variability to try to explain). We'll export the ensemble baselines.
 
 ```{r}
-write_rds(fit_nls, 
-          here(paste0("data/derived/models/chla_baseline/working/sinusoidal_doy_v", 
-                      version_date,
-                      ".rds")))
+# write_rds(fit_nls1, 
+#           here(paste0("data/derived/models/chla_baseline/working/sinusoidal_ens1_doy_v",
+#                       version_date,
+#                       ".rds")))
+# 
+# write_rds(fit_nls2, 
+#           here(paste0("data/derived/models/chla_baseline/working/sinusoidal_ens2_doy_v",
+#                       version_date,
+#                       ".rds")))
+# 
+# write_rds(fit_nls3, 
+#           here(paste0("data/derived/models/chla_baseline/working/sinusoidal_ens3_doy_v",
+#                       version_date,
+#                       ".rds")))
+```
+
+# Plot fit metrics
+
+```{r}
+ggplot(test, aes(x = doy)) +
+  geom_point(aes(y = ChlA, color = "Observed")) +
+  geom_point(aes(y = baseline_chla_ens, color = "Baseline")) +
+  scale_color_manual(values = c("Observed" = "black",
+                                "Baseline" = "orange")) +  theme_bw() +
+  labs(y = "Chlorophyll a (ug/L)",
+       x = "Day of Year",
+       color = "data source") +
+  theme(
+    legend.position = c(0.05, 0.95),   # x, y in NPC coordinates
+    legend.justification = c(0, 1),   # anchor the legend box top-left
+    legend.background = element_rect(fill = alpha("white", 0.7))
+  )
+
+# format annotation text for plot
+metrics_text <- paste0(
+  "MAE = ", round(mae_nls_ens, 2),
+  "\nRMSE = ", round(rmse_nls_ens, 2),
+  "\nBias = ", round(bias_nls_ens, 2)
+)
+
+ggplot(test, aes(x = baseline_chla_ens, y = ChlA)) +
+  geom_point() +
+  theme_bw() + 
+  geom_abline(slope = 1, intercept = 0, lty = 2) +
+  coord_cartesian(xlim = c(0, 10), ylim = c(0, 10)) +
+  labs(x = "Baseline Chlorophyll a Ensemble (ug/L)", 
+       y = "Measured Chlorophyll a (ug/L)") +
+  annotate("text", x = 8, y = 2, 
+           hjust = 0, vjust = 1, 
+           label = metrics_text, size = 4)
+
 ```
 
