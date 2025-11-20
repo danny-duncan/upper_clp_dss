@@ -15,10 +15,13 @@ library(here)
 library(mgcv)
 library(Metrics)
 
+source(here("src/collation/load_grab_sample_data.R"))
 # grab chemistry data
-chem <- read_csv(here("data/upper_clp_dss/ross_clp_chem/data/cleaned/CLP_chemistry_up_to_20250701.csv"))
+chem <- load_grab_sample_data()
 # and location info
-locations <- read_csv(here("data/upper_clp_dss/ross_clp_chem/data/metadata/location_metadata.csv"))
+locations <- read_csv(here("data/raw/spatial/metadata/water_sampling_sites.csv"))
+
+chem <- left_join(chem, locations)
 ```
 
 # Exploring DOC/TOC interoperability
@@ -31,7 +34,7 @@ chem %>%
   filter(!is.na(TOC) & !is.na(DOC)) %>% 
   ggplot(., aes(x = TOC, y = DOC)) + 
   geom_point() + 
-  facet_wrap(Site ~ .)
+  facet_wrap(site_code ~ .)
 ```
 
 The answer is, kind of yes. Exceptions: basically everything after Canyon Mouth. 
@@ -40,7 +43,6 @@ Let's also look at water source type for this:
 ```{r}
 chem %>% 
   filter(!is.na(TOC) & !is.na(DOC)) %>% 
-  left_join(., locations) %>% 
   ggplot(., aes(x = TOC, y = DOC)) + 
   geom_point() + 
   facet_wrap(location_type ~ .)
@@ -51,7 +53,6 @@ Let's look at mainstem here:
 ```{r}
 chem %>% 
   filter(!is.na(TOC) & !is.na(DOC) & location_type == "Mainstem") %>% 
-  left_join(., locations) %>% 
   ggplot(., aes(x = TOC, y = DOC)) + 
   geom_point() + 
   facet_wrap(Campaign ~ .)
@@ -62,9 +63,8 @@ Okay, this aligns with the relationship falling apart after the Canyon Mouth.
 ```{r}
 chem %>% 
   filter(!is.na(TOC) & !is.na(DOC) & grepl("Upper", Campaign)) %>% 
-  left_join(., locations) %>% 
   ggplot(., aes(x = TOC, y = DOC)) + geom_point() + 
-  facet_wrap(Site ~ .)
+  facet_wrap(site_code ~ .)
 ```
 
 Let's also look at the South Fork
@@ -72,9 +72,8 @@ Let's also look at the South Fork
 ```{r}
 chem %>% 
   filter(!is.na(TOC) & !is.na(DOC) & Campaign == "South Fork") %>% 
-  left_join(., locations) %>% 
   ggplot(., aes(x = TOC, y = DOC)) + geom_point() + 
-  facet_wrap(Site ~ .)
+  facet_wrap(site_code ~ .)
 ```
 
 Great, so let's look at DOC across the upper sites and South Fork:
@@ -82,7 +81,7 @@ Great, so let's look at DOC across the upper sites and South Fork:
 ```{r}
 chem %>% 
   filter(grepl("Upper", Campaign) | Campaign == "South Fork") %>% 
-  mutate(dist_name = paste(distance_upstream_km, Site, sep = " - ")) %>% 
+  mutate(dist_name = paste(distance_upstream_km, site_code, sep = " - ")) %>% 
   ggplot(., aes(x = yday(Date), y = DOC, color = year(Date))) + 
   geom_point() + 
   facet_wrap(dist_name ~.)
@@ -100,8 +99,8 @@ post-fire.)
 ```{r}
 chem %>% 
   filter(!year(Date) %in% c(2021, 2022) & grepl("Upper|South", Campaign)) %>% 
-  mutate(dist_name = paste(distance_upstream_km, Site, sep = " - "),
-         ordered_name = factor(Site, levels = c("Poudre at Bellvue Diversion",
+  mutate(dist_name = paste(distance_upstream_km, site_name, sep = " - "),
+         ordered_name = factor(site_name, levels = c("Poudre at Bellvue Diversion",
                                                 "Poudre Above North Fork",
                                                 "Poudre at Manner's Bridge",
                                                 "Poudre Below S. Fork",
@@ -113,7 +112,7 @@ chem %>%
                                                 "Sawmill"))) %>%
   ggplot(., aes(x = yday(Date), y = DOC, color = year(Date))) + 
   geom_point() + 
-  facet_wrap(Site + distance_upstream_km + Campaign ~.)
+  facet_wrap(site_name + distance_upstream_km + Campaign ~.)
 ```
 
 The consistency between 2015 and post-fire leads me to believe that there is 
@@ -128,8 +127,8 @@ chem %>%
   filter(grepl("Upper|South", Campaign) & 
            location_type %in% c("Mainstem", "Stream", "Inflow") &
            !year(Date) %in% c(2021, 2022)) %>% 
-  mutate(dist_name = paste(distance_upstream_km, Site, sep = " - "),
-         ordered_name = factor(Site, levels = c("Poudre at Bellvue Diversion",
+  mutate(dist_name = paste(distance_upstream_km, site_name, sep = " - "),
+         ordered_name = factor(site_name, levels = c("Poudre at Bellvue Diversion",
                                                 "Poudre Above North Fork",
                                                 "Poudre at Manner's Bridge",
                                                 "Poudre Below S. Fork", 
@@ -164,7 +163,7 @@ mainstem <- chem %>%
          toc_doc = if_else(!is.na(TOC), TOC, DOC),
          # to play with categorical variables, they failed.
          identity = if_else(Campaign == "South Fork", 1, 0),
-         fire_signal = if_else(Year %in% c(2021, 2022), 1, 0)) %>% 
+         fire_signal = if_else(year %in% c(2021, 2022), 1, 0)) %>% 
   # limit time, remove fire signal, remove flier
   filter(!is.na(toc_doc), between(DOY, 100, 320), fire_signal == 0, toc_doc < 9)
 
@@ -447,11 +446,11 @@ metrics_text <- paste0(
 
 
 # pred - obs scatter plot!
-ggplot(test_2025, aes(x = toc_doc, y = pred_avg)) +
+ggplot(test_2025, aes(x = pred_avg, y = toc_doc)) +
   geom_point(color = "blue", alpha = 0.6, size = 2) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
-  labs(x = "Observed TOC (mg/L)",
-       y = "Predicted TOC (ensemble, mg/L)",
+  labs(y = "Observed TOC (mg/L)",
+       x = "Predicted TOC (ensemble, mg/L)",
        title = "GAM Ensemble Predictions vs Observed (2025)") +
   annotate("text", x = 3, y = 8, 
            hjust = 0, vjust = 1, 
@@ -460,7 +459,7 @@ ggplot(test_2025, aes(x = toc_doc, y = pred_avg)) +
   coord_cartesian(xlim = c(3, 8), ylim = c(3, 8))
 
 # for kicks, look at performance by site
-ggplot(test_2025, aes(x = toc_doc, y = pred_avg)) +
+ggplot(test_2025, aes(x = pred_avg, y = toc_doc)) +
   geom_point(color = "blue", alpha = 0.6, size = 2) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(x = "Observed TOC (mg/L)",
@@ -468,7 +467,7 @@ ggplot(test_2025, aes(x = toc_doc, y = pred_avg)) +
        title = "GAM Ensemble Predictions vs Observed (2025)") +
   theme_bw(base_size = 14) +
   coord_cartesian(xlim = c(3, 8), ylim = c(3, 8)) +
-  facet_wrap(Site ~ .)
+  facet_wrap(site_name ~ .)
 
 ```
 
