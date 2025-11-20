@@ -59,6 +59,7 @@ jobs:
             echo "No changes to commit"
           else
             git commit -m "Hourly data update: $(date -u +%Y-%m-%d_%H:%M:%S_UTC)"
+            git pull --rebase origin ${{ github.ref_name }}
             git push origin ${{ github.ref_name }}
             echo "Data successfully updated and pushed"
           fi
