@@ -43,6 +43,7 @@ This is where custom functions are stored.
 This will store code to create a prototype Shiny dashboard for treatment
 operators The current version of the dashboard is available at:
 <https://geocentroid.shinyapps.io/UCLP_Alpha_WQ_Dashboard/>
+Contact Sam Struthers for username & password for access
 
 ### Modeling:
 
