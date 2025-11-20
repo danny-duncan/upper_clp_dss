@@ -1,0 +1,241 @@
+---
+title: "Fort Collins Intake Data Explore"
+output: html_document
+date: "2025-11-20"
+---
+
+# Purpose
+
+The purpose of this document is to explore the data provided to us from the City
+of Fort Collins at their intake/Munroe Canal for turbidity, TOC, alkalinity.
+
+```{r, echo = F, error = F, message = F}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, error = FALSE)
+library(readxl)
+library(here)
+library(kableExtra)
+library(tidyverse)
+```
+
+## Total Organic Carbon
+
+```{r}
+
+toc <- read_excel(here("data/raw/fc_intake_data/Intake TOC.xlsx")) %>% 
+  mutate(date = date(`Sampled Date`)) %>% 
+  select(date, parameter = `Parameter Name`, result = `Corrected Result`) %>% 
+  mutate(doy = yday(date),
+         year = year(date))
+
+ggplot(toc, aes(x = doy, y = result, color = factor(year))) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  scale_color_viridis_d() +
+  labs(x = "day of year", y = "TOC (mg/L)", color = "year")
+
+# limited to days 100-200
+ggplot(toc, aes(x = doy, y = result, color = factor(year))) +
+  coord_cartesian(xlim = c(100, 200)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  scale_color_viridis_d() +
+  labs(x = "day of year", y = "TOC (mg/L)", color = "year")
+
+# faceted
+ggplot(toc, aes(x = doy, y = result, color = factor(year))) +
+  coord_cartesian(xlim = c(100, 200)) +
+  facet_wrap(year ~ ., scale = "free_y") +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d() +
+  labs(x = "day of year", y = "TOC (mg/L)", color = "year")
+
+```
+
+
+## Alkalinity
+
+```{r}
+alk <- read_csv(here("data/raw/fc_intake_data/Poudre_Intake_Alkalinity.csv")) %>% 
+  mutate(date = mdy(`Sampled Date`)) %>% 
+  select(date, parameter = `Parameter Name`, result = `Corrected Result`) %>% 
+  mutate(doy = yday(date),
+         year = year(date))
+
+ggplot(alk, aes(x = doy, y = result, color = factor(year))) +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d() +
+  geom_abline(slope = 0, intercept = 60, lty = 2, color = "orange") +
+  labs(x = "day of year", y = "alkalinity (mg/L CaCO3)", color = "year")
+
+# limit to doy 100-200
+ggplot(alk, aes(x = doy, y = result, color = factor(year))) +
+  coord_cartesian(xlim = c(100, 200)) +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d()+
+  labs(x = "day of year", y = "alkalinity (mg/L CaCO3)", color = "year")
+
+# facet
+ggplot(alk, aes(x = doy, y = result, color = factor(year))) +
+  facet_wrap(year ~ ., scales = "free_y") +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d() +
+  labs(x = "day of year", y = "alkalinity (mg/L CaCO3)", color = "year")
+
+```
+
+Alkalinity data is mostly Apr-Jun, and during this time there has never been a
+sample that is higher than the treatment matrix cutoff (60 mg/L), the only thing
+that we could do here is try to relate this to some other variable to give a warning
+that it might be a high alkalinity year in the spring.
+
+## Turbidity
+
+```{r}
+turb <- read_csv(here("data/raw/fc_intake_data/Intake and Munroe NTU.csv")) %>% 
+  select(SampleDatetime, 
+         Intake_NTU = N311_Intake_NTU, 
+         Munroe_NTU = N4118_Munroe_NTU) %>% 
+  mutate(datetime = ymd_hms(SampleDatetime),
+         date = date(datetime),
+         doy = yday(date),
+         year = year(date))
+
+# looks like there is both high frequency and daily data here based on the
+# parsing issues
+
+# high-frequency data
+turb_rt <- turb %>% 
+  filter(!is.na(datetime)) %>% 
+  mutate(Munroe_NTU = case_when(Munroe_NTU <= 0 ~ NA_real_,
+                                Munroe_NTU >= 327.67 ~ NA_real_, 
+                                .default = Munroe_NTU),
+         Intake_NTU = case_when(Intake_NTU <= 0 ~ NA_real_,
+                                Intake_NTU >= 990 ~ NA_real_,
+                                .default = Intake_NTU))
+
+ggplot(turb_rt, aes(x = datetime)) +
+  geom_point(aes(y = Intake_NTU, color = "Intake")) +
+  geom_point(aes(y = Munroe_NTU, color = "Munroe")) +
+  theme_bw() +
+  scale_color_viridis_d() +
+  labs(x = NULL, y = "turbidity (NTU)", color = "location")
+
+
+turb_daily <- turb %>% 
+  filter(is.na(datetime)) %>% 
+  mutate(date = ymd(SampleDatetime),
+         doy = yday(date),
+         year = year(date)) %>% 
+  select(-SampleDatetime, -datetime)
+
+ggplot(turb_daily, aes(x = date)) +
+  geom_point(aes(y = Intake_NTU, color = "Intake")) +
+  geom_point(aes(y = Munroe_NTU, color = "Munroe")) +
+  theme_bw() +
+  scale_color_viridis_d() +
+  labs(x = NULL, y = "turbidity (NTU)", color = "location")
+
+
+```
+
+Based on the artifacts in the data, it looks like the daily data is just a 
+summary of the real time, we can drop it and summarize from the RT ourselves.
+
+Boxplots look pretty rough for these data, so we'll just plot the 95%, 75% 50%, 
+25% and 5% in ribbons.
+
+```{r}
+turb_q <- turb_rt %>%
+  summarize(p05 = quantile(Intake_NTU, 0.05, na.rm = TRUE),
+            p25 = quantile(Intake_NTU, 0.25, na.rm = TRUE),
+            p50 = quantile(Intake_NTU, 0.50, na.rm = TRUE),
+            p75 = quantile(Intake_NTU, 0.75, na.rm = TRUE),
+            p95 = quantile(Intake_NTU, 0.95, na.rm = TRUE),
+            .by = c(year, doy))
+
+ggplot(turb_q, aes(x = doy)) +
+  # 5–95% band
+  geom_ribbon(aes(ymin = p05, ymax = p95, fill = "5 - 95%")) +
+  # 25–75% band
+  geom_ribbon(aes(ymin = p25, ymax = p75, fill = "25 - 75%")) +
+  # Median line
+  geom_line(aes(y = p50, color = "median"), color = "black") +
+  # 100 NTU threshold
+  geom_abline(aes(color = "100 NTU threshold"), color = "orange", 
+              slope = 0, intercept = 100, lty = 2) +
+  facet_grid(year ~ ., scales = "free_y") +
+  coord_cartesian(xlim = c(75, 275)) +
+  labs(y = "Intake Turbidity (NTU)",
+       x = "Day of Year",
+       title = "Daily Turbidity Quantile Bands",
+       fill = "Quantile Bands") +
+  scale_fill_manual(values = c("5 - 95%" = "grey85",
+                               "25 - 75%" = "grey60"),
+                    breaks = c("5 - 95%", "25 - 75%")) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+```
+
+And look at Munroe Canal - not sure if this is in the canal or in the river
+at the canal. This is their alternate Poudre source if the intake proper had an
+issue.
+
+```{r}
+turb_q_munroe <- turb_rt %>%
+  summarize(p05 = quantile(Munroe_NTU, 0.05, na.rm = TRUE),
+            p25 = quantile(Munroe_NTU, 0.25, na.rm = TRUE),
+            p50 = quantile(Munroe_NTU, 0.50, na.rm = TRUE),
+            p75 = quantile(Munroe_NTU, 0.75, na.rm = TRUE),
+            p95 = quantile(Munroe_NTU, 0.95, na.rm = TRUE),
+            .by = c(year, doy))
+
+ggplot(turb_q_munroe, aes(x = doy)) +
+  # 5–95% band
+  geom_ribbon(aes(ymin = p05, ymax = p95, fill = "5 - 95%")) +
+  # 25–75% band
+  geom_ribbon(aes(ymin = p25, ymax = p75, fill = "25 - 75%")) +
+  # Median line
+  geom_line(aes(y = p50, color = "median"), color = "black") +
+  # 100 NTU threshold
+  geom_abline(aes(color = "100 NTU threshold"), color = "orange", 
+              slope = 0, intercept = 100, lty = 2) +
+  facet_grid(year ~ ., scales = "free_y") +
+  coord_cartesian(xlim = c(75, 275)) +
+  labs(y = "Munroe Canal Turbidity (NTU)",
+       x = "Day of Year",
+       title = "Daily Turbidity Quantile Bands",
+       fill = "Quantile Bands") +
+  scale_fill_manual(values = c("5 - 95%" = "grey85",
+                               "25 - 75%" = "grey60"),
+                    breaks = c("5 - 95%", "25 - 75%")) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+```
+
+And let's tally how many times each quantile was above the 100 NTU threshold:
+
+```{r}
+turb_q %>% 
+  pivot_longer(cols = c(p05, p25, p50, p75, p95), 
+               names_to = "quantile", 
+               values_to = "turb_ntu") %>% 
+  filter(turb_ntu > 50) %>% 
+  count(quantile, year) %>% 
+  pivot_wider(names_from = quantile, values_from = n) %>% 
+  select(year, p95, p75, p50, p25) %>% 
+  arrange(year) %>% 
+  kable(caption = "Number of Days Turbidity Quantiles Exceeded 50 NTU",
+        align = "c") %>% 
+  kable_styling(bootstrap_options = c("striped"),
+                full_width = TRUE,
+                position = "center")  
+```
+
