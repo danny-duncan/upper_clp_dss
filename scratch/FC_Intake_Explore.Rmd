@@ -14,6 +14,9 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE, error = FALSE)
 library(readxl)
 library(here)
 library(kableExtra)
+
+# remotes::install_github("https://github.com/anguswg-ucsb/cdssr")
+library(cdssr)
 library(tidyverse)
 ```
 
@@ -43,20 +46,22 @@ ggplot(toc, aes(x = doy, y = result, color = factor(year))) +
   scale_color_viridis_d() +
   labs(x = "day of year", y = "TOC (mg/L)", color = "year")
 
-flow_data <- cdssr::get_sw_ts(
-     abbrev = "CLAFTCCO",
-     start_date = min(toc$date, na.rm = T),
-     end_date = max(toc$date, na.rm = T),
-     timescale = "day"
- )%>%
-    mutate(year = factor(year(datetime)), 
-    doy = yday(datetime))
+flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
+                       start_date = min(toc$date, na.rm = T),
+                       end_date = max(toc$date, na.rm = T),
+                       timescale = "day")%>%
+  mutate(year = factor(year(datetime)), 
+         doy = yday(datetime))
 
 # faceted
-ggplot(toc, aes(x = doy, y = result, color = factor(year))) +
+ggplot() +
+  geom_area(data = flow_data,
+            aes(x = doy, y = value/200),
+            fill = "gray70",
+            alpha = 0.5) +
+  geom_point(data = toc, aes(x = doy, y = result, color = factor(year))) +
   coord_cartesian(xlim = c(100, 200)) +
   facet_wrap(year ~ ., scale = "free_y") +
-  geom_point() +
   theme_bw() +
   scale_color_viridis_d() +
   labs(x = "day of year", y = "TOC (mg/L)", color = "year")
@@ -88,10 +93,21 @@ ggplot(alk, aes(x = doy, y = result, color = factor(year))) +
   scale_color_viridis_d()+
   labs(x = "day of year", y = "alkalinity (mg/L CaCO3)", color = "year")
 
+flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
+                       start_date = min(alk$date, na.rm = T),
+                       end_date = max(alk$date, na.rm = T),
+                       timescale = "day")%>%
+  mutate(year = factor(year(datetime)), 
+         doy = yday(datetime))
+
 # facet
-ggplot(alk, aes(x = doy, y = result, color = factor(year))) +
+ggplot() +
+  geom_area(data = flow_data,
+            aes(x = doy, y = value/50),
+            fill = "gray70",
+            alpha = 0.5) +
+  geom_point(data = alk, aes(x = doy, y = result, color = factor(year))) +
   facet_wrap(year ~ ., scales = "free_y") +
-  geom_point() +
   theme_bw() +
   scale_color_viridis_d() +
   labs(x = "day of year", y = "alkalinity (mg/L CaCO3)", color = "year")
@@ -150,6 +166,13 @@ ggplot(turb_daily, aes(x = date)) +
   scale_color_viridis_d() +
   labs(x = NULL, y = "turbidity (NTU)", color = "location")
 
+ggplot(turb_daily, aes(x = date)) +
+  geom_point(aes(y = Intake_NTU, color = "Intake")) +
+  geom_point(aes(y = Munroe_NTU, color = "Munroe")) +
+  theme_bw() +
+  scale_color_viridis_d() +
+  labs(x = NULL, y = "turbidity (NTU)", color = "location")
+
 
 ```
 
@@ -157,7 +180,7 @@ Based on the artifacts in the data, it looks like the daily data is just a
 summary of the real time, we can drop it and summarize from the RT ourselves.
 
 Boxplots look pretty rough for these data, so we'll just plot the 95%, 75% 50%, 
-25% and 5% in ribbons.
+25% and 5% in ribbons, with and without Q from the canyon mouth
 
 ```{r}
 turb_q <- turb_rt %>%
@@ -166,9 +189,43 @@ turb_q <- turb_rt %>%
             p50 = quantile(Intake_NTU, 0.50, na.rm = TRUE),
             p75 = quantile(Intake_NTU, 0.75, na.rm = TRUE),
             p95 = quantile(Intake_NTU, 0.95, na.rm = TRUE),
-            .by = c(year, doy))
+            .by = c(year, doy, date))
 
 ggplot(turb_q, aes(x = doy)) +
+  # 5–95% band
+  geom_ribbon(aes(ymin = p05, ymax = p95, fill = "5 - 95%")) +
+  # 25–75% band
+  geom_ribbon(aes(ymin = p25, ymax = p75, fill = "25 - 75%")) +
+  # Median line
+  geom_line(aes(y = p50, color = "median"), color = "black") +
+  # 100 NTU threshold
+  geom_abline(aes(color = "100 NTU threshold"), color = "orange", 
+              slope = 0, intercept = 100, lty = 2) +
+  facet_grid(year ~ ., scales = "free_y") +
+  coord_cartesian(xlim = c(75, 275)) +
+  labs(y = "Intake Turbidity (NTU)",
+       x = "Day of Year",
+       title = "Daily Turbidity Quantile Bands",
+       fill = "Quantile Bands") +
+  scale_fill_manual(values = c("5 - 95%" = "grey85",
+                               "25 - 75%" = "grey60"),
+                    breaks = c("5 - 95%", "25 - 75%")) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
+                       start_date = min(turb_q$date, na.rm = T),
+                       end_date = max(turb_q$date, na.rm = T),
+                       timescale = "day")%>%
+  mutate(year = factor(year(datetime)), 
+         doy = yday(datetime))
+
+# with Q
+ggplot(turb_q, aes(x = doy)) +
+  geom_area(data = flow_data,
+            aes(x = doy, y = value/30),
+            fill = "lightblue",
+            alpha = 0.5) +
   # 5–95% band
   geom_ribbon(aes(ymin = p05, ymax = p95, fill = "5 - 95%")) +
   # 25–75% band
@@ -229,7 +286,8 @@ ggplot(turb_q_munroe, aes(x = doy)) +
 
 ```
 
-And let's tally how many times each quantile was above the 100 NTU threshold:
+And let's tally how many times each quantile was above the 50 NTU, which is when
+City of FC starts to monitor for high turbidity:
 
 ```{r}
 turb_q %>% 
