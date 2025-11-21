@@ -43,6 +43,15 @@ ggplot(toc, aes(x = doy, y = result, color = factor(year))) +
   scale_color_viridis_d() +
   labs(x = "day of year", y = "TOC (mg/L)", color = "year")
 
+flow_data <- cdssr::get_sw_ts(
+     abbrev = "CLAFTCCO",
+     start_date = min(toc$date, na.rm = T),
+     end_date = max(toc$date, na.rm = T),
+     timescale = "day"
+ )%>%
+    mutate(year = factor(year(datetime)), 
+    doy = yday(datetime))
+
 # faceted
 ggplot(toc, aes(x = doy, y = result, color = factor(year))) +
   coord_cartesian(xlim = c(100, 200)) +
