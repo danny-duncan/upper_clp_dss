@@ -36,13 +36,14 @@ library(jsonlite)
 library(sf)
 library(leafem)
 library(mapview)
+library(nhdplusTools)
 library(tidyverse)
 
 # Define functions to retrieve gauge stations, observed discharge, and
 # forecast discharge:
 
-#' Retrieves NWPS Hydro-Ensemble Forecast System (HEFS) gages within a given
-#' Area of Interest (AOI).
+#' Retrieves National Water Prediction Service (NWPS) Hydro-Ensemble Forecast
+#' System (HEFS) gauges within a given Area of Interest (AOI).
 #'
 #' This function converts the bounding box of an input spatial feature to a
 #' query string, makes an API call to a NOAA service, and attempts to return the
@@ -54,7 +55,7 @@ library(tidyverse)
 #'                 URL; users should verify the exact endpoint based on API documentation.
 #' @return An sf object containing the retrieved gages (points), or NULL if the
 #'         input is invalid or the API request fails.
-get_hefs_gages <- function(aoi, base_url = "https://api.water.noaa.gov/nwps/v1/gauges") {
+get_hefs_gauges <- function(aoi, base_url = "https://api.water.noaa.gov/nwps/v1/gauges") {
 
   # --- 1. Input Validation ---
   if (!inherits(aoi, "sf") && !inherits(aoi, "sfg") && !inherits(aoi, "sfc")) {
@@ -64,11 +65,11 @@ get_hefs_gages <- function(aoi, base_url = "https://api.water.noaa.gov/nwps/v1/g
 
   # --- 2. Coordinate System Standardization ---
   # Transform the AOI to the standard WGS 84 (EPSG 4326) required by api
-  aoi <- st_transform(aoi, crs = 4326)
+  aoi <- sf::st_transform(aoi, crs = 4326)
 
   # --- 3. Bounding Box Extraction and Formatting ---
   # Extract the bounding box (bbox) from the transformed AOI.
-  aoi_bbox <- st_bbox(aoi)
+  aoi_bbox <- sf::st_bbox(aoi)
 
   # Format the bounding box into the required URL query string.
   # This uses the same %.4f precision for standard API compliance.
@@ -83,7 +84,7 @@ get_hefs_gages <- function(aoi, base_url = "https://api.water.noaa.gov/nwps/v1/g
   # Construct the final API request URL, including the requested spatial
   # reference ID (SRID)
   full_request <- paste0(base_url, bbox_string, "&srid=EPSG_4326")
-  message(paste("Requesting data from:", full_request))
+  message(sprintf("Requesting data from %s", full_request))
 
   # --- 4. API Request and Status Check ---
   # Perform the GET request
@@ -92,8 +93,7 @@ get_hefs_gages <- function(aoi, base_url = "https://api.water.noaa.gov/nwps/v1/g
   # Check the HTTP status code (crucial for troubleshooting 404/500 errors)
   if (httr::status_code(raw_dat) != 200) {
     status <- httr::status_code(raw_dat)
-    warning(paste0("API request failed with HTTP Status Code: ", status,
-                   ". Check the full_request URL and API documentation."))
+    warning(sprintf("API request failed with HTTP Status Code: %s. Check the full_request URL and API documentation.", status))
     return(NULL)
   }
 
@@ -106,7 +106,7 @@ get_hefs_gages <- function(aoi, base_url = "https://api.water.noaa.gov/nwps/v1/g
     # Parse the text content into an R list/data frame
     gauge_data <- jsonlite::fromJSON(unpacked_data, simplifyVector = TRUE)
   }, error = function(e) {
-    warning(paste("JSON Parsing Error: Could not convert response to JSON. Message:", e$message))
+    warning(sprintf("JSON Parsing Error: Could not convert response to JSON. Message: %s", e$message))
     return(NULL)
   })
 
@@ -124,15 +124,13 @@ get_hefs_gages <- function(aoi, base_url = "https://api.water.noaa.gov/nwps/v1/g
     sf::st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
 
   # --- 7. Return Result ---
-  message(paste("Successfully retrieved", nrow(gauge_data), "gages."))
+  message(sprintf("Successfully retrieved %s gauges.", nrow(gauge_data)))
   return(gauge_data)
 }
 
 
-
-
-
-#' Retrieves NWPS Hydro-Ensemble Forecast System (HEFS) observed stage and flow data.
+#' Retrieves National Water Prediction Service (NWPS) Hydro-Ensemble Forecast
+#' System (HEFS) observed stage and flow data.
 #' https://api.water.noaa.gov/nwps/v1/docs/#/Gauges/Gauges_GetStageFlow
 #'
 #' This function queries the observed stage and flow for a specific NWPS gage ID.
@@ -141,9 +139,10 @@ get_hefs_gages <- function(aoi, base_url = "https://api.water.noaa.gov/nwps/v1/g
 #' - Converts the 'validTime' string to a POSIXct datetime object.
 #' - Converts discharge from thousands of cubic feet per second (kcfs) to cfs.
 #'
-#' @param ID A character string representing a single NWPS gage ID (e.g., "COLOC070").
-#' @return A tibble containing the date_time, stage_ft, and discharge_cfs,
-#'         or NULL if the API request or parsing fails.
+#' @param ID A character string representing a single NWPS gauge ID (e.g., "COLOC070"),
+#' In the return from get_hefs_gauges(), the NWPS gauge id id is `lid`.
+#' @return A tibble containing the date_time, stage_ft, and discharge_cfs for the
+#' previous 30 days of recorded data, or NULL if the API request or parsing fails.
 get_hefs_observed <- function (ID) {
 
   # --- 1. Input Validation ---
@@ -153,8 +152,9 @@ get_hefs_observed <- function (ID) {
   }
 
   # Define the full request URL for observed data
+  # this returns the previous 30 days of data
   full_request <- paste0("https://api.water.noaa.gov/nwps/v1/gauges/", ID, "/stageflow/observed")
-  message(paste("Requesting observed data for ID:", ID))
+  message(sprintf("Requesting observed data for ID %s", ID))
 
   # --- 2. API Request and Status Check ---
   # Perform the GET request
@@ -163,8 +163,7 @@ get_hefs_observed <- function (ID) {
   # Check the HTTP status code (crucial for troubleshooting 404/500 errors)
   if (httr::status_code(observed_raw) != 200) {
     status <- httr::status_code(observed_raw)
-    warning(paste0("API request failed for ID ", ID, " with HTTP Status Code: ", status,
-                   ". Check the full_request URL and API documentation."))
+    warning(sprintf("API request failed for ID %s with HTTP Status Code: %s. Check the full_request URL and API documentation.", ID, status))
     return(NULL)
   }
 
@@ -172,18 +171,17 @@ get_hefs_observed <- function (ID) {
   unpacked_data <- httr::content(observed_raw, as = "text", encoding = "UTF-8")
 
   # --- 3. JSON Parsing and Structure Check ---
-  raw_data <- NULL
   tryCatch({
     # Parse the text content into an R list/data frame
     raw_data <- jsonlite::fromJSON(unpacked_data, simplifyVector = TRUE)
   }, error = function(e) {
-    warning(paste("JSON Parsing Error for ID ", ID, ". Message:", e$message))
-    return(NULL)
+    warning(sprintf("JSON Parsing Error for ID %s. Message: %s", ID, e$message))
+    return(raw_data <- NULL)
   })
 
   # Check if the expected data element ('data') exists in the response
   if (is.null(raw_data) || !("data" %in% names(raw_data))) {
-    warning(paste0("API response for ID ", ID, " is missing the expected 'data' element."))
+    warning(sprintf("API response for ID %s is missing the expected 'data' element.", ID))
     return(NULL)
   }
 
@@ -211,29 +209,30 @@ get_hefs_observed <- function (ID) {
     dplyr::filter(discharge_cfs >= 0) %>%
 
     # Select final columns (and exclude the original kcfs column and metadata)
-    dplyr::select(date_time, stage_ft, discharge_cfs)
+    dplyr::select(date_time, stage_ft, discharge_cfs, group)
 
-  message(paste("Successfully retrieved", nrow(observed_dat), "observed records for ID:", ID))
+  message(sprintf("Successfully retrieved %s observed records for ID %s", nrow(observed_dat), ID))
   return(observed_dat)
 }
 
 
 
-
-
-
-#' Retrieves NWPS HEFS Quantile Forecast Data.
-#'https://api.water.noaa.gov/hefs/v1/docs/#/
+#' Retrieves National Water Prediction Service (NWPS) Hydro-Ensemble Forecast
+#' System (HEFS) Quantile Forecast Data.
+#' https://api.water.noaa.gov/hefs/v1/docs/#/
 #'
-#' This function queries the Hydro-Ensemble Forecast System (HEFS) for quantile
-#' discharge forecasts for a specific NWPS gage ID. It handles API communication,
-#' parses the complex JSON structure, and flattens the quantile array into
-#' separate, named columns.
+#' This function queries HEFS for quantile discharge forecasts for a specific
+#' NWPS gage ID. It handles API communication, parses the complex JSON
+#' structure, and flattens the quantile array into separate, named columns.
 #'
-#' @param ID A character string representing a single NWPS gage ID (e.g., "COLOC070").
+#' @param ID A character string representing a single NWPS gauge ID (e.g., "COLOC070"),
+#' In the return from get_hefs_gauges(), the NWPS gauge id id is `lid`.
+#' @param date Date (in YYYY-MM-DD format) for which a quantile forecast is desired
+#' Defaults to NULL, which will pull the latest forecast.
+#'
 #' @return A tibble containing the forecast date_time, max_value, and separate
-#'         columns for each quantile (e.g., Q0.05, Q0.50), or NULL on failure.
-get_hefs_forecast <- function(ID, param = c("QINE")) {
+#' columns for each quantile (e.g., Q0.05, Q0.50), or NULL on failure.
+get_hefs_quantiles <- function(ID, date = NULL) {
 
   # --- 1. Input Validation ---
   if (is.null(ID) || !is.character(ID) || length(ID) != 1) {
@@ -241,36 +240,46 @@ get_hefs_forecast <- function(ID, param = c("QINE")) {
     return(NULL)
   }
 
+  if (!is.null(date)) {
+    request_suffix <- paste0("&forecast_datetime=", date, "T12:00:00Z")
+  } else {
+    request_suffix <- NULL
+  }
+
   # Define the full request URL for quantile forecast data (QINE is instantaneous flow)
-  full_request <- paste0("https://api.water.noaa.gov/hefs/v1/hydrograph-quantiles/?location_id=", ID, "&parameter_id=QINE")
-  message(paste("Requesting forecast data for ID:", ID))
+  full_request <- paste0("https://api.water.noaa.gov/hefs/v1/hydrograph-quantiles/?location_id=",
+                         ID,
+                         "&parameter_id=QINE",
+                         request_suffix)
+
+  message(sprintf("Requesting forecast data for ID %s", ID))
 
   # Perform the GET request
   forecast_raw <- httr::GET(url = full_request)
 
   # --- 2. API Request and Status Check ---
-  if (httr::status_code(forecast_raw) != 200) {
-    status <- httr::status_code(forecast_raw)
-    warning(paste0("API request failed for ID ", ID, " with HTTP Status Code: ", status))
-    return(NULL)
-  }
 
   # Extract content as text
   unpacked_data <- httr::content(forecast_raw, as = "text", encoding = "UTF-8")
 
+  if (httr::status_code(forecast_raw) != 200) {
+    warning(sprintf("API request failed for ID %s with message %s",
+                   ID, str_match(unpacked_data, '"error":"([^"]+)"')[,2]))
+    return(NULL)
+  }
+
   # --- 3. JSON Parsing and Structure Check ---
-  forecast_data <- NULL
   tryCatch({
     # Parse the text content into an R list/data frame
     forecast_data <- jsonlite::fromJSON(unpacked_data, simplifyVector = TRUE)
   }, error = function(e) {
-    warning(paste("JSON Parsing Error for ID ", ID, ". Message:", e$message))
+    warning(sprintf("JSON Parsing Error for ID %s. Message: %s", ID, e$message))
     return(NULL)
   })
 
   # Check for the primary expected data element
   if (is.null(forecast_data) || !("value_set" %in% names(forecast_data))) {
-    warning(paste0("Forecast API response for ID ", ID, " is missing the expected 'value_set' element."))
+    warning(sprintf("Forecast API response for ID %s is missing the expected 'value_set' element.", ID))
     return(NULL)
   }
 
@@ -280,9 +289,12 @@ get_hefs_forecast <- function(ID, param = c("QINE")) {
   quantiles <- forecast_data$metadata$exceedance_quantiles %>%
     as.character()
 
+  forecast_date <- forecast_data$metadata$forecast_datetime %>%
+    lubridate::ymd_hms()
+
   # Ensure we have quantile names before proceeding with unnesting/renaming
   if (is.null(quantiles) || length(quantiles) == 0) {
-    warning(paste0("Could not extract quantile names for ID ", ID, ". Returning NULL."))
+    warning(sprintf("Could not extract quantile names for ID %s", ID))
     return(NULL)
   }
 
@@ -292,7 +304,7 @@ get_hefs_forecast <- function(ID, param = c("QINE")) {
 
     # Flatten the 'quantile_values' list column into separate columns.
     # New columns will be named 'quantile_values_1', 'quantile_values_2', etc. (based on names_sep = "_")
-    unnest_wider(
+    tidyr::unnest_wider(
       col = quantile_values,
       names_sep = "_",
       names_repair = "unique"
@@ -303,7 +315,7 @@ get_hefs_forecast <- function(ID, param = c("QINE")) {
       # Apply the character vector of quantiles as new names, prefixing with "Q" for clarity
       .fn = ~ paste0("Q", quantiles),
       # Select the columns created by unnest_wider (e.g., quantile_values_1, ...)
-      .cols = starts_with("quantile_values_")
+      .cols = dplyr::starts_with("quantile_values_")
     ) %>%
 
     # Rename the datetime column
@@ -311,40 +323,139 @@ get_hefs_forecast <- function(ID, param = c("QINE")) {
 
     # Convert 'valid_datetime' (ISO string) to POSIXct datetime object
     dplyr::mutate(date_time = lubridate::ymd_hms(date_time),
-                  group = "Forecast") %>%
+                  group = "Forecast",
+                  forecast_date = forecast_date) %>%
 
     # Filter out rows where the maximum discharge value is <= 0 (often metadata or junk data)
     dplyr::filter(max_value > 0)
 
-  message(paste("Successfully retrieved", nrow(forecast_dat), "forecast records for ID:", ID))
+  message(sprintf("Successfully retrieved %s forecast records for ID %s",
+                  nrow(forecast_dat), ID))
+  if (lubridate::date(forecast_date) != lubridate::date(Sys.Date())) {
+    message(sprintf("Note, the forecast retrieved is not current. The most recent forecast is dated %s",
+                    lubridate::date(forecast_date)))
+  }
   return(forecast_dat)
+
+}
+
+
+#' Retrieves National Water Prediction Service (NWPS) Hydro-Ensemble Forecast
+#' System (HEFS) Enseble Forecast Data.
+#' https://api.water.noaa.gov/hefs/v1/docs/#/
+#'
+#' This function queries HEFS for ensemble discharge forecasts for a specific
+#' NWPS gage ID. It handles API communication, parses the complex JSON
+#' structure, and flattens the quantile array into separate, named columns.
+#'
+#' @param ID A character string representing a single NWPS gauge ID (e.g., "COLOC070"),
+#' In the return from get_hefs_gauges(), the NWPS gauge id id is `lid`.
+#' @param param A character string indicating the forecast type desired. While
+#' other forecasts are available, this function is written to retrieve QINE only.
+#' @param date Date (in YYYY-MM-DD format) for which a quantile forecast is desired
+#' Defaults to NULL, which will pull the latest forecast.
+#'
+#' @return A tibble containing the forecast date_time, value, and and ensemble
+#' member for each of the 30-member ensemble
+#'
+get_hefs_ensemble <- function(ID, date = NULL, param = "QINE") {
+
+
+  # --- 1. Input Validation ---
+  if (is.null(ID) || !is.character(ID) || length(ID) != 1) {
+    warning("Input 'ID' must be a single character string representing the gage ID.")
+    return(NULL)
+  }
+
+  if (!is.null(date)) {
+    request_suffix <- paste0("&forecast_datetime=", date, "T12:00:00Z")
+  } else {
+    request_suffix <- NULL
+  }
+
+  # Define the full request URL for quantile forecast data (QINE is instantaneous flow)
+  full_request <- paste0("https://api.water.noaa.gov/hefs/v1/ensembles/?location_id=",
+                         ID,
+                         "&parameter_id=QINE",
+                         request_suffix)
+  message(sprintf("Requesting forecast data for ID %s", ID))
+
+  # Perform the GET request
+  forecast_raw <- httr::GET(url = full_request)
+
+  # --- 2. API Request and Status Check ---
+  if (httr::status_code(forecast_raw) != 200) {
+    status <- httr::status_code(forecast_raw)
+    warning(sprintf("API request failed for ID %s with HTTP Status Code: %s", ID, status))
+    return(NULL)
+  }
+
+  # Extract content as text
+  unpacked_data <- httr::content(forecast_raw, as = "text", encoding = "UTF-8")
+
+  # check to make sure that there is content in the forecast
+  if (nchar(unpacked_data) == 2) {
+    warning(sprintf("Forecast is not available for the selected date at ID %s", ID))
+    return(NULL)
+  }
+
+  # --- 3. JSON Parsing and Structure Check ---
+  tryCatch({
+    # Parse the text content into an R list/data frame
+    forecast_data <- jsonlite::fromJSON(unpacked_data, simplifyVector = TRUE)
+  }, error = function(e) {
+    warning(sprintf("JSON Parsing Error for ID %s. Message: %s", ID, e$message))
+    return(NULL)
+  })
+
+  # Check for the primary expected data element
+  if (is.null(forecast_data) || !("events" %in% names(forecast_data[[1]]))) {
+    warning(sprintf("Forecast API response for ID %s is missing the expected 'events' element.", ID))
+    return(NULL)
+  }
+
+  # --- 4. Data Transformation and Cleanup ---
+
+  forecast_date <- forecast_data[[1]]$forecast_datetime %>%
+    first() %>%
+    lubridate::ymd_hms()
+
+  # Get the list of ensemblenames
+  ens_names <- forecast_data[[1]]$ensemble_member_index
+
+  # Start processing the ensemble members set
+  forecast_dat <- map2(.x = forecast_data[[1]]$events,
+                       .y = ens_names,
+                       ~ dplyr::as_tibble(.x) %>%
+                         mutate(ensemble_member = .y,
+                                valid_datetime = ymd_hms(valid_datetime))) %>%
+    bind_rows() %>%
+    dplyr::mutate(group = "Forecast",
+                  forecast_date = forecast_date) %>%
+    # Filter out rows where the maximum discharge value is <= 0 (often metadata or junk data)
+    dplyr::filter(value > 0) %>%
+    rename(date_time = valid_datetime)
+
+  message(sprintf("Successfully retrieved %s forecast records for ID %s.", nrow(forecast_dat), ID))
+
+  return(forecast_dat)
+
 }
 
 
 
 
 # Test workflow
-sonde_locs <- read_csv("data/raw/spatial/metadata/sonde_location_metadata.csv") %>%
-  mutate(lat = str_split(lat_long, pattern = ",", simplify = TRUE)[,1] %>% as.numeric(),
-         lng = str_split(lat_long, pattern = ",", simplify = TRUE)[,2] %>% as.numeric()) %>%
-  st_as_sf(coords = c("lng","lat"), crs = 4326)
-
-# Define search aoi based on bounding box of sonde locations
-search_aoi <- sonde_locs %>%
-  st_buffer(1000) %>%
-  st_bbox() %>%
-  st_as_sfc() %>%
-  st_transform(4326)
-
+huc8 <- get_huc(id="10190007", type = "huc08") # poudre
 
 # Download and plot gauge sites in AOI
-gauge_sites <- get_hefs_gages(search_aoi)
-a <- mapview(gauge_sites,
-             col.regions = "dodgerblue") +
-  mapview(search_aoi %>% st_sf(name = "search_aoi",
-                             geometry = .),
-        col.regions = "hotpink",
-        alpha.regions = 0.2)
+gauge_sites <- get_hefs_gauges(huc8)
+
+# plot in space
+a <- mapview(gauge_sites %>% select(lid, geometry)) +
+  mapview(huc8,
+          col.regions = "hotpink",
+          alpha.regions = 0.2)
 
 addStaticLabels(a,
                 label = gauge_sites$lid,
@@ -358,19 +469,39 @@ addStaticLabels(a,
 # From that map, the FTDC2 is the gauge we care most about
 ID <- "FTDC2"
 
-# Pull in recent observed and forecast data
+# Pull in recent observed and current quantile forecast data
 observed <- get_hefs_observed(ID)
-forecast <- get_hefs_forecast(ID)
+forecast <- get_hefs_quantiles(ID)
 
-pdat <- bind_rows(observed, forecast)
+current_forecast <- bind_rows(observed, forecast)
 
 # Plot
-ggplot(pdat) +
+ggplot(current_forecast) +
   geom_line(aes(x = date_time, y = discharge_cfs, color = group)) +
   geom_ribbon(aes(x = date_time, ymin = min_value, ymax = max_value, fill = group), alpha = 0.3) +
   geom_line(aes(x = date_time, y = Q0.5, color = group)) +
   theme_bw() +
-  labs(y = "Discharge (cfs)") +
+  labs(y = "Discharge (cfs)", x = NULL) +
   scale_color_manual("", values = c("tomato","black")) +
-  scale_fill_manual("", values = c("tomato","black"))
+  scale_fill_manual("", values = c("tomato","black")) +
+  scale_x_datetime(minor_breaks = "1 day")
 
+# Get hindcast data and compare with observed
+hindcast_date = Sys.Date() - days(10)
+hindcast_forecast <- get_hefs_ensemble(ID, date = hindcast_date) %>%
+  summarize(median_value = median(value),
+         max_value = max(value),
+         min_value = min(value),
+         .by = c(date_time, forecast_date, group))
+ten_day_hindcast <- bind_rows(observed, hindcast_forecast) %>%
+  filter(between(date_time, ymd(hindcast_date), ymd(hindcast_date) + days(10)))
+
+ggplot(ten_day_hindcast) +
+  geom_line(aes(x = date_time, y = discharge_cfs, color = group)) +
+  geom_ribbon(aes(x = date_time, ymin = min_value, ymax = max_value, fill = group), alpha = 0.3) +
+  geom_line(aes(x = date_time, y = median_value, color = group)) +
+  theme_bw() +
+  labs(y = "Discharge (cfs)", x = NULL) +
+  scale_color_manual("", values = c("tomato","black")) +
+  scale_fill_manual("", values = c("tomato","black")) +
+  scale_x_datetime(minor_breaks = "1 day")

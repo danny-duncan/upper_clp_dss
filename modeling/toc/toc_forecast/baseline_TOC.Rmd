@@ -459,7 +459,7 @@ ggplot(test_2025, aes(x = pred_avg, y = toc_doc)) +
   coord_cartesian(xlim = c(3, 8), ylim = c(3, 8))
 
 # for kicks, look at performance by site
-ggplot(test_2025, aes(x = toc_doc, y = pred_avg)) +
+ggplot(test_2025, aes(x = pred_avg, y = toc_doc)) +
   geom_point(color = "blue", alpha = 0.6, size = 2) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(x = "Observed TOC (mg/L)",
