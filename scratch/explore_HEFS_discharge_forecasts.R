@@ -494,7 +494,7 @@ hindcast_forecast <- get_hefs_ensemble(ID, date = hindcast_date) %>%
          min_value = min(value),
          .by = c(date_time, forecast_date, group))
 ten_day_hindcast <- bind_rows(observed, hindcast_forecast) %>%
-  filter(between(date_time, ymd(hidcast_date), ymd(hindcast_date) + days(10)))
+  filter(between(date_time, ymd(hindcast_date), ymd(hindcast_date) + days(10)))
 
 ggplot(ten_day_hindcast) +
   geom_line(aes(x = date_time, y = discharge_cfs, color = group)) +
