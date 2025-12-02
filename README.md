@@ -1,9 +1,3 @@
----
-editor_options: 
-  markdown: 
-    wrap: 72
----
-
 # UCLP DSS
 
 Repo to organize all data/code related to the Upper CLP Decision Support
