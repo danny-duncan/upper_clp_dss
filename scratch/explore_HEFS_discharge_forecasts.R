@@ -443,6 +443,120 @@ get_hefs_ensemble <- function(ID, date = NULL, param = "QINE") {
 }
 
 
+#' Retrieves Colorado Basin River Forecast Center Hydro-Ensemble Forecast
+#' System (HEFS) Enseble Forecast Data.
+#' https://www.cbrfc.noaa.gov/lmap/lmap.php
+#'
+#' This function queries HEFS for ensemble discharge forecasts for a specific
+#' NWPS gage ID. It handles API communication, parses the complex JSON
+#' structure, and flattens the quantile array into separate, named columns.
+#'
+#' @param ID A character string representing a single NWPS gauge ID (e.g., "COLOC070"),
+#' In the return from get_hefs_gauges(), the NWPS gauge id id is `lid`.
+#' @param date Date (in YYYY-MM-DD format) for which a quantile forecast is desired
+#' Defaults to NULL, which will pull the latest forecast.
+#' @param nday Integer number of days to return forecast. Default is 5. Maximum
+#' # days is 28 and minimum is 5.
+#'
+#' @return A tibble containing the forecast date_time, value, and and ensemble
+#' member for each of the 30-member ensemble
+#'
+get_hefs_ensemble_cbrfc <- function(ID, date = NULL, nday = 5) {
+
+  # --- 1. Input Validation ---
+  if (is.null(ID) || !is.character(ID) || length(ID) != 1) {
+    warning("Input 'ID' must be a single character string representing the gage ID.")
+    return(NULL)
+  }
+
+  if (is.null(date)) {
+    warning("No date input so using today's date.")
+    date <- Sys.Date()
+  }
+
+  # make sure nday within reasonable range
+  if (nday > 28) {
+    nday <- 28
+  } else if (nday < 5) {
+    nday <- 5
+  }
+
+  # --- 2. Request json data from site using httr
+  full_request <- paste0("https://www.cbrfc.noaa.gov/dbdata/station/ensgraph/ensgraph_data.py?id=",
+                         ID,
+                         "&ndays=",
+                         nday,
+                         "&linear_flow=1&fdate=",
+                         date)
+
+  message(sprintf("Requesting forecast data for ID %s", ID))
+
+
+  #Perform the GET request
+  forecast_raw <- httr::GET(url = full_request)
+
+
+  # Extract content as text
+  unpacked_data <- httr::content(forecast_raw, as = "text", encoding = "UTF-8")
+
+  if (httr::status_code(forecast_raw) != 200) {
+    warning(sprintf("API request failed for ID %s with message %s",
+                    ID, str_match(unpacked_data, '"error":"([^"]+)"')[,2]))
+    return(NULL)
+  }
+
+  # --- 3. JSON Parsing and Structure Check ---
+  tryCatch({
+    # Parse the text content into an R list/data frame
+    forecast_full <- jsonlite::fromJSON(unpacked_data, simplifyVector = TRUE)
+  }, error = function(e) {
+    warning(sprintf("JSON Parsing Error for ID %s. Message: %s", ID, e$message))
+    return(NULL)
+  })
+
+  # Check for the primary expected data element
+  if (is.null(forecast_full) || !("traces" %in% names(forecast_full))) {
+    warning(sprintf("Forecast API response for ID %s is missing the expected 'value_set' element.", ID))
+    return(NULL)
+  }
+
+
+  # --- 4. Data Transformation and Cleanup ---
+  # forecast_data$traces contains individual ensemble members
+  forecast_data <- forecast_full$traces %>%
+    map2(names(.), ~ .x %>%
+           as_tibble() %>%
+           # The columns in the new tibble are automatically named V1 and V2
+           rename(date_time = V1) %>%
+           rename(!!paste0("ens_",.y) := V2) %>%
+           # 4. Only keep the two columns we care about
+           #select(date_time, !!as.character(.y))) %>%
+           select(date_time, starts_with("ens"))) %>%
+    reduce(full_join, by = "date_time") %>%
+    mutate(date_time = as.POSIXct(date_time / 1000, origin = "1970-01-01", tz = "UTC")) %>%
+    rowwise() %>%
+    # Calculate ensemble stats
+    mutate(
+      min_ens = min(c_across(starts_with("ens_")), na.rm = TRUE),
+      q_25 = quantile(c_across(starts_with("ens_")), probs = 0.25, na.rm = TRUE) %>% as.numeric(),
+      q_50 = quantile(c_across(starts_with("ens_")), probs = 0.5, na.rm = TRUE) %>% as.numeric(),
+      q_75 = quantile(c_across(starts_with("ens_")), probs = 0.75, na.rm = TRUE) %>% as.numeric(),
+      max_ens = max(c_across(starts_with("ens_")), na.rm = TRUE)
+    ) %>%
+    ungroup()
+
+  # Ensure we have quantile names before proceeding with unnesting/renaming
+  if (is.null(forecast_data) || length(forecast_data) == 0) {
+    warning(sprintf("No ensemble data returned for: ", ID))
+    return(NULL)
+  }
+
+  message(sprintf("Successfully retrieved %s forecast records for ID %s",
+                  nrow(forecast_data), ID))
+
+  return(forecast_data)
+
+}
 
 
 # Test workflow
@@ -505,3 +619,85 @@ ggplot(ten_day_hindcast) +
   scale_color_manual("", values = c("tomato","black")) +
   scale_fill_manual("", values = c("tomato","black")) +
   scale_x_datetime(minor_breaks = "1 day")
+
+
+
+# Test workflow
+huc8 <- get_huc(id="10190007", type = "huc08") # poudre
+
+# Download and plot gauge sites in AOI
+gauge_sites <- get_hefs_gauges(huc8)
+
+# plot in space
+a <- mapview(gauge_sites %>% select(lid, geometry)) +
+  mapview(huc8,
+          col.regions = "hotpink",
+          alpha.regions = 0.2)
+
+addStaticLabels(a,
+                label = gauge_sites$lid,
+                noHide = TRUE,
+                direction = 'right',
+                textOnly = TRUE,
+                textsize = "13px",
+                style = list("color" = "black", "font-weight" = "normal"))
+
+
+# From that map, the FTDC2 is the gauge we care most about
+ID <- "FTDC2"
+
+# Pull in recent observed and current quantile forecast data
+observed <- get_hefs_observed(ID)
+forecast <- get_hefs_quantiles(ID)
+
+current_forecast <- bind_rows(observed, forecast)
+
+# Plot
+ggplot(current_forecast) +
+  geom_line(aes(x = date_time, y = discharge_cfs, color = group)) +
+  geom_ribbon(aes(x = date_time, ymin = min_value, ymax = max_value, fill = group), alpha = 0.3) +
+  geom_line(aes(x = date_time, y = Q0.5, color = group)) +
+  theme_bw() +
+  labs(y = "Discharge (cfs)", x = NULL) +
+  scale_color_manual("", values = c("tomato","black")) +
+  scale_fill_manual("", values = c("tomato","black")) +
+  scale_x_datetime(minor_breaks = "1 day")
+
+# Get hindcast data and compare with observed
+hindcast_date = Sys.Date() - days(10)
+hindcast_forecast <- get_hefs_ensemble(ID, date = hindcast_date) %>%
+  summarize(median_value = median(value),
+            max_value = max(value),
+            min_value = min(value),
+            .by = c(date_time, forecast_date, group))
+ten_day_hindcast <- bind_rows(observed, hindcast_forecast) %>%
+  filter(between(date_time, ymd(hindcast_date), ymd(hindcast_date) + days(5)))
+
+ggplot(ten_day_hindcast) +
+  geom_line(aes(x = date_time, y = discharge_cfs, color = group)) +
+  geom_ribbon(aes(x = date_time, ymin = min_value, ymax = max_value, fill = group), alpha = 0.3) +
+  geom_line(aes(x = date_time, y = median_value, color = group)) +
+  theme_bw() +
+  labs(y = "Discharge (cfs)", x = NULL) +
+  scale_color_manual("", values = c("tomato","black")) +
+  scale_fill_manual("", values = c("tomato","black")) +
+  scale_x_datetime(minor_breaks = "1 day")
+
+
+
+# Get CWCB hindcast for random date and "NULL" date
+
+rand_date <- get_hefs_ensemble_cbrfc(ID = "FTDC2",
+                                date = "2024-05-11")
+
+null_date <- get_hefs_ensemble_cbrfc(ID = "FTDC2", # Pulls today forecast
+                                     date = NULL)
+
+ggplot(rand_date) +
+  geom_ribbon(aes(x = date_time, ymin = min_ens, ymax = max_ens, fill = "Min-Max"), alpha = 0.4) +
+  geom_ribbon(aes(x = date_time, ymin = q_25, ymax = q_75, fill = "Q25-Q75"), alpha = 0.4) +
+  geom_line(aes(x = date_time, y = q_50, fill = "Q50", color = "Q50")) +
+  theme_bw() +
+  guides(fill = guide_legend(reverse = TRUE)) +
+  scale_fill_manual("ensemble", values = c("lightblue", "dodgerblue", "blue", "navy"), na.translate = FALSE) +
+  scale_color_manual("", values = c("black"))
