@@ -1,0 +1,177 @@
+---
+title: "Testing NOAA HEFS discharge forecast retrieval"
+author: "ROSSyndicate"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Background
+
+Hydrologic Ensemble Forecast System (HEFS) is a system developed by the National Weather Service (NWS) to
+provide ensemble streamflow predictions. HEFS has been implemented at NWS
+River Forecast Centers (RFCs) for over 3,000 locations throughout the United
+States. HEFS integrates meteorological forecasts with hydrologic modeling to
+produce probabilistic streamflow forecasts and other hydrological variables.
+The system assesses the potential impacts of high-flow events and assesses
+flood risk. Most importantly, HEFS is a valuable tool for decision-makers
+and emergency managers, providing them with the necessary information to
+make informed decisions about water-related activities and potential flood
+hazards.
+
+
+Read more about HEFS and the associated API
+here: https://water.noaa.gov/about/api
+and here: https://github.com/NOAA-OWP/data-service-notebooks/blob/master/HEFS/0_executive_overview.ipynb
+Short blurb about the HEFS API from that link:
+The experimental NWPS HEFS Forecast API can be used to retrieve real-time
+and historical HEFS forecast data for NWPS locations. The forecast data
+includes complete ensembles and the set of ensemble time-step quantiles. The
+HEFS is a service developed by the National Weather Service (NWS) to provide
+ensemble streamflow predictions. HEFS has been implemented at NWS River
+Forecast Centers (RFCs) for over 3,000 locations throughout the United
+States. HEFS integrates meteorological forecasts with hydrologic modeling to
+produce probabilistic streamflow forecasts and other hydrological variables.
+The service assesses the potential impacts of high-flow events and assesses
+flood risk. The service currently serves 10 days of data. Guidance from
+individual RFCs may not be available at all times.
+
+```{r}
+# Import libraries
+library(httr)
+library(jsonlite)
+library(sf)
+library(leafem)
+library(mapview)
+library(nhdplusTools)
+library(tidyverse)
+
+# Import functions
+source(here("src/hefs/get_hefs_gauges.R"))
+source(here("src/hefs/get_hefs_ensembles.R"))
+source(here("src/hefs/get_hefs_observed.R"))
+source(here("src/hefs/get_hefs_quantiles.R"))
+source(here("src/hefs/get_hefs_ensembles_cbrfc.R"))
+```
+
+# Visualize Availabe Sites
+
+Using the CLP HUC8 watershed, let's go through the process to get the Cache La Poudre
+site at the canyon mouth. 
+
+```{r}
+# Test workflow
+huc8 <- get_huc(id="10190007", type = "huc08") # poudre
+
+# Download and plot gauge sites in AOI
+gauge_sites <- get_hefs_gauges(huc8)
+
+# plot in space
+mapview(huc8, 
+        layer.name = "CLP HUC8",
+        col.regions = "hotpink",
+        alpha.regions = 0.2) +
+  mapview(gauge_sites %>% select(lid, geometry),
+          layer.name = "HEFS sites",
+          legend = NULL)
+```
+
+# Current data acqusition and visualization
+
+```{r}
+# From that map, the FTDC2 is the gauge we care most about
+ID <- "FTDC2"
+
+# Pull in recent observed and current quantile forecast data
+observed <- get_hefs_observed(ID)
+forecast <- get_hefs_quantiles(ID)
+
+current_forecast <- bind_rows(observed, forecast)
+
+# Plot
+ggplot(current_forecast) +
+  geom_line(aes(x = date_time, y = discharge_cfs, color = group)) +
+  geom_ribbon(aes(x = date_time, ymin = min_value, ymax = max_value, fill = group), alpha = 0.3) +
+  geom_line(aes(x = date_time, y = Q0.5, color = group)) +
+  theme_bw() +
+  labs(y = "Discharge (cfs)", x = NULL) +
+  scale_color_manual("", values = c("tomato","black")) +
+  scale_fill_manual("", values = c("tomato","black")) +
+  scale_x_datetime(minor_breaks = "1 day")
+
+```
+
+## Attempt to get hindcast data
+
+```{r}
+# Get hindcast data and compare with observed
+hindcast_date = Sys.Date() - days(10)
+hindcast_forecast <- get_hefs_ensemble(ID, date = hindcast_date) %>%
+  summarize(median_value = median(value),
+            max_value = max(value),
+            min_value = min(value),
+            .by = c(date_time, forecast_date, group))
+ten_day_hindcast <- bind_rows(observed, hindcast_forecast) %>%
+  filter(between(date_time, ymd(hindcast_date), ymd(hindcast_date) + days(10)))
+
+ggplot(ten_day_hindcast) +
+  geom_line(aes(x = date_time, y = discharge_cfs, color = group)) +
+  geom_ribbon(aes(x = date_time, ymin = min_value, ymax = max_value, fill = group), alpha = 0.3) +
+  geom_line(aes(x = date_time, y = median_value, color = group)) +
+  theme_bw() +
+  labs(y = "Discharge (cfs)", x = NULL) +
+  scale_color_manual("", values = c("tomato","black")) +
+  scale_fill_manual("", values = c("tomato","black")) +
+  scale_x_datetime(minor_breaks = "1 day")
+```
+
+
+# Get Colorado Basin River Forecast Center hindcast
+
+The real time functions above only provide data for up to the previous 14 days, 
+sometimes less. The following method allows us to get the archived data from the 
+Colorado Basin River Forecast Center.
+
+```{r}
+rand_date <- get_hefs_ensembles_cbrfc(ID = "FTDC2",
+                                      date = "2024-05-11")
+
+ggplot(rand_date) +
+  geom_ribbon(aes(x = date_time, ymin = min_ens, ymax = max_ens, fill = "Min-Max"), alpha = 0.4) +
+  geom_ribbon(aes(x = date_time, ymin = q_25, ymax = q_75, fill = "Q25-Q75"), alpha = 0.4) +
+  geom_line(aes(x = date_time, y = q_50, color = "Q50")) +
+  theme_bw() +
+  labs(y = "Discharge (cfs)", x = NULL, color = "median") +
+  guides(fill = guide_legend(reverse = TRUE)) +
+  scale_fill_manual("ensemble", 
+                    values = c("lightblue", "dodgerblue", "blue", "navy"), 
+                    na.translate = FALSE) +
+  scale_x_datetime(minor_breaks = "1 day")
+
+```
+
+This method also allows for gathering today's forecast by leaving the date as `NULL`:
+
+```{r}
+
+todays_forecast <- get_hefs_ensembles_cbrfc(ID = "FTDC2",
+                                            date = NULL) %>% 
+  mutate(group = "Forecast")
+
+
+current_forecast_cbrfc <- bind_rows(observed, todays_forecast)
+
+# Plot
+ggplot(current_forecast_cbrfc) +
+  geom_line(aes(x = date_time, y = discharge_cfs)) +
+  geom_ribbon(aes(x = date_time, ymin = min_ens, ymax = max_ens, fill = "Min-Max"), alpha = 0.4) +
+  geom_ribbon(aes(x = date_time, ymin = q_25, ymax = q_75, fill = "Q25-Q75"), alpha = 0.4) +
+  geom_line(aes(x = date_time, y = q_50, color = "Q50")) +
+  theme_bw() +
+  labs(y = "Discharge (cfs)", x = NULL, color = "median") +
+  guides(fill = guide_legend(reverse = TRUE)) +
+  scale_fill_manual("ensemble", 
+                    values = c("lightblue", "dodgerblue", "blue", "navy"), 
+                    na.translate = FALSE) +
+  scale_x_datetime(minor_breaks = "1 day")
+
+```
