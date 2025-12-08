@@ -37,7 +37,7 @@ library(httr)
 These functions came from the nwmTools package, but most have been edited
 
 ```{r}
-validate <-  function(complete, field, value){
+validate <- function(complete, field, value){
   # check for field in source file
   if(field %in% names(complete) & !is.null(value)){
     # get all the options from the file for that field
@@ -53,7 +53,7 @@ validate <-  function(complete, field, value){
   }
 }
 
-nwm_filter = function(source, version = NULL, config = NULL, ensemble = NULL, 
+nwm_filter <- function(source, version = NULL, config = NULL, ensemble = NULL, 
                       output= NULL, domain = NULL, date = NULL){
   
   startDate <- endDate <- NULL
@@ -69,6 +69,7 @@ nwm_filter = function(source, version = NULL, config = NULL, ensemble = NULL,
   
   
   # Date ------------------------------------------------------------------ 
+  
   if(!is.null(date)){
     
     meta = meta %>% 
@@ -226,43 +227,36 @@ read_nwm_streamflow <- function(ncfile,
   forecast_datetime <- ncatt_get(nc, 0) %>% 
     .$model_output_valid_time %>% 
     # convert to datetime object
-    ymd_hms(.)
+    ymd_hms(., tz = "UTC") %>% 
+    with_tz(., tz = "Etc/GMT+7")
+
+  # Pull the valid time dimension from the global attributes
+  valid_datetime <- ncatt_get(nc, 0) %>% 
+    .$model_initialization_time %>% 
+    # convert to datetime object
+    ymd_hms(., tz = "UTC")%>% 
+    with_tz(., tz = "Etc/GMT+7")
   
   # Extract value matrix for the given varname
   value_mat <- ncvar_get(nc, varname)
   if (nrow(value_mat) < idx) {
     stop("Index outside streamflow matrix bounds")
   }
-  # Get the scaling factor and offset for the var name
-  var_attributes <- ncatt_get(nc, varname)
-  scale_factor <- var_attributes$scale_factor
-  add_offset <- var_attributes$add_offset
-  # calculate the value using scaling factor and offset
-  value <- (value_mat[idx]*scale_factor) + add_offset
   
-  # If the variable is streamflow, there is also a "nudge" variable
-  # that needs to be accounted for
-  if (varname == "streamflow") {
-    nudge_mat <- ncvar_get(nc, "nudge")
-    nudge_attributes <- ncatt_get(nc, "nudge")
-    nudge_scale <- nudge_attributes$scale_factor
-    nudge_offset <- nudge_attributes$add_offset
-    nudge_value <- (nudge_mat[idx]*nudge_scale) + nudge_offset
-    value <- value + nudge_value
-  }
+  value <- value_mat[idx]
   
   nc_close(nc)
   
   # Return tidy tibble
   tibble(
-    datetime = forecast_datetime,
+    valid_datetime = valid_datetime,
+    forecast_datetime = forecast_datetime,
     value = value,
     variable = varname, 
     comid = comid
   )
   
 }
-
 
 ```
 
@@ -271,8 +265,9 @@ read_nwm_streamflow <- function(ncfile,
 Here, we'll grab forecasts for the Cache La Poudre canyon mouth.
 
 Short-range forecast is 18h in advance
-Mid-range forecast is 10d in advance in 6h (?) increments
+Mid-range forecast is 10d in advance in 1h increments
 
+Note, this only works for the previous ~ 24 h of forecasts.
 
 ```{r}
 # 12948 is big thompson with forecast info: https://water.noaa.gov/gauges/ESSC2
@@ -280,11 +275,11 @@ Mid-range forecast is 10d in advance in 6h (?) increments
 comid <- "2900705" 
 
 urls <- get_nomads_urls(config = "medium_range_blend", #short_range, medium_range, medium_range_blend
-                        #date = "20251119", # date of forecast
+                        date = "20251207", # date of forecast
                         #ensemble = NA, # if medium_range, must supply ensemble number
                         output = "channel_rt", 
                         outdir = tempdir(),
-                        num = 18)
+                        num = 24)
 
 files <- download_files(urls, outdir = tempdir())
 
@@ -292,7 +287,7 @@ files <- download_files(urls, outdir = tempdir())
 
 And then we'll extract the data from these for our comid of choice.
 ```{r}
-map(files$outfiles, 
+data <- map(files$outfiles, 
     ~ read_nwm_streamflow(ncfile = .x, 
                           comid = comid, 
                           varname = "streamflow")) %>% 
@@ -300,4 +295,15 @@ map(files$outfiles,
 
 ```
 
-These values are wrong (compare to those at the web address above)... but leaving for now.
+Data from here is reported in cms and the data we are comparing to is in cfs, 
+let's do a quick unit conversion.
+
+```{r}
+data <- data %>% 
+  mutate(q_cfs = value * 35.3147) 
+
+ggplot(data, aes(x = forecast_datetime, y = q_cfs)) +
+  geom_line()
+```
+
+Yay! That matches the NWM Guidance page.
