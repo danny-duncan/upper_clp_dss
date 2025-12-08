@@ -7,12 +7,13 @@ output: html_document
 
 # Purpose 
 
-This Rmd is meant to outline how to access and extract NWM forecasts. 
+This Rmd is meant to outline how to access and extract NWM Guidance forecasts. 
+NWM Guidance is different from the NWM Official Forecast, which is only available
+for some locations during some time periods (that we don't really understand).
 
-As written, this is a bit of a dead end. Unsure where historical data are stored
-and there isn't a great how-to for acquiring NWM data, and the nwmTools package
-is super outdated and no longer works without some finessing (which is included 
-here). For now, just committing as progress, but not as functional code. 
+The nwmTools package, which seemed like the most straightforward package to use
+here is super outdated and no longer works without some finessing (finessing is 
+included here). 
 
 
 ```{r setup, include=FALSE}
@@ -21,7 +22,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(nhdplusTools)
 library(sf)
 # for now, don't worry about grabbing nwmTools, I've grabbed the necessary
-# functions and edited them to work... kind of.
+# functions and edited them to work.
 # install.packages("remotes")
 # remotes::install_github('mikejohnson51/nwmTools')
 # library(nwmTools)
@@ -89,7 +90,6 @@ nwm_filter <- function(source, version = NULL, config = NULL, ensemble = NULL,
       meta = tmp 
     }
   }
-  
   
   if(nrow(meta) > 1){warning('More then one viable source found...', call. = FALSE)}
   
@@ -198,9 +198,7 @@ get_nomads_urls = function(config = "medium_range",
 # Extracting data
 
 This is my version of the get_timeseries() function in the nwmTools package that
-doesn't work as written. I don't think all the assumptions are right (particularly)
-about valid time and the scaling factor/offset, but there's also very little 
-guidance about how to use the data. 
+doesn't work as written.
 
 ```{r}
 read_nwm_streamflow <- function(ncfile, 
