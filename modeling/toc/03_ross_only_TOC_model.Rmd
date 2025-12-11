@@ -12,6 +12,7 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 source("src/setup_libraries.R")
+source("src/setup_ross_theme.R")
 
 #these are just packages for testing within this script
 library(gridExtra)
