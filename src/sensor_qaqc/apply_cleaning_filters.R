@@ -26,6 +26,8 @@ apply_cleaning_filters <- function(df, value_col = "mean", new_value_col = "mean
     mutate(
       !!sym(new_value_col) := case_when(
         !is.na(mal_flag) ~ NA,
+        !!sym(value_col) <= 0 ~ NA,  # Remove non-positive values
+        !is.na(auto_flag) & str_detect(auto_flag, regex("outside of sensor specification range", ignore_case = TRUE)) ~ NA, # Anything outside of sensor spec ranges should be removed
         !is.na(auto_flag) & parameter == "FDOM Fluorescence" & auto_flag == "drift" ~ !!sym(value_col), # FDOM sensor over flagged for downwards drift
         !is.na(auto_flag) & parameter == "FDOM Fluorescence" & auto_flag == "outside of seasonal range" ~ !!sym(value_col), # FDOM sensor over flagged for seasonal range due to lack of data
         !is.na(auto_flag) & parameter == "Turbidity" & auto_flag == "outside of seasonal range" & !!sym(value_col) <= 10 & !!sym(value_col) != 0 ~ !!sym(value_col), # Turbidity sensor over flagged for seasonal range due to lack of data at lower values
