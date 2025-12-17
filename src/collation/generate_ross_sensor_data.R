@@ -101,73 +101,6 @@ generate_ross_sensor_data <- function(data_dir = here("data","raw", "sensor","ma
   source("src/sensor_qaqc/apply_interpolation_missing_data.R")
   source("src/sensor_qaqc/apply_low_pass_binomial_filter.R")
   source("src/sensor_qaqc/apply_timestep_median.R")
-  #Custom funtion to get the appropriate folder for sensor data
-  #---- Function to get correct folder based on year and data availability ----
-  get_correct_folder <- function(year, data_dir){
-    #check to see if cycle exists
-    folders <- list.files(path = file.path(data_dir, paste0(year, "_cycle")), full.names = T)
-    if(length(folders) == 0){
-      #message(paste("No data found for year", year))
-      path = NULL
-      return(path)
-    }
-    #check for post verification first
-    if(any(grepl("post_verification", folders)) == TRUE){
-      files <- list.files(path = file.path(data_dir, paste0(year, "_cycle"), "post_verification"), full.names = T)
-      if(length(files) == 0){
-        #message(paste("No post verification data found for year", year, ", moving to in_progress"))
-      }else{
-        #message(paste("Reading in post_verification data for year", year))
-        path <- list(path =  file.path(data_dir, paste0(year, "_cycle"), "post_verification"),
-                     status = "post_verification")
-        return(path)
-      }
-    }
-
-    #Check for in progress next
-    if(any(grepl("in_progress", folders)) == TRUE ){
-      files <- list.files(path = file.path(data_dir, paste0(year, "_cycle"), "in_progress"), full.names = T)
-      if(length(files) == 0){
-        #message(paste("No in progress verification data found for year", year, ", moving to autoqaqc/raw data"))
-
-      }else{
-        path <- list(path =  file.path(data_dir, paste0(year, "_cycle"), "in_progress"),
-                     status = "in_progress")
-        return(path)
-      }
-    }
-    #check for HV folder
-    if(any(grepl("hydro_vu_pull", folders)) == TRUE){
-      #message(paste("No in progress verification data found for year", year, ", moving to autoqaqc/raw data"))
-      folders <- list.files(path = file.path(data_dir, paste0(year, "_cycle"), "hydro_vu_pull"), full.names = T)
-      if(length(folders) == 0){
-        #message(paste("No raw data found for year", year))
-        path = NULL
-        return(path)
-      }else{
-        #see if any have flagged data in the folder name
-        if(any(grepl("flagged_data", folders)) == TRUE ){
-          path <- list(path =  file.path(data_dir, paste0(year, "_cycle"), "hydro_vu_pull", "flagged_data"),
-                       status = "hv_flagged")
-          return(path)
-        }else{
-          #if flagged data is not present, check for raw data
-          if(any(grepl("raw_data", folders)) == TRUE){
-            path <- list(path =  file.path(data_dir, paste0(year, "_cycle"), "hydro_vu_pull", "raw_data"),
-                         status = "hv_raw")
-            return(path)
-          }else{
-            #message(paste("No raw or flagged data found for year", year))
-            path = NULL
-            return(path)
-          }
-
-        }
-
-      }
-
-    }
-  }
 
   # Argument checks ----
   #check that data_dir exists
@@ -185,11 +118,75 @@ generate_ross_sensor_data <- function(data_dir = here("data","raw", "sensor","ma
 
   cleaned_data <- map(years, function(year){
     #get the correct folder for the year
-    path <- get_correct_folder(year, data_dir)
+    path <- map2(year, data_dir, function(year, data_dir){
+      #check to see if cycle exists
+      folders <- list.files(path = file.path(data_dir, paste0(year, "_cycle")), full.names = T)
+      if(length(folders) == 0){
+        #message(paste("No data found for year", year))
+        path = NULL
+        return(path)
+      }
+      #check for post verification first
+      if(any(grepl("post_verification", folders)) == TRUE){
+        files <- list.files(path = file.path(data_dir, paste0(year, "_cycle"), "post_verification"), full.names = T)
+        if(length(files) == 0){
+          #message(paste("No post verification data found for year", year, ", moving to in_progress"))
+        }else{
+          #message(paste("Reading in post_verification data for year", year))
+          path <- list(path =  file.path(data_dir, paste0(year, "_cycle"), "post_verification"),
+                       status = "post_verification")
+          return(path)
+        }
+      }
+
+      #Check for in progress next
+      if(any(grepl("in_progress", folders)) == TRUE ){
+        files <- list.files(path = file.path(data_dir, paste0(year, "_cycle"), "in_progress"), full.names = T)
+        if(length(files) == 0){
+          #message(paste("No in progress verification data found for year", year, ", moving to autoqaqc/raw data"))
+
+        }else{
+          path <- list(path =  file.path(data_dir, paste0(year, "_cycle"), "in_progress"),
+                       status = "in_progress")
+          return(path)
+        }
+      }
+      #check for HV folder
+      if(any(grepl("hydro_vu_pull", folders)) == TRUE){
+        #message(paste("No in progress verification data found for year", year, ", moving to autoqaqc/raw data"))
+        folders <- list.files(path = file.path(data_dir, paste0(year, "_cycle"), "hydro_vu_pull"), full.names = T)
+        if(length(folders) == 0){
+          #message(paste("No raw data found for year", year))
+          path = NULL
+          return(path)
+        }else{
+          #see if any have flagged data in the folder name
+          if(any(grepl("flagged_data", folders)) == TRUE ){
+            path <- list(path =  file.path(data_dir, paste0(year, "_cycle"), "hydro_vu_pull", "flagged_data"),
+                         status = "hv_flagged")
+            return(path)
+          }else{
+            #if flagged data is not present, check for raw data
+            if(any(grepl("raw_data", folders)) == TRUE){
+              path <- list(path =  file.path(data_dir, paste0(year, "_cycle"), "hydro_vu_pull", "raw_data"),
+                           status = "hv_raw")
+              return(path)
+            }else{
+              #message(paste("No raw or flagged data found for year", year))
+              path = NULL
+              return(path)
+            }
+
+          }
+
+        }
+
+      }
+    })
 
     if(is.null(path)){
       message(paste("No data found for year", year))
-      return(NA)
+      return(NULL)
     }
     message("Loading data from ", path$status, " for year ", year)
 
@@ -198,7 +195,7 @@ generate_ross_sensor_data <- function(data_dir = here("data","raw", "sensor","ma
     # Return data to user with message to run auto qaqc first for flagging and standardization
     if(path$status %in% c("hv_raw")){
       message("Data in hv_raw folder, please run autoqa_qc and save to the `hydro_vu_pull/flagged_data` folder")
-      return(NA)
+      return(NULL)
     }
     #---- Hv Flagged folder----
     #read in all data from that folder
