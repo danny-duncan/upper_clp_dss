@@ -182,7 +182,7 @@ generate_ross_sensor_data <- function(data_dir = here("data","raw", "sensor","ma
         }
 
       }
-    })
+    })[[1]]
 
     if(is.null(path)){
       message(paste("No data found for year", year))
