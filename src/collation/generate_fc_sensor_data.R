@@ -436,7 +436,6 @@ generate_fc_sensor_data <- function(data_dir = here("data","raw", "sensor", "fc_
       split(f = list(.$site, .$parameter), sep = "-") %>%
       keep(~nrow(.) > 0)
 
-    #write_parquet(bind_rows(v_final_flags), here("fc_sensor_data_with_flags.parquet"))
     #Apply our smoothing and cleaning filters to the flagged data
     filtered_smoothed_dataset <- v_final_flags%>%
       map(~.x %>%
