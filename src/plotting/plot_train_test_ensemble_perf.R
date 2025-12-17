@@ -30,6 +30,7 @@
 #'   (default = `"TOC"`).
 #' @param units A string giving the units of the response variable to be displayed in axis labels
 #'   (default = `"mg/L"`).
+#' @param title_arg String for plot title (default = `"Ensemble Predictions (Mean ± Range across folds)"`).
 #' @param subtitle_arg  String for plot subtitle (default = `"CLP Samples Only"`).
 #'
 #' @return
@@ -51,7 +52,8 @@
 #' print(p)
 #' }
 
-plot_train_test_ensemble_perf <- function( train_val_df, test_df, fold_models, target_col = "TOC", units = "mg/L", subtitle_arg = "CLP Samples Only") {
+plot_train_test_ensemble_perf <- function( train_val_df, test_df, fold_models, target_col = "TOC",
+                                           units = "mg/L",title_arg = "Ensemble Predictions (Mean ± Range across folds)",  subtitle_arg = "CLP Samples Only") {
 
   source("src/setup_ross_theme.R") #load theme
 
@@ -150,9 +152,9 @@ plot_train_test_ensemble_perf <- function( train_val_df, test_df, fold_models, t
                color = "black", fontface = 2, size = 4.5) +
 
       labs(
-        x = paste0("Measured", target_col, " (", units, ")"),
-        y = paste0("Predicted", target_col, " (", units, ")"),
-        title = "Ensemble Predictions (Mean ± Range across folds)",
+        x = paste0("Measured ", target_col, " (", units, ")"),
+        y = paste0("Predicted ", target_col, " (", units, ")"),
+        title = title_arg,
         subtitle = subtitle_arg,
         color = "Model Group", shape = "Model Group"
       ) +

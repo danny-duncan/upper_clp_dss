@@ -1,6 +1,6 @@
 ---
-title: "Testing TOC preds"
-author: "Matthew Ross & Sam Struthers-ROSSyndicate"
+title: "Testing TOC preds on Yampa data - ROSS Only Simple Model"
+author: " Sam Struthers-ROSSyndicate"
 date: "2025-08-01"
 output: html_document
 ---
@@ -24,7 +24,7 @@ library(glue)
 library(SHAPforxgboost)
 set.seed(123)
 #set version for saving (update when changes are significant)
-version = "20251023"
+version = "20251211"
 # function to apply sensor transformations for TOC modeling
 source("src/modeling/apply_sensor_transformations_toc.R")
 #function to apply training scale
@@ -51,7 +51,7 @@ Here, we read in the sensor data, apply min-max scaling defined in the `apply_se
 
 ```{r}
 # Read in all data to create scaling parameters
-wide_data_file <- list.files(here("data","collated", "sensor"), pattern = "all_sensor_data_.*\\.parquet", full.names = TRUE)%>%
+wide_data_file <- list.files(here("data","collated", "sensor"), pattern = "all_sensor_data_wide_.*\\.parquet", full.names = TRUE)%>%
   tail(1)
 
 # Use the complete sensor dataset for scaling parameters (assuming sensor has all necessary columns already)
@@ -65,10 +65,10 @@ complete_sensor_data <- read_parquet(wide_data_file) %>%
 
 ## Read in matchup dataset
 
-Matchup dataset is created in 02_sensor_grab_matchup, where we match xx data from the sensors with each available lab-anlyzed TOC sample. 
-```{r}
+Matchup dataset is created in 02_sensor_grab_matchup, where we match data from the sensors with each available lab-anlyzed TOC sample. In this script we will use the dataset that also contains the Virridy Yampa Samples. 
 
-matchup_dataset <- list.files(here("data","derived", "matchup_datasets"), pattern = "parsed_toc_sensor_clp_", full.names = TRUE)%>%
+```{r}
+matchup_dataset <- list.files(here("data","derived", "matchup_datasets"), pattern = "parsed_toc_sensor_virridy_clp_", full.names = TRUE)%>%
   tail(1)
 
 # Read in all matches data
@@ -78,7 +78,42 @@ all_matches <- read_csv(file = matchup_dataset, show_col_types = F) %>%
   filter(!is.na(TOC))%>%
   mutate(clean_sensor_datetime = parse_date_time(sensor_datetime, orders = c("%Y-%m-%d %H:%M:%S", "%m/%d/%y %H:%M","%Y-%m-%d" )))%>%
   mutate(sensor_datetime = force_tz(clean_sensor_datetime, tzone = 'MST'), 
-         month = lubridate::month(sensor_datetime))
+         month = lubridate::month(sensor_datetime), 
+         doy = yday(sensor_datetime),
+         sin_doy =  sin(2 * pi * doy / 365), 
+         basin = if_else(collector == "Virridy", "Yampa", "Poudre"))
+```
+
+## Adding in flow for Yampa Samples
+Chose YAMSTECO as it has it accumulates the majority of the basin's flow but is not severly impacted by diversions. This will be tested as our "daily_canyon_flow_cfs" feature in the model.
+https://dwr.state.co.us/Tools/Stations/YAMSTECO?params=DISCHRG
+
+```{r}
+yampa_data <- all_matches %>% filter(basin == "Yampa")
+
+max_yampa_date = as.character(as.Date(max(yampa_data$sensor_datetime)) + days(1))
+min_yampa_date = as.character(as.Date(min(yampa_data$sensor_datetime)) - days(1))
+# read in flow data for Yampa sites
+yampa_data_w_flow <- yampa_data %>%
+  mutate(date = as.Date(sensor_datetime)) %>%
+  select(-daily_canyon_flow_cfs)%>%
+  left_join(
+    #use CDSSR to read in flow data for yampa
+    get_telemetry_ts(abbrev = "YAMSTECO", 
+                     parameter = "DISCHRG",
+                     start_date = min_yampa_date,
+                     end_date = max_yampa_date,
+                     timescale = "day",
+                     api_key = NULL) %>%
+      select(date = datetime, daily_canyon_flow_cfs = meas_value),
+    by = c( "date")
+  )
+
+all_matches <- all_matches %>% 
+  # remove old yampa data
+  filter(basin != "Yampa")%>%
+  # add in new yampa data
+  bind_rows(yampa_data_w_flow)
 
 ```
 
@@ -86,21 +121,26 @@ all_matches <- read_csv(file = matchup_dataset, show_col_types = F) %>%
 
 ```{r}
 # ID columns to keep to use later on 
-id_cols <- c("Date", "id","site", "DT_hourly_round", "sensor_datetime","lab_datetime",  "collector", "data_avail")
+id_cols <- c("Date", "id","site", "DT_hourly_round", "sensor_datetime","lab_datetime",  "collector","basin")
 #What we want to predict
 target <- "TOC"
 # Get feature columns from complete sensor data but remove id cols and target
-features <- setdiff(colnames(complete_sensor_data), id_cols)
-features <- features[features %nin% target]
+features <- setdiff(names(complete_sensor_data), c(id_cols, target))
+#remove unused sensors
+features <- setdiff(features, c("DO", "Depth", "ORP", "pH")) 
+#remove variables not in the yampa dataset
+features <- setdiff(features, c("temp_mean_48hr","temp_mean_24hr","fdom_max_6hr", "fdom_corr_max_6hr","temp_max_24hr" ,"sc_var_24hr","sc_sd_24hr"             ,"turb_median_12hr", "hourly_canyon_flow_cfs", "data_avail")) 
+features
 ```
 
 ## Create Scaling Parameters & Normalize Data
+We do not have access to the full sensor dataset for the Yampa sites, so we will use the scaling parameters from the complete Poudre sensor dataset to normalize the matchup data. This may yield some out of samples results when we apply the model to the Yampa data. 
 
 ```{r}
 # Apply scaling to dataset
 all_matches_norm <- all_matches %>%
   #Only keep columns that would be in the complete sensor dataset
-  select(any_of(id_cols), any_of(names(complete_sensor_data)), any_of(target))%>%
+  select(any_of(id_cols), any_of(features), any_of(target))%>%
   #apply normalization 
   apply_training_scale(
     new_data = .,
@@ -119,7 +159,13 @@ all_matches_norm <- all_matches %>%
 all_matches_trimmed <- all_matches_norm%>%
   filter(!(id == "cbri" & between(sensor_datetime, ymd("2024-10-08"), ymd("2024-10-10"))))%>% #exclude a cbri sample taken during release
   filter(!(id == "pman" & between(sensor_datetime, ymd("2025-05-28"), ymd("2025-06-01"))))%>% #exclude a pman sample with bad sensor data
-  filter( id %nin% c("springcreek", "boxcreek"))
+  filter( id %nin% c("springcreek", "boxcreek"))%>%
+  #Remove the Yampa data from training/validation set
+  filter(basin != "Yampa")
+
+yampa_testing <- all_matches_norm %>%
+  filter(basin == "Yampa")
+
 # Create testing set from 2025 data at specific sites
 testing <- all_matches_trimmed %>%
   filter((year(sensor_datetime) == 2025 & id %in% c("chd", "sfm", "pbr", "pman", "pbd")))
@@ -237,22 +283,27 @@ For our model training we will first do some feature tuning to see which feature
 Most products with FDOM in them are going to have higher correlation with TOC, as well as seasonal (sin_doy) and flow related features. We want to be sure that we don't put too many of these in the model as calibration error or sensor drift could lead to compounding errors.
 
 ```{r}
-
-  # Combine training/validation and testing data
+# Combine training/validation and testing data
   modeling_data <- train_val %>%
     mutate(group = "Train/Val") %>%
     bind_rows(
       testing %>%
         mutate(group = "Testing")
     ) %>%
+  bind_rows(
+      yampa_testing %>%
+        mutate(group = "Yampa")
+    ) %>%
+  
     mutate(
-      watershed = ifelse(
-        id %in% c("joei", "cbri", "chd", "pfal", "pbr", "sfm", "pman", "pbd"),
-        "UpperPoudre", 
-        "LowerPoudre"
+      watershed = case_when(
+        id %in% c("joei", "cbri", "chd", "pfal", "pbr", "sfm", "pman", "pbd") ~ "UpperPoudre",
+        group == "Yampa" ~ "Yampa",
+        TRUE ~ "LowerPoudre"
       )
     )
-map(features, function(feat) {
+plots <-set_names(features) %>%
+  map( function(feat) {
   
 
   cor <- round(cor(modeling_data[[feat]], modeling_data$TOC, use = "complete.obs"), 2)
@@ -271,8 +322,19 @@ map(features, function(feat) {
     labs(x = feat, y = "TOC (mg/L)", shape = "Collector", color = "Watershed") +
     #facet_wrap(~watershed, scales = "free") +
     ROSS_theme
-})%>%
+})
+
+
+plots%>%
   wrap_plots(., guides = "collect")
+```
+
+### Features differing in Yampa Set
+We can see that there are some basin differences in the Yampa samples which may influence the performance of the model on the Yampa data. Features like doy, f_sc, f_x_sc, daily canyon flow, and f_x_turb show some differences in distribution compared to the Poudre samples. We do still see FDOM as a useful starting point for predicting TOC in the Yampa as well.
+
+```{r}
+wrap_plots(plots$Sensor_Cond, plots$sin_doy, plots$f_sc, plots$FDOMc, plots$daily_canyon_flow_cfs, plots$f_x_turb, ncol = 3, guides = "collect") &
+  theme(legend.position = "bottom")
 
 ```
 
@@ -306,9 +368,7 @@ fewer_features <- features[features %nin% c("FDOM", "doy",
                                             # remove vars with high correlation 
                                             # with others
                                             "Temp", "f_log",
-                                            "Sensor_Turb",
-                                            "hourly_canyon_flow_cfs",
-                                            "fdom_max_6hr", "temp_max_24hr")]
+                                            "Sensor_Turb")]
 
 # do the correlation matrix again to make sure that is okay
 corr_matrix <- modeling_data %>% 
@@ -496,41 +556,16 @@ Here I run the function and am going to look at feature importance and shap valu
 
 ```{r}
 #starting with all features then trimming down to more highly correlated ones
-# general_features <-  setdiff(features, c("FDOM", "fdom_max_6hr", #repeats due to FDOM Correction
-#                                          "sin_doy", "doy", "daily_canyon_flow_cfs", #seasonal
-#                                          "temp_f","temp_x_f", "f2_temp", #sensor products
-#                                          "f_log", "f_x_sc", "f_turb", "turb_f", "temp_x_turb", #sensor products
-#                                          "sc_sd_24hr", "temp_max_24hr", "temp_mean_24hr", "temp_mean_48hr", "turb_median_12hr" #lagged variables
-# ))
-
 #set aside sensor data that are generally useful
 general_features <- c("FDOMc","Sensor_Turb","Sensor_Cond", "Chl_a", "Temp")
 
 feature_results <- map(
   #trying all the combinations of features we think might be useful (commented out were tested but found to not improve base model)
   list(
-  gen_feat = general_features, # sensor values only
-  #fdom_corr_max_6hr = c(general_features, "fdom_corr_max_6hr"), # short term max FDOM, might help with receeding spikes or daily variation
-  #f_sc = c(general_features, "fdom_corr_max_6hr", "f_sc"), # adding FDOM/sc ratio, high FDOM + low SC = high TOC (snowmelt)
-  #f_x_turb = c(general_features, "fdom_corr_max_6hr", "f_sc", "f_x_turb"), # adding FDOM * turbidity, high FDOM + high turb = high TOC (stormflow/snowmelt), might help with high turb events
-  #sin_doy = c(general_features, "fdom_corr_max_6hr", "f_sc", "f_x_turb", "sin_doy"), # seasonal signal but not linked to exact DOY
-  #temp_x_f = c(general_features, "fdom_corr_max_6hr", "temp_x_f", "f_sc", "f_x_turb", "sin_doy"), # temp * FDOM, high temp + high FDOM = high TOC (summer/autumn allochthonous inputs)
-  #temp_x_turb = c(general_features, "fdom_corr_max_6hr", "temp_x_turb", "temp_x_f", "f_sc", "f_x_turb", "sin_doy"), # temp * turbidity, high temp + high turb = high TOC (summer stormflow?)
- # turb_median_12hr = c(general_features, "fdom_corr_max_6hr", "temp_x_turb", "temp_x_f", "f_sc", "f_x_turb", "sin_doy", "turb_median_12hr"), # receeding storm flow proxy
-  #daily_canyon_flow_cfs = c(general_features, "fdom_corr_max_6hr", "temp_x_turb", "temp_x_f", "f_sc", "f_x_turb", "sin_doy", "turb_median_12hr", "daily_canyon_flow_cfs"), # climate (flow) conditions across basin (may want to play with increasing/decreasing slopes?)
-  # Tested but did not improve model
-  # sc_var_24hr = c(general_features, "sc_var_24hr"), # proxy for recent depth changes (sc = groundwater/surface water contributions)
-  #temp_mean_24hr = c(general_features, "temp_mean_24hr"), # recent temp changes
-  #temp_mean_48hr = c(general_features, "temp_mean_48hr"), #longer term temp changes
-  # f2_temp = c(general_features, "f2_temp"), #FDOM^2 * temp, very high FDOM + low temp = very high TOC 
-  #f_x_sc = c(general_features, "f_x_sc"), # FDOM * SC, high FDOM + high SC = low TOC (groundwater influence) probably ended up getting confused with so much variation in SC
-  #f_turb = c(general_features, "f_turb"), # FDOM / turbidity, high FDOM + low turb = high TOC (snowmelt in high elev reaches), redundant with f_x_turb
-  #turb_f = c(general_features, "turb_f"), # turbidity / FDOM,  redundant with f_x_turb
+  gen_feat = general_features, 
  fewer_features = c(fewer_features), 
- fewer_features_trimmed = c(fewer_features)%>%setdiff(., c("turb_median_12hr","temp_x_f", "temp_mean_48hr","temp_x_turb", "turb_f", "sc_sd_24hr", "temp_mean_24hr", "temp_f"  ))
- 
-  #Trimming down to most important features from all features (based on importance and shap values) to reduce overfitting
- # trimmed_features = c(general_features, "fdom_corr_max_6hr", "f_sc", "f_x_turb", "sin_doy" , "turb_median_12hr", "daily_canyon_flow_cfs")
+ #Removing these features based on high correlation and low importance in prior tests and because they are not available in the Yampa set
+ fewer_features_yampa = c(fewer_features)%>%setdiff(., c("turb_median_12hr","temp_x_f", "temp_mean_48hr","temp_x_turb", "turb_f", "sc_sd_24hr", "temp_mean_24hr", "temp_f"  ))
 ) , ~test_features(
   train_val = train_val,
   features_to_test = .x,
@@ -604,8 +639,8 @@ importance_tables <- map(feature_results, ~{
 }, .id = "feature_set")
 
 #Get features with less than 0.02 gain on average across folds in fewer_features to consider removing
-cat("Features with mean gain < 0.02 in 'fewer_features':\n")
-importance_tables$fewer_features%>%
+cat("Features with mean gain < 0.02 in 'fewer_features_yampa':\n")
+importance_tables$fewer_features_yampa%>%
   filter(mean_gain < 0.02)
 
 ```
@@ -677,7 +712,7 @@ After trimming down a couple of features (minimal improvement/low shap values), 
 
 ```{r}
 
-best_models <- feature_results$fewer_features_trimmed$model
+best_models <- feature_results$fewer_features_yampa$model
 
 feature_tv_plots <- map(1:3, ~plot_tv_fold_perf(fold_set = .x,
                              train_val_df = train_val,
@@ -708,12 +743,12 @@ features <- best_models[[1]]$feature_names
 # Reduce tune grid for reruns (ie. General best params)
 tune_grid = expand.grid(
   nrounds = 10000,
-  max_depth = c(2, 3, 4),
+  max_depth = c(2, 3),
   eta = c( 0.01, 0.1),
   gamma = c(0.8),
   lambda = c(1,10),
   alpha = c(0, 1),
-  colsample_bytree = c(0.5,0.8),
+  colsample_bytree = c(0.8),
   min_child_weight = c(2, 4),
   subsample = c(0.5,0.8)
 )
@@ -740,12 +775,11 @@ hyperp_results <- xgboost_hyperparameter_tuning(
 ### Fold 1
 
 ```{r}
-
 hyperp_results[[1]]$perf_dist
 hyperp_results[[1]]$eval_plot
 hyperp_results[[1]]$tv_plot
 
-best_fold_1_grid <- 136
+best_fold_1_grid <- 11
 ```
 
 ### Fold 2
@@ -755,7 +789,7 @@ hyperp_results[[2]]$perf_dist
 hyperp_results[[2]]$eval_plot
 hyperp_results[[2]]$tv_plot
 
-best_fold_2_grid <- 165
+best_fold_2_grid <- 55
 
 ```
 
@@ -766,7 +800,7 @@ hyperp_results[[3]]$perf_dist
 hyperp_results[[3]]$eval_plot
 hyperp_results[[3]]$tv_plot
 
-best_fold_3_grid <- 77
+best_fold_3_grid <- 3
 
 ```
 
@@ -887,105 +921,15 @@ If we want to test additional ideas for bias correction or look at model perform
 
 ```{r}
 #commented out so we don't overwrite existing model files
-# saveRDS(full_model, file = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_full_",version,".rds")))
+saveRDS(full_model, file = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_instantaneous_",version,".rds")))
 #if we want to reload model
-#full_model <- readRDS(here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_full_",version,".rds")))
+#full_model <- readRDS(here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_instantaneous_",version,".rds")))
 
-rm(list = setdiff(ls(), c("train_val", "testing", "full_model","version","id_cols",
+rm(list = setdiff(ls(), c("train_val", "testing", "yampa_testing", "full_model","version","id_cols",
                           "complete_sensor_data",
                           #keeping functions around
-                          "apply_training_scale","plot_tvt_fold_perf","plot_tvt_ensemble_perf",
+                          "apply_training_scale","plot_tvt_fold_perf","plot_train_test_ensemble_perf",
                           "apply_ml_bias_correction", "load_grab_sample_data", "plot_model_timeseries" )) )
-```
-
-
-# Bias Correction
-Based on the methods outlined in this paper (https://www.sciencedirect.com/science/article/pii/S1364815221000499), we will apply a bias correction to our model predictions to improve accuracy on high and low values (where we do worse). We will first calcate the bias corrections on our validation set and if they seem to work, they will be applied to the predictions from the testing set to hopefully improve performance there as well.
-
-## Apply function to each fold and visualize results on Validation Set
-
-Results are visualized in the observed vs predicted space. In the paper above, they did not do TVT and so what they refer to as "Training" is actually our validation set here. We will look at each fold separately and see how the bias correction methods perform. We will also compute RMSE, and Bias metrics for each method and fold to quantify performance. 
-
-```{r}
-
-fold_corrs <- map_dfr(1:3, ~apply_ml_bias_correction(train_val_df = train_val, 
-                                         testing_df = testing, 
-                                        fold_model = full_model[[.x]]$model,
-                                        fold_num = .x))
-fold_corrs_val <- fold_corrs%>%
-  filter(group == "Validation")%>%
-  pivot_longer(cols = c( "edm", "roe", "ltf", "zz", "ml2"),
-               names_to = "method",
-               values_to = "corrected_pred")%>%
-    mutate(fold = paste0("Fold ", fold_id))%>%
-    select(id, residuals, predicted, obs = TOC, fold, group, method, corrected_pred)
-
-#order the method factor levels
-fold_corrs_val$method <- factor(fold_corrs_val$method, levels = c("edm", "roe", "ltf", "zz", "ml2"))
-# Compute rmse, mae and bias metrics for each method and fold
-
-metrics_summary <- fold_corrs_val %>%
-  group_by(fold, method) %>%
-  summarise(
-    rmse_pred = rmse(obs, predicted),
-    rmse_corr = rmse(obs, corrected_pred),
-    mae_pred = mae(obs, predicted),
-    mae_corr = mae(obs, corrected_pred),
-    bias_pred = bias(obs, predicted),
-    bias_corr = bias(obs, corrected_pred),
-    .groups = "drop"
-  ) %>%
-  mutate( # creat label for plot
-    label = paste0("Pre-RMSE: ", round(rmse_pred, 2), "\n",
-                   "Post-RMSE: ", round(rmse_corr, 2)), 
-    rmse_imp = round(rmse_pred - rmse_corr,2),
-    mae_imp = round(mae_pred - mae_corr,2),
-    improvement = if_else(rmse_imp >= 0, "RMSE Improved", "RMSE Not Improved"), 
-    imp_rmse = if_else(rmse_imp >= 0, T, F),
-    imp_bias = if_else(abs(bias_pred) >= abs(bias_corr), T, F), 
-    imp_mae = if_else(mae_imp >= 0, T, F), 
-    all_imp = if_else(imp_rmse & imp_bias & imp_mae, T, F)
-  )
-
-#Print out table of metrics
-metrics_summary%>%select( fold, method, rmse_pred,bias_pred, rmse_imp,mae_imp, imp_bias, all_imp )%>%
-  arrange(fold)
-
-ggplot(fold_corrs_val, aes(x = obs)) +
-  geom_point(aes( y = corrected_pred, color = "Corrected Prediction"), size = 3) +
-  geom_point(aes(y = predicted, color = "Original ML Prediction"), alpha = 0.7, size = 3) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
-    # Add RMSE annotations
-  geom_text(
-    data = metrics_summary,
-    aes(
-      x = 2.5,  y = 8,
-      label = label, 
-      color = improvement
-    ),
-    inherit.aes = FALSE,
-    hjust = 0, vjust = 1,
-    size = 4
-  ) +
-  scale_color_manual(
-    values = c("RMSE Improved" = "green2", "RMSE Not Improved" = "red",
-               "Corrected Prediction" = "#E70870", "Original ML Prediction" = "#256BF5")
-  ) +
-  #facetgrid by method and fold
-  facet_grid(vars(fold), vars(method)) +
-  labs(
-    x = "Observed TOC (mg/L)",
-    y = "Predicted TOC (mg/L)",
-    title = "Comparison of Bias Correction Methods on Validation Set", 
-    subtitle = "Blue points are original ML predictions;", 
-    color = "Legend", 
-  ) +
-  theme_bw() +
-  theme(legend.position = "bottom") +
-  xlim(2, 9.5) +
-  ylim(2, 9.5)
-
-
 ```
 
 
@@ -1027,379 +971,51 @@ ensemble <- plot_train_test_ensemble_perf(train_val_df = train_val,
                                    fold_models = map(full_model, "model"),
                                    target_col = "TOC",
                                    units = "mg/L",
-                                   subtitle_arg = "CLP Samples only")
+                                   subtitle_arg = "CLP Samples only; No lagged parameters")
 plot(ensemble)
 # ggsave(here("docs","uclp_dss", "figs", toc_modeling","performance",paste0("ross_only_model_ensemble", version, ".png"),
 #        plot = ensemble, width = 12, height = 10, dpi = 500)
 ```
 
-### Bias Correction
-Now that we have seen how the bias correction methods perform on the validation set, we can apply them to the test set and see how they perform there.
+# Evaluate on Yampa Test Samples
+
+## Fold performance
 ```{r}
-fold_corrs <- map_dfr(1:3, ~apply_ml_bias_correction(train_val_df = train_val, 
-                                         testing_df = testing, 
-                                        fold_model = full_model[[.x]]$model,
-                                        fold_num = .x))
-fold_test_corrs <- fold_corrs%>%
-  filter(group == "Test")%>%
-  pivot_longer(cols = c( "edm", "roe", "ltf", "zz", "ml2"),
-               names_to = "method",
-               values_to = "corrected_pred")%>%
-    mutate(fold = paste0("Fold ", fold_id))%>%
-    select(id, residuals, predicted, obs = TOC, fold, group, method, corrected_pred)
+### Individual folds
+yampa_plots<- map(1:3, ~{
+    plot_tvt_fold_perf(train_val, yampa_testing, fold_set = .x, fold_model = full_model[[.x]]$model, target_col = "TOC", units = "mg/L", subtitle_arg = "CLP Samples only")
+})
+yampa_plots
 
-
-ensemble <- fold_test_corrs%>%
-  group_by(obs,id, method)%>%
-  summarise(
-    predicted = mean(predicted),
-    corrected_pred = mean(corrected_pred),
-    .groups = "drop"
-  )%>%
-  mutate(fold = "Ensemble")
-
-fold_test_corrs <- bind_rows(fold_test_corrs, ensemble)
-
-#order the method factor levels
-fold_test_corrs$method <- factor(fold_test_corrs$method, levels = c("edm", "roe", "ltf", "zz", "ml2"))
-# Compute rmse, mae and bias metrics for each method and fold
-
-metrics_summary <- fold_test_corrs %>%
-  group_by(fold, method) %>%
-  summarise(
-    rmse_pred = rmse(obs, predicted),
-    rmse_corr = rmse(obs, corrected_pred),
-    mae = mae(obs, corrected_pred),
-    bias = bias(obs, corrected_pred),
-    .groups = "drop"
-  ) %>%
-  mutate( # creat label for plot
-    label = paste0("Pre-RMSE: ", round(rmse_pred, 2), "\n",
-                   "Post-RMSE: ", round(rmse_corr, 2)), 
-    improvement = if_else(rmse_corr <= rmse_pred, "RMSE Improved", "RMSE Not Improved")
-  )
-
-ggplot(fold_test_corrs, aes(x = obs)) +
-  geom_point(aes( y = corrected_pred, color = "Corrected Prediction"), size = 3) +
-  geom_point(aes(y = predicted, color = "Original ML Prediction"), alpha = 0.7, size = 3) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
-    # Add RMSE annotations
-  geom_text(
-    data = metrics_summary,
-    aes(
-      x = 2.5,  y = 8.25,
-      label = label, 
-      color = improvement
-    ),
-    inherit.aes = FALSE,
-    hjust = 0, vjust = 1,
-    size = 4
-  ) +
-  scale_color_manual(
-    values = c("RMSE Improved" = "green2", "RMSE Not Improved" = "red",
-               "Corrected Prediction" = "#E70870", "Original ML Prediction" = "#256BF5")
-  ) +
-  #facetgrid by method and fold
-  facet_grid(vars(fold), vars(method)) +
-  labs(
-    x = "Observed TOC (mg/L)",
-    y = "Predicted TOC (mg/L)",
-    title = "Comparison of Bias Correction Methods on Testing Set",
-    color = "Legend", 
-  ) +
-  theme_bw() +
-  theme(legend.position = "bottom") +
-  xlim(2, 9.5) +
-  ylim(2, 9.5)
-
+  # ggsave(glue(here("docs", "uclp_dss", "figs", "toc_modeling", "performance", "ross_only_model_fold_{i}.png")),
+  #        plot = p, width = 10, height = 6, dpi = 500)
 
 ```
 
-
-# Timeseries Space Performance
-
-## Prep sensor timeseries & water chem
+### All folds together
 
 ```{r}
-#loading in all sensor data and applying training scaling
-sensor_ts <- apply_training_scale(new_data = complete_sensor_data, 
-                                  full_dataset = complete_sensor_data, 
-                                  features = full_model[[1]]$model$feature_names)%>%
-  select(site, DT_round = DT_hourly_round, any_of(full_model[[1]]$model$feature_names))
-
-water_chem <- load_grab_sample_data()
+# Single plot with all folds
+wrap_plots(yampa_plots, ncol = 2, guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave(here("docs","uclp_dss", "figs", "realtime_toc_modeling","performance",paste0("ross_only_yampa_model_all_folds_TVT", version, ".png")),
+       width = 14, height = 8, dpi = 500)
 ```
 
-## Example 1: CHD 2025
+### Ensemble
 
 ```{r}
+ensemble <- plot_train_test_ensemble_perf(train_val_df = train_val,
+                                   test_df = yampa_testing,
+                                   fold_models = map(full_model, "model"),
+                                   target_col = "TOC",
+                                   units = "mg/L",
+                                   title_arg = "Yampa Samples Ensemble Predictions (Mean ± Range across folds)",
+                                   subtitle_arg = "CLP Samples only in training; No lagged parameters")
+plot(ensemble)
 
-chd_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
-                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
-                      summary_interval = "4 hour",
-                      site_sel = "chd", 
-                      site_title = "Chambers Lake outflow",
-                      model = map(full_model, "model"),
-                      method = "Ensemble",
-                      target_col = "TOC",
-                      units = "mg/L",
-                      start_DT = "2025-05-01 12:00",
-                      end_DT = "2025-07-05 00:00",
-                      subtitle_arg = "CLP Samples Only", 
-                      plot_model_input = T)
-  
-
-ggarrange(chd_plot$model_plot, chd_plot$model_input_plot,ncol = 2)
-
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("chambers_outflow_20250501_20250705_toc.png")), 
-#        plot = chd_plot, 
-#        width = 12, 
-#        height = 8, 
-#        dpi = 300)
-
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("chambers_outflow_20250501_20250705_sensor.png")),
-#        plot = chd_ts_plot, 
-#        width = 10, 
-#        height = 10, 
-#        dpi = 300)
-
-```
-
-
-## Example 2: PFAL 2025
-
-```{r}
-
-pfal_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
-                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
-                      summary_interval = "4 hour",
-                      site_sel = "pfal", 
-                      site_title = "Poudre @ Poudre Falls",
-                      model = map(full_model, "model"),
-                      method = "Ensemble",
-                      target_col = "TOC",
-                      units = "mg/L",
-                      start_DT = "2025-04-16 00:00",
-                      end_DT = "2025-07-10 00:00",
-                      subtitle_arg = "CLP Samples Only", 
-                      plot_model_input = T)
-
-ggarrange(pfal_plot$model_plot, pfal_plot$model_input_plot,ncol = 2)
-
-
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pfal_20240415_20240710_toc.png")), 
-#        plot = pfal_plot$model_plot, 
-#        width = 12, 
-#        height = 8, 
-#        dpi = 300)
-
-
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pfal_20240415_20240710_sensor.png")),
-#        plot = pfal_plot$model_input_plot, 
-#        width = 10, 
-#        height = 10, 
-#        dpi = 300)
-
-```
-
-## Example 3: PBR
-
-```{r}
-
-
-pbr_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
-                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
-                      summary_interval = "4 hour",
-                      site_sel = "pbr", 
-                      site_title = "Poudre @ Indian Meadows",
-                      model = map(full_model, "model"),
-                      method = "Ensemble",
-                      target_col = "TOC",
-                      units = "mg/L",
-                      start_DT = "2025-05-01 00:00",
-                      end_DT = "2025-07-08 00:00",
-                      subtitle_arg = "CLP Samples Only", 
-                      plot_model_input = T)
-
-ggarrange(pbr_plot$model_plot, pbr_plot$model_input_plot,ncol = 2)
-
-
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pbr_20250501_20250708_toc.png")), 
-#        plot = pbr_plot$model_plot, 
-#        width = 12, 
-#        height = 8, 
-#        dpi = 300)
-
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pbr_20250501_20250708_sensor.png")),
-#        plot = pbr_plot$model_input_plot, 
-#        width = 10, 
-#        height = 10, 
-#        dpi = 300)
-
-
-```
-
-## Example 4: SFM 2025
-
-```{r}
-
-sfm_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
-                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
-                      summary_interval = "4 hour",
-                      site_sel = "sfm", 
-                      site_title = "South Fork of the Poudre",
-                      model = map(full_model, "model"),
-                      method = "Ensemble",
-                      target_col = "TOC",
-                      units = "mg/L",
-                      start_DT = "2025-04-15 00:00",
-                      end_DT = "2025-07-01 00:00",
-                      subtitle_arg = "CLP Samples Only", 
-                      plot_model_input = T)
-
-ggarrange(sfm_plot$model_plot, sfm_plot$model_input_plot,ncol = 2)
-
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("sfm_20250424_20250615_toc.png")), 
-#        plot = sfm_plot, 
-#        width = 12, 
-#        height = 8, 
-#        dpi = 300)
-
-#sfm_ts_plot
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("sfm_20250415_20250615_sensor.png")),
-#        plot = sfm_ts_plot, 
-#        width = 10, 
-#        height = 10, 
-#        dpi = 300)
-
-```
-
-
-
-## Example 4: PMAN 2025
-
-```{r}
-
-pman_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
-                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
-                      summary_interval = "4 hour",
-                      site_sel = "pman", 
-                      site_title = "Poudre at Manners",
-                      model = map(full_model, "model"),
-                      method = "Ensemble",
-                      target_col = "TOC",
-                      units = "mg/L",
-                      start_DT = "2025-04-24 00:00",
-                      end_DT = "2025-07-01 00:00",
-                      subtitle_arg = "CLP Samples Only", 
-                      plot_model_input = T)
-
-ggarrange(pman_plot$model_plot, pman_plot$model_input_plot,ncol = 2)
-
-
-
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pman_20250424_20250714_toc.png")), 
-#        plot = pman_plot$model_plot, 
-#        width = 12, 
-#        height = 8, 
-#        dpi = 300)
-
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pman_20250415_20250705_sensor.png")),
-#        plot = pman_plot$model_input_plot, 
-#        width = 10, 
-#        height = 10, 
-#        dpi = 300)
-
-```
-
-## Example 5: PBD 2025
-
-```{r}
-
-pbd_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
-                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
-                      summary_interval = "4 hour",
-                      site_sel = "pbd", 
-                      site_title = "Poudre at Canyon Mouth",
-                      model = map(full_model, "model"),
-                      method = "Ensemble",
-                      target_col = "TOC",
-                      units = "mg/L",
-                      start_DT = "2025-04-15 00:00",
-                      end_DT = "2025-07-05 00:00",
-                      subtitle_arg = "CLP Samples Only", 
-                      plot_model_input = T)
-
-ggarrange(pbd_plot$model_plot, pbd_plot$model_input_plot,ncol = 2)
-
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pbd_20250415_20250705_toc.png")), 
-#        plot = pbd_plot$model_plot, 
-#        width = 12, 
-#        height = 8, 
-#        dpi = 300)
-
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("pbd_20250520_20250705_sensor.png")),
-#        plot = pbd_plot$model_input_plot, 
-#        width = 10, 
-#        height = 10, 
-#        dpi = 300)
-
-```
-
-
-## Example 6: Udall (Lincoln Ave) 2025
-
-```{r}
-
-
-udall_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
-                      water_chem_df = water_chem%>%filter(collector == "ROSS"), 
-                      summary_interval = "12 hour",
-                      site_sel = "elc", 
-                      site_title = "Poudre at Lincoln Ave",
-                      model = map(full_model, "model"),
-                      method = "Ensemble",
-                      target_col = "TOC",
-                      units = "mg/L",
-                      start_DT = "2025-04-15 00:00",
-                      end_DT = "2025-07-05 00:00",
-                      subtitle_arg = "CLP Samples Only", 
-                      plot_model_input = T)
-
-ggarrange(udall_plot$model_plot, udall_plot$model_input_plot,ncol = 2)
-
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("udall_20250415_20250705_toc.png")), 
-#        plot = udall_plot$model_plot, 
-#        width = 12, 
-#        height = 8, 
-#        dpi = 300)
-
-# ggsave(here("docs", "uclp_dss", "figs", "toc_mdoeling", "timeseries", paste0("udall_20250520_20250705_sensor.png")),
-#        plot = udall_plot$model_input_plot, 
-#        width = 10, 
-#        height = 10, 
-#        dpi = 300)
-```
-
-
-
-# Save final models
-
-We will extract just the model objects from the list to save space.
-
-```{r}
-# 
-# small_models <- lapply(full_model, function(x) {
-#   m <- x$model   # extract model (xgboost object)
-#   
-#   #remove large unnecessary elements 
-#   if ("trainingData" %in% names(m)) m$trainingData <- NULL
-#   if ("call" %in% names(m)) m$call <- NULL
-#   if ("terms" %in% names(m)) m$terms <- NULL
-#   
-#   return(m)
-# })
-# saveRDS(small_models, file = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_light_",version,".rds")))
+ggsave(here("docs","uclp_dss", "figs", "realtime_toc_modeling", "performance", paste0("ross_only_model_yampa_ensemble_", version, ".png")),
+       plot = ensemble, width = 12, height = 10, dpi = 500)
 
 ```
 

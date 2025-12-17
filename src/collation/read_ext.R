@@ -52,6 +52,10 @@
 read_ext <- function(f, ...) {
   # Determine extension
   file_extension <- tools::file_ext(f)
+  #if the file extension is empty, assume it's an rds file
+  if (file_extension == "") {
+    file_extension <- "rds"
+  }
 
   if (file_extension == "csv") {
     data <- readr::read_csv(f, show_col_types = FALSE, ...)
