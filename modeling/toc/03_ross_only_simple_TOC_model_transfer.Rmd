@@ -1,0 +1,698 @@
+---
+title: "Testing TOC preds on Yampa data & transfer learning"
+author: "ROSSyndicate"
+date: "2025-12-16"
+output: html_document
+---
+
+# Puprose
+
+The purpose of this markdown is to test a generalized model to predict TOC on
+the Yampa data. Here, we build a single xgboost model for the Poudre and use that 
+model to estimate the Yampa, then follow up with a sequential training using 
+a holdout of yampa data as the test.
+
+
+# Set up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("src/setup_libraries.R")
+source("src/setup_ross_theme.R")
+
+#these are just packages for testing within this script
+library(gridExtra)
+library(grid)
+library(Ckmeans.1d.dp)
+library(DiagrammeR)
+library(Metrics)
+library(glue)
+library(SHAPforxgboost)
+
+set.seed(123)
+#set version for saving (update when changes are significant)
+#version = "20251211"
+# function to apply sensor transformations for TOC modeling
+source("src/modeling/apply_sensor_transformations_toc.R")
+#function to apply training scale
+source("src/modeling/apply_training_scale.R")
+# function to tune xgboost hyperparameters
+source("src/modeling/xgboost_hyperparameter_tuning.R")
+#function to plot performance of each fold
+source("src/plotting/plot_tv_fold_perf.R")
+#function to plot performance of each fold
+source("src/plotting/plot_tvt_fold_perf.R")
+#function to plot performance of each fold
+source("src/plotting/plot_train_test_ensemble_perf.R")
+#function to apply bias correction
+source("src/modeling/apply_ml_bias_correction.R")
+#load grab sample data function
+source("src/collation/load_grab_sample_data.R")
+#function to plot model timeseries
+source("src/plotting/plot_model_timeseries.R")
+```
+
+## Read in sensor dataset
+
+Here, we read in the sensor data, apply min-max scaling defined in the 
+`apply_sensor_transformations_toc()` function, and store the dataset for use 
+later
+
+```{r}
+# Read in all data to create scaling parameters
+wide_data_file <- list.files(here("data","collated", "sensor"), 
+                             pattern = "all_sensor_data_wide_.*\\.parquet", 
+                             full.names = TRUE) %>%
+  tail(1)
+
+# Use the complete sensor dataset for scaling parameters (assuming sensor has all necessary columns already)
+complete_sensor_data <- read_parquet(wide_data_file) %>%
+  apply_sensor_transformations_toc(., dt_col = "DT_hourly_round") %>%
+  select(-DO, -Depth, -ORP, -pH) #remove unused sensors
+
+
+```
+
+
+## Read in matchup dataset
+
+Matchup dataset is created in 02_sensor_grab_matchup, where we match data from 
+the sensors with each available lab-anlyzed TOC sample. In this script we will 
+use the dataset that also contains the Virridy Yampa Samples. 
+
+```{r}
+matchup_dataset <- list.files(here("data","derived", "matchup_datasets"), 
+                              pattern = "parsed_toc_sensor_virridy_clp_", 
+                              full.names = TRUE) %>%
+  tail(1)
+
+# Read in all matches data
+all_matches <- read_csv(file = matchup_dataset, show_col_types = F) %>%
+  apply_sensor_transformations_toc(dt_col = "sensor_datetime") %>%
+  #remove NAs
+  filter(!is.na(TOC)) %>%
+  mutate(clean_sensor_datetime = parse_date_time(sensor_datetime, 
+                                                 orders = c("%Y-%m-%d %H:%M:%S", 
+                                                            "%m/%d/%y %H:%M", 
+                                                            "%Y-%m-%d"))) %>%
+  mutate(sensor_datetime = force_tz(clean_sensor_datetime, tzone = 'MST'), 
+         month = month(sensor_datetime), 
+         doy = yday(sensor_datetime),
+         sin_doy =  sin(2 * pi * doy / 365), 
+         basin = if_else(collector == "Virridy", "Yampa", "Poudre"))
+```
+
+## Adding in flow for Yampa Samples
+Chose YAMSTECO as it has it accumulates the majority of the basin's flow but is not severly impacted by diversions. This will be tested as our "daily_canyon_flow_cfs" feature in the model.
+https://dwr.state.co.us/Tools/Stations/YAMSTECO?params=DISCHRG
+
+```{r}
+yampa_data <- all_matches %>% filter(basin == "Yampa")
+
+max_yampa_date = as.character(as.Date(max(yampa_data$sensor_datetime)) + days(1))
+min_yampa_date = as.character(as.Date(min(yampa_data$sensor_datetime)) - days(1))
+
+# read in flow data for Yampa sites
+yampa_data_w_flow <- yampa_data %>%
+  mutate(date = as.Date(sensor_datetime)) %>%
+  select(-daily_canyon_flow_cfs)%>%
+  left_join(
+    #use CDSSR to read in flow data for yampa
+    get_telemetry_ts(abbrev = "YAMSTECO", 
+                     parameter = "DISCHRG",
+                     start_date = min_yampa_date,
+                     end_date = max_yampa_date,
+                     timescale = "day",
+                     api_key = NULL) %>%
+      select(date = datetime, daily_canyon_flow_cfs = meas_value),
+    by = c( "date")
+  )
+
+all_matches <- all_matches %>% 
+  # remove old yampa data
+  filter(basin != "Yampa")%>%
+  # add in new yampa data
+  bind_rows(yampa_data_w_flow)
+
+```
+
+## Define ID Columns, Target, and Features
+
+```{r}
+# ID columns to keep to use later on 
+id_cols <- c("Date", "id","site", "DT_hourly_round", "sensor_datetime","lab_datetime",  "collector","basin")
+#What we want to predict
+target <- "TOC"
+# Get feature columns from complete sensor data but remove id cols and target
+features <- setdiff(names(complete_sensor_data), c(id_cols, target)) %>% 
+  #remove unused sensors
+  setdiff(., c("DO", "Depth", "ORP", "pH")) %>% 
+  #remove variables not in the yampa dataset
+  setdiff(., c("temp_mean_48hr", "temp_mean_24hr", "fdom_max_6hr", 
+               "fdom_corr_max_6hr", "temp_max_24hr", "sc_var_24hr",
+               "sc_sd_24hr", "turb_median_12hr", "hourly_canyon_flow_cfs", 
+               "data_avail", "daily_canyon_flow")) 
+features
+```
+
+## Create Scaling Parameters & Normalize Data
+We do not have access to the full sensor dataset for the Yampa sites, so we 
+will use the scaling parameters from the complete Poudre sensor dataset to 
+normalize the matchup data. This may yield some out of samples results when we 
+apply the model to the Yampa data. 
+
+```{r}
+# Apply scaling to dataset
+all_matches_norm <- all_matches %>%
+  # Only keep columns that would be in the complete sensor dataset
+  select(any_of(id_cols), any_of(features), any_of(target))%>%
+  # apply normalization 
+  apply_training_scale(
+    new_data = .,
+    features = features,
+    full_dataset = complete_sensor_data
+  ) %>%
+  #remove any rows with NAs
+  na.omit()
+
+```
+
+## Create TVT sets
+
+```{r}
+# Trim out any known bad data or sites we don't want to include in modeling
+all_matches_trimmed <- all_matches_norm %>%
+  #exclude a cbri sample taken during release
+  filter(!(id == "cbri" & 
+             between(sensor_datetime, ymd("2024-10-08"), ymd("2024-10-10")))) %>% 
+  #exclude a pman sample with bad sensor data
+  filter(!(id == "pman" & 
+             between(sensor_datetime, ymd("2025-05-28"), ymd("2025-06-01")))) %>% 
+  filter(id %nin% c("springcreek", "boxcreek")) %>%
+  # remove the Yampa data from training/validation set
+  filter(collector != "Virridy")
+
+yampa <- all_matches_norm %>%
+  filter(collector == "Virridy")
+
+# Create testing set from 2025 data at specific sites
+testing <- all_matches_trimmed %>%
+  filter(id %in% c("chd", "sfm", "pbr", "pman", "pbd"))
+
+# Create training/validation set
+train_val <- all_matches_trimmed %>%
+  anti_join(testing) %>%
+  select(id, any_of(features), TOC, sensor_datetime, collector) %>%
+  # combine archery and archery_virridy since they are the same site
+  mutate(id = if_else(id == "archery_virridy", "archery", id))
+
+```
+
+# Model Training
+
+## Feature Tuning 
+
+__View correlations between features and target (TOC)__
+
+Most products with FDOM in them are going to have higher correlation with TOC, 
+as well as seasonal (sin_doy) and flow related features. We want to be sure 
+that we don't put too many of these in the model as calibration error or sensor 
+drift could lead to compounding errors.
+
+```{r}
+# Combine training/validation and testing data
+modeling_data <- train_val %>%
+  mutate(group = "Train/Val") %>%
+  bind_rows(
+    testing %>%
+      mutate(group = "Testing")
+  ) %>%
+  bind_rows(
+    yampa %>%
+      mutate(group = "Yampa")
+  ) 
+```
+
+
+__Features differing in Yampa Set__
+
+We can see that there are some basin differences in the Yampa samples which may 
+influence the performance of the model on the Yampa data. Features like doy, 
+f_sc, f_x_sc, daily canyon flow, and f_x_turb show some differences in distribution 
+compared to the Poudre samples. We do still see FDOM as a useful starting point 
+for predicting TOC in the Yampa as well.
+
+```{r}
+plots <-set_names(features) %>%
+  map( function(feat) {
+
+  cor <- round(cor(modeling_data[[feat]], modeling_data$TOC, use = "complete.obs"), 2)
+
+  ggplot(modeling_data, aes(x = .data[[feat]], y = TOC, color = collector)) +
+    geom_point() +
+    annotate(
+    "text",
+    x = mean(range(modeling_data[[feat]], na.rm = TRUE)), # middle of x range
+    y = max(modeling_data$TOC, na.rm = TRUE) * 0.95,      # 95% of y max (near top)
+    label = paste0("Corr: ", round(cor(modeling_data[[feat]], modeling_data$TOC, use = "complete.obs"), 2)),
+    hjust = 0.5,
+    vjust = 1,
+    size = 4
+  ) +
+    labs(x = feat, y = "TOC (mg/L)", color = "Collector") +
+    #facet_wrap(~watershed, scales = "free") +
+    ROSS_theme
+})
+
+
+plots%>%
+  wrap_plots(., guides = "collect")
+
+wrap_plots(plots$Sensor_Cond, plots$sin_doy, plots$f_sc, 
+           plots$FDOMc, plots$daily_canyon_flow_cfs, plots$f_x_turb, ncol = 3, 
+           guides = "collect") &
+  theme(legend.position = "bottom")
+
+```
+
+__Pruning Features with high correlations__
+
+We want to avoid using too many highly correlated features in the model, as this
+can lead to overfitting and instability. We will look at the correlation matrix
+and remove some of the more redundant features.
+
+```{r}
+# get a correlation matrix across all features
+corr_matrix <- modeling_data %>% 
+  select(all_of(features)) %>% 
+  cor(use = "pairwise.complete.obs")
+
+# we just want half the matrix, so recode those in the lower triangle to NA
+corr_matrix[lower.tri(corr_matrix, diag = TRUE)] <- NA
+
+# Convert to a tidy data frame and filter for those with correlation > 0.9
+high_corr_pairs <- corr_matrix %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "feature1") %>%
+  pivot_longer(-feature1, names_to = "feature2", values_to = "correlation") %>%
+  filter(!is.na(correlation), abs(correlation) > 0.9) %>%
+  arrange(desc(abs(correlation))) %>% 
+  # remove redundant vars
+  filter(feature1 %nin% c("FDOM", "doy"))
+
+# look at the list and make some educated decisions about features
+high_corr_pairs
+
+fewer_features <- features[features %nin% c("FDOM", "doy", 
+                                            # remove vars with high correlation 
+                                            # with others
+                                            "Temp", "f_log",
+                                            "Sensor_Turb")]
+
+# do the correlation matrix again to make sure that is okay
+corr_matrix <- modeling_data %>% 
+  select(all_of(fewer_features)) %>% 
+  cor(use = "pairwise.complete.obs")
+
+corr_matrix[lower.tri(corr_matrix, diag = TRUE)] <- NA
+
+# Convert to a tidy data frame and filter
+high_corr_pairs <- corr_matrix %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "feature1") %>%
+  pivot_longer(-feature1, names_to = "feature2", values_to = "correlation") %>%
+  filter(!is.na(correlation), abs(correlation) > 0.85) %>%
+  arrange(desc(abs(correlation)))
+
+high_corr_pairs
+
+```
+
+`high_corr_pairs` has features we should be cautious of using together. We will 
+try to avoid using more than one of these in the same model.
+
+
+First, we will start with our base model (live sensor data only) and then test 
+adding in other features to see if they improve performance. We will use the 
+default hyperparameters below for all models to keep things consistent. Once we 
+have tested all the features together, we will want to trim it down a bit so we 
+are not using too many highly correlated features or overfitting the model due 
+to lack of data
+
+```{r}
+#xgboost hyper parameters
+tune_grid = expand.grid(
+  nrounds = 10000,
+  max_depth = c(3, 4),
+  eta = c(0.01, 0.005),
+  gamma = c(0.05, 0.1, 0.2),
+  lambda = c(1,10),
+  alpha = c(0, 1),
+  colsample_bytree = c(0.8, 0.9),
+  min_child_weight = c(2, 3),
+  subsample = c(0.5,0.8)
+)
+
+
+# Weighting function for TOC
+toc_high_weights <-  function(df) {
+  case_when(df$TOC < 4 ~ 1, 
+            between(df$TOC, 4, 6) ~ 2,
+            df$TOC > 6 ~ 5)
+}
+
+```
+
+## CLP hypertuning
+
+Let's do some hyper tuning on the CLP data - this step can be skipped if not changing anything, all models have been saved at the end and the "best" model is read in at the top of the next section.
+
+```{r}
+data <- train_val %>% 
+  select(TOC, id, any_of(fewer_features)) 
+
+target_col = "TOC"
+units = "mg/L"
+site_col = "id"
+
+# Prepare features
+features <- setdiff(names(data), 
+                    c(target_col, site_col))
+
+#setup performance dataframe
+perf <- data.frame()
+
+train_data <- train_val
+val_data   <- testing
+
+w_train <- toc_high_weights(train_data)
+w_val   <- toc_high_weights(val_data)
+
+# set up data matrix for xgb
+dtrain <- xgb.DMatrix(
+  data = as.matrix(train_data[, features]),
+  label = train_data[[target_col]],
+  weight = w_train # add weights
+)
+
+dval <- xgb.DMatrix(
+  data = as.matrix(val_data[, features]),
+  label = val_data[[target_col]],
+  weight = w_val # add weights
+)
+
+# Set train vs val for early stopping
+watchlist <- list(train = dtrain, eval = dval)
+
+models <- list()
+
+#run through all hyper parameters and save to fold_models with name foldi_gridj
+for (j in 1:nrow(tune_grid)) {
+  
+  #setup parameters for tune
+  params <- list(
+    objective = "reg:squarederror",
+    eval_metric = "rmse",
+    tree_method = "exact",
+    eta = tune_grid$eta[j],
+    gamma = tune_grid$gamma[j],
+    alpha = tune_grid$alpha[j],
+    lambda = tune_grid$lambda[j],
+    max_depth = tune_grid$max_depth[j],
+    subsample = tune_grid$subsample[j],
+    colsample_bytree = tune_grid$colsample_bytree[j],
+    min_child_weight  = tune_grid$min_child_weight[j]
+  )
+  
+  #train model with hyper parameters
+  model_ij <- xgb.train(
+    params = params,
+    data = dtrain,
+    nrounds = tune_grid$nrounds[j],
+    watchlist = watchlist,
+    #change early stopping rounds based on eta (smaller eta, larger rounds)
+    early_stopping_rounds = ifelse(tune_grid$eta[j] >= 0.1, 250,
+                                   ifelse(tune_grid$eta[j] >= 0.01, 500,
+                                          1000)),
+    verbose = 0,
+    nthread = 1
+  )
+  
+  models[[j]] <- model_ij
+  
+  # pred_col <- paste0(target_col, "_guess")
+  # # Predictions on validation set
+  # val_data[[pred_col]] <- predict(
+  #   model_ij, dval,
+  #   iterationrange = c(1, model_ij$best_iteration)
+  # )
+  # rmse_val  <- rmse(val_data[[target_col]], val_data[[pred_col]])
+  # mae_val   <- mae( val_data[[target_col]], val_data[[pred_col]])
+  # bias_val  <- bias(val_data[[target_col]], val_data[[pred_col]])
+  # 
+  # # Predictions on training set (to measure overfitting)
+  # train_data[[pred_col]] <- predict(
+  #   model_ij, dtrain,
+  #   iterationrange = c(1, model_ij$best_iteration)
+  # )
+  # rmse_train  <- rmse(train_data[[target_col]], train_data[[pred_col]])
+  # mae_train   <- mae( train_data[[target_col]], train_data[[pred_col]])
+  # bias_train  <- bias(train_data[[target_col]], train_data[[pred_col]])
+  
+  val_rmse <- as.numeric(sub(".*eval-rmse:([0-9.]+).*", "\\1", model_ij$best_msg))
+  train_rmse <- as.numeric(sub(".*train-rmse:([0-9.]+).*", "\\1", model_ij$best_msg))
+  
+  perf <- rbind(perf, 
+                data.frame(
+                  grid_id = j,
+                  best_iter = model_ij$best_iteration,  # from early stopping
+                  rmse_val = val_rmse,
+                  rmse_train = train_rmse,
+                  diff = abs(val_rmse - train_rmse)
+                ))
+  
+  if(j/50 == round(j/50)){
+    cat(paste0("  Completed ", j, " of ", nrow(tune_grid), " hyperparameter combinations...\n"))
+  }
+  
+}
+
+write_rds(models, here("data/derived/models/TOC_transfer/all_basic_CLP_for_transfer.rds"))
+write_csv(perf, "data/derived/models/TOC_transfer/all_basic_CLP_for_transfer_performance.csv")
+```
+
+```{r}
+ggplot(perf) +
+  geom_histogram(aes(x = rmse_val, fill = "Val")) +
+  geom_histogram(aes(x = rmse_train, fill = "Train")) +
+  labs(title = paste("Val & Train RMSE by Grid ID"),
+       x = "RMSE", y = "density", fill = "Group") +
+  theme_minimal()
+
+best_rows  <- perf[order(perf$diff), ][1:50,]
+best_rows
+
+```
+
+Since we aren't going to use an explicit testing set here, we'll grab the model
+with the least difference between training and validation, assuming that it 
+represents the most balanced model in training.
+
+```{r}
+
+best_seq_model <- best_rows$grid_id[1]
+xgb_model <- models[[best_model]]
+
+write_rds(xgb_model, here("data/derived/models/TOC_transfer/best_basic_CLP_for_transfer.RDS"))
+
+xgb_model
+
+```
+
+## Naive Predict on Yampa
+
+Using the CLP model, we'll do a blind application of that to the Yampa data just
+to get an idea of general performance.
+
+```{r}
+xgb_model <- read_rds(here("data/derived/models/TOC_transfer/best_basic_CLP_for_transfer.RDS"))
+
+# set up data matrix for xgb
+xgb_yampa <- xgb.DMatrix(
+  data = as.matrix(yampa[, features]),
+  label = yampa[[target_col]]
+)
+
+yampa$naive_pred <- predict(xgb_model, xgb_yampa)
+yampa %>% 
+  summarise(rmse = rmse(TOC, naive_pred),
+            .by = id)
+rmse(yampa$TOC, yampa$naive_pred)
+
+ggplot(yampa, aes(x = TOC, y = naive_pred)) +
+  geom_point()
+```
+
+Since there is just one year of yampa data, and I don't know much about the WS, 
+I'm just going to do a random split of the sites for training (4 sites)/validation (2 sites)/test (2 sites)
+
+```{r}
+yampa_ids <- unique(yampa$id)
+train_yamp <- sample(yampa_ids, 4)
+val_yamp <- sample(yampa_ids[!yampa_ids %in% train_yamp], 2)
+test_yamp <- yampa_ids[!yampa_ids %in% c(train_yamp, val_yamp)]
+
+yampa_train <- yampa %>% filter(id %in% train_yamp)
+yampa_val <- yampa %>% filter(id %in% val_yamp)
+yampa_test <- yampa %>% filter(id %in% test_yamp)
+
+yampa_t_w <- toc_high_weights(yampa_train)
+yampa_v_w <- toc_high_weights(yampa_val)
+
+xgb_yampa_t <- xgb.DMatrix(
+  data = as.matrix(yampa_train[, features]),
+  label = yampa_train[[target_col]],
+  weight = yampa_t_w
+)
+
+xgb_yampa_v <- xgb.DMatrix(
+  data = as.matrix(yampa_val[, features]),
+  label = yampa_val[[target_col]],
+  weight = yampa_v_w
+)
+
+yampa_watch <- list(train = xgb_yampa_t, 
+                    eval = xgb_yampa_v)
+```
+
+## Sequential training
+
+In sequential training there are some things we **don't** want to change (like
+max depth, eta, and some of the other regularization parameters), so this tune
+grid is pretty small.
+
+```{r}
+models_yampa <- list()
+seq_perf <- data.frame()
+
+#xgboost hyper parameters
+sequential_tune_grid <- expand.grid(
+  nrounds = 10000,
+  max_depth = xgb_model$params$max_depth,
+  eta = xgb_model$params$eta,
+  gamma = xgb_model$params$gamma,
+  lambda = xgb_model$params$lambda,
+  alpha = xgb_model$params$alpha,
+  colsample_bytree = c(0.8, 0.9),
+  min_child_weight = c(2, 3),
+  subsample = c(0.5,0.8)
+)
+
+#run through all hyper parameters and save to fold_models with name foldi_gridj
+for (j in 1:nrow(sequential_tune_grid)) {
+  
+  #setup parameters for tune
+  params <- list(
+    objective = "reg:squarederror",
+    eval_metric = "rmse",
+    eta = sequential_tune_grid$eta[j],
+    gamma = sequential_tune_grid$gamma[j],
+    alpha = sequential_tune_grid$alpha[j],
+    lambda = sequential_tune_grid$lambda[j],
+    max_depth = sequential_tune_grid$max_depth[j],
+    subsample = sequential_tune_grid$subsample[j],
+    colsample_bytree = sequential_tune_grid$colsample_bytree[j],
+    min_child_weight  = sequential_tune_grid$min_child_weight[j]
+  )
+  
+  #train model with hyper parameters
+  model_ij <- xgb.train(
+    params = params,
+    data = xgb_yampa_t,
+    nrounds = sequential_tune_grid$nrounds[j],
+    watchlist = yampa_watch,
+    #change early stopping rounds based on eta (smaller eta, larger rounds)
+    early_stopping_rounds = 500,
+    print_every_n = 1000,
+    verbose = 0,
+    nthread = 1
+  )
+  
+  models_yampa[[j]] <- model_ij
+  
+  val_rmse <- as.numeric(sub(".*eval-rmse:([0-9.]+).*", "\\1", model_ij$best_msg))
+  train_rmse <- as.numeric(sub(".*train-rmse:([0-9.]+).*", "\\1", model_ij$best_msg))
+  seq_perf <- rbind(seq_perf, data.frame(
+    grid_id = j,
+    best_iter  = model_ij$best_iteration,  # from early stopping
+    rmse_val = val_rmse,
+    rmse_train = train_rmse,
+    diff = abs(val_rmse - train_rmse)
+  ))
+  
+  if(j/50 == round(j/50)){
+    cat(paste0("  Completed ", j, " of ", nrow(sequential_tune_grid), " hyperparameter combinations...\n"))
+  }
+  
+}
+```
+
+And then we'll look at performance:
+
+```{r}
+ggplot(seq_perf) +
+  geom_histogram(aes(x = rmse_val, fill = "Val")) +
+  geom_histogram(aes(x = rmse_train, fill = "Train")) +
+  labs(title = paste("Val & Train RMSE by Grid ID"),
+       x = "RMSE", y = "density", fill = "Group") +
+  theme_minimal()
+
+seq_perf <- seq_perf[order(seq_perf$diff), ]
+
+write_csv(seq_perf, here("data/derived/models/TOC_transfer/performance_yampa_transfer_from_CLP.csv"))
+```
+
+This particular split has a pretty big difference between train/validation, so let's just choose the one with the smallest distance. 
+
+```{r}
+best_seq_model <- seq_perf$grid_id[1]
+seq_model <- models_yampa[[best_seq_model]]
+
+write_rds(seq_model, here("data/derived/models/TOC_transfer/best_yampa_transfer_from_CLP.RDS"))
+
+```
+
+And now apply to the test set.
+
+```{r}
+seq_model <- read_rds( here("data/derived/models/TOC_transfer/best_yampa_transfer_from_CLP.RDS"))
+
+xgb_yampa_test <- xgb.DMatrix(
+  data = as.matrix(yampa_test[, features]),
+  label = yampa_test[[target_col]]
+)
+
+yampa_test$naive_pred <- predict(xgb_model, xgb_yampa_test)
+yampa_test$seq_pred <- predict(seq_model, xgb_yampa_test)
+rmse(yampa_test$TOC, yampa_test$naive_pred)
+rmse(yampa_test$TOC, yampa_test$seq_pred)
+
+ggplot(yampa_test) +
+  geom_point(aes(x = TOC, y = naive_pred, color = "naive")) +
+  geom_point(aes(x = TOC, y = seq_pred, color = "sequential")) +
+  theme_bw() +
+  scale_color_manual(values = c("sequential" = "black",
+                                "naive" = "grey")) +
+  labs(x = "measured TOC (mg/L)",
+       y = "predicted TOC (mg/L)",
+       color = "transfer method") +
+  coord_cartesian(xlim = c(3, 9),
+                  ylim = c(3, 9)) +
+  theme(legend.position = c(0.05, 0.95),      # inside plot (x, y)
+        legend.justification = c(0, 1),       # anchor top-left
+        legend.background = element_rect(
+          fill = "white",
+          color = "black"))
+
+```
+
