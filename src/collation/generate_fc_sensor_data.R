@@ -249,10 +249,10 @@ generate_fc_sensor_data <- function(data_dir = here("data","raw", "sensor", "fc_
              DT_round = with_tz(round_date(start_DT, "15 min"), tz = "UTC"), # round and convert to 15min
              DT_join = as.character(DT_round), #create character version
              date = as_date(DT_round),
-             field_season = lubridate::year(DT_round), #get year
+             field_season = year(DT_round), #get year
              last_site_visit = DT_round, # get last site visit
              date = as.character(date), # get date
-             sonde_employed = dplyr::case_when(  #binary for sonde deployment (NA & 0 deployed, 1 == non employed moving forward)
+             sonde_employed = case_when(  #binary for sonde deployment (NA & 0 deployed, 1 == non employed moving forward)
                is.na(sensor_change)  ~ NA,
                sensor_change == "Swapped" ~ NA,
                sensor_change == "Removed" ~ 1,
@@ -277,9 +277,8 @@ generate_fc_sensor_data <- function(data_dir = here("data","raw", "sensor", "fc_
     # # Add summary statistics
     summarized_data <- combined_data %>%
       map(~generate_summary_statistics(.))
-    #standardized
+    # Load sensor specification thresholds
     sensor_thresholds_file <- here("data","derived","auto_qaqc_files","thresholds","sensor_real_thresholds.yml")
-    ross_seasonal_thresholds_file <- here("data","derived","auto_qaqc_files","thresholds","updated_seasonal_thresholds_2025_sjs.csv")
     # read threshold data
     sensor_thresholds <- read_yaml(sensor_thresholds_file)
     #load all thresholds and bind with FC thresholds
@@ -388,7 +387,7 @@ generate_fc_sensor_data <- function(data_dir = here("data","raw", "sensor", "fc_
         rbindlist(fill = TRUE) %>%
         mutate(flag = ifelse(flag == "", NA, flag)) %>%
         split(f = list(.$site, .$parameter), sep = "-") %>%
-        purrr::discard(~ nrow(.) == 0)%>%
+        discard(~ nrow(.) == 0)%>%
         # # add known sensor malfunction periods
         map(~add_malfunction_flag(df = ., malfunction_records = sensor_malfunction_notes))
 
@@ -406,31 +405,31 @@ generate_fc_sensor_data <- function(data_dir = here("data","raw", "sensor", "fc_
     # apply network-level quality control
     network_flags <- intrasensor_flags_list %>%
       # network check compares patterns across sites
-      purrr::map(~network_check(df = ., intrasensor_flags_arg = intrasensor_flags_list, site_order_arg = site_order)) %>%
+      map(~network_check(df = ., intrasensor_flags_arg = intrasensor_flags_list, site_order_arg = site_order)) %>%
       rbindlist(fill = TRUE) %>%
       # clean up flag column formatting
       tidy_flag_column() %>%
       split(f = list(.$site, .$parameter), sep = "-") %>%
       # add suspect data flags for isolated anomalies
-      purrr::map(~add_suspect_flag(.)) %>%
+      map(~add_suspect_flag(.)) %>%
       rbindlist(fill = TRUE)
 
     message("Applying data cleaning")
     # final data cleaning and preparation
     v_final_flags <- network_flags %>%
       # Remove isolated suspect flags (single point anomalies)
-      dplyr::mutate(auto_flag = ifelse(
+      mutate(auto_flag = ifelse(
         is.na(auto_flag), NA,
         ifelse(auto_flag == "suspect data" &
                  is.na(lag(auto_flag, 1)) &
                  is.na(lead(auto_flag, 1)), NA, auto_flag)
       )) %>%
       # select final columns
-      dplyr::select(c("DT_round", "DT_join", "site", "parameter", "mean", "units",
+      select(c("DT_round", "DT_join", "site", "parameter", "mean", "units",
                       "n_obs", "spread", "auto_flag", "mal_flag", "sonde_moved",
                       "sonde_employed", "season", "last_site_visit")) %>%
       # clean up empty flags
-      dplyr::mutate(auto_flag = ifelse(is.na(auto_flag), NA,
+      mutate(auto_flag = ifelse(is.na(auto_flag), NA,
                                        ifelse(auto_flag == "", NA, auto_flag))) %>%
       # split back into site-parameter combinations
       split(f = list(.$site, .$parameter), sep = "-") %>%
