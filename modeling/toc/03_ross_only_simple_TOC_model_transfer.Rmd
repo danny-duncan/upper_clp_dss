@@ -682,6 +682,7 @@ rmse(yampa_test$TOC, yampa_test$seq_pred)
 ggplot(yampa_test) +
   geom_point(aes(x = TOC, y = naive_pred, color = "naive")) +
   geom_point(aes(x = TOC, y = seq_pred, color = "sequential")) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   theme_bw() +
   scale_color_manual(values = c("sequential" = "black",
                                 "naive" = "grey")) +
