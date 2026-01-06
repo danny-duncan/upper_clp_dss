@@ -149,7 +149,7 @@ load_grab_sample_data <- function(
       output_directory = output_directory,
       update_data = T)
     #join the two datasets
-    all_data <- full_join(ross_data, fc_data) %>%
+    all_data <- bind_rows(ross_data, fc_data) %>%
       distinct()
 
     # Save the updated data to the output directory with timestamped filename

@@ -171,7 +171,7 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
     mutate(
       collector = "ROSS",
       site_code = tolower(site_code),
-      DT_mst = ymd_hms(DT_mst_char),
+      DT_mst = ymd_hms(DT_mst_char, tz = "MST"),
       DT_mst_char = as.character(DT_mst_char),
       # fixing site names based on sonde deployments with ROSS/Virridy sondes
       site_code = case_when(
