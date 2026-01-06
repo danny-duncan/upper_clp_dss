@@ -64,11 +64,10 @@ plot_tvt_fold_acc <- function(fold_model, fold_num,
                               train_df = NULL, val_df = NULL, test_df = NULL,
                               target_col = "TOC_cat", units = "mg/L", title = "",
                               class_levels = c("0-2", "2-4", "4-8", "8+")) {
-
   #See if there are any datasets
   input_datasets <- list(train_df = train_df, val_df = val_df, test_df = test_df)
 
-  if (all(map_lgl(input_datasets, is.null))) {
+  if(all(map_lgl(input_datasets, is.null))) {
     stop("At least one dataset (train_df, val_df, or test_df) must be provided.")
   }
 
@@ -81,16 +80,21 @@ plot_tvt_fold_acc <- function(fold_model, fold_num,
 
   #predict classes and label
   predict_classes <- function(df) {
-    if (is.null(df)) return(NULL)
+    if(is.null(df)){
+      return(NULL)
+    }
 
     preds <- predict(fold_model, as.matrix(df[, fold_model$feature_names]))
 
+    if(fold_model$params$objective == "multi:softprob"){
+      preds_vector <- max.col(matrix(preds, ncol = length(class_levels), byrow = TRUE)) - 1
+    }else{
+      preds_vector <- preds
+    }
     df <- df %>%
       #if softprob, convert probs to class labels (max prob)
-      mutate(!!pred_col := if_else(fold_model$params$objective == "multi:softprob",
-                                   max.col(matrix(preds, ncol = length(class_levels), byrow = TRUE)) - 1,
-                                   preds))
-
+      mutate(!!pred_col := preds_vector)
+    #convert to factors with levels
     df %>%
       mutate(
         target_cat = factor(.data[[target_col]],
@@ -113,36 +117,37 @@ plot_tvt_fold_acc <- function(fold_model, fold_num,
     df <- pred_df %>%
       mutate(pred_cat = factor(pred_cat, levels = levels(target_cat)))
     #compute performance metrics
-    conf_table <- conf_mat(df, truth = target_cat, estimate = pred_cat)
+    conf_table <- conf_mat(df, truth = target_cat, estimate = pred_cat, dnn = c("predicted", "truth"))
     performance <- summary(conf_table)
 
     acc  <- performance %>% filter(.metric == "accuracy") %>% pull(.estimate)
     kap  <- performance %>% filter(.metric == "kap") %>% pull(.estimate)
     f1   <- performance %>% filter(.metric == "f_meas") %>% pull(.estimate)
 
-    conf_df <- conf_table %>%
-      tidy() %>%
+    conf_df <- conf_table$table %>%
+      as_tibble() %>%
       mutate(
-        value_perc = replace_na(value / sum(value), 0),
+        value_perc = replace_na(n / sum(n), 0),
         True_lab = factor(truth, levels = levels(df$target_cat)),
         Pred_lab = factor(predicted, levels = levels(df$pred_cat))
       )
 
     perc_corr <- conf_df %>%
       group_by(True_lab) %>%
-      summarize(percent_corr = round(sum(value[True_lab == Pred_lab]) /
-                                       sum(value) * 100, 1)) %>%
+      summarize(percent_corr = round(sum(n[True_lab == Pred_lab]) /
+                                       sum(n) * 100, 1)) %>%
       ungroup()
 
     ggplot(conf_df, aes(x = True_lab, y = Pred_lab, fill = value_perc)) +
       geom_tile(color = grey(0.6), size = 0.2) +
       geom_tile(data = filter(conf_df, True_lab == Pred_lab),
                 color = "black", fill = "transparent", size = 1) +
-      geom_text(aes(label = value), size = 4) +
+      geom_text(aes(label = n), size = 4) +
       geom_text(
         data = perc_corr,
         aes(x = True_lab, y = length(unique(conf_df$Pred_lab)) + 0.25,
             label = paste0("Acc: ", percent_corr, "%")),
+        inherit.aes = FALSE,
         color = "red", size = 4, fontface = "bold"
       ) +
       scale_fill_gradient(low = "white", high = "blue",
@@ -153,7 +158,8 @@ plot_tvt_fold_acc <- function(fold_model, fold_num,
         title = plot_title,
         subtitle = paste0("Accuracy ", round(100 * acc, 1),
                           "%  F1: ", round(f1, 2),
-                          "  Kappa: ", round(kap, 2))
+                          "  Kappa: ", round(kap, 2)),
+        fill = "Percent Correct"
       ) +
       theme_bw() +
       theme(

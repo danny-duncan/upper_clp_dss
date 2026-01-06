@@ -67,7 +67,7 @@ plot_cat_model_timeseries <- function( model_input_df, water_chem_df, target_col
   plot_water_chem <- water_chem_df %>%
     mutate(site = tolower(site_code),
            DT_round = force_tz(DT_sample, "MST"))%>%
-    filter(site == site_sel)%>%
+    filter(site == site_sel & !is.na(!!sym(target_col)))%>% # make sure our category is not NA
     filter(between(DT_round, start_DT, end_DT))%>%
     mutate(DT_round = round_date(DT_round, unit = summary_interval ), #round date to match sensor data
            # Convert numeric classes (0,1,2,3) to factor with provided class levels
@@ -153,25 +153,27 @@ plot_cat_model_timeseries <- function( model_input_df, water_chem_df, target_col
     # add dummy data to ensure all dates are shown but fill and color are transparent
     geom_tile(data = dummy_data, aes(x = DT_round, y = pred_cat), alpha = 0, height = 1) +
     geom_tile(data = plot_df, aes(x = DT_round, y = pred_cat, fill = pred_cat),color = "white", height = 1 ) +
+
+    # overlay sample data as stars
+    geom_point(
+      data = plot_water_chem,
+      aes(x = DT_round, y = category, fill = category, shape = "Sample Data"),
+      size = 3,
+      color = "black",
+      stroke = 1.1
+    ) +
     # custom fill colors for clarity
     scale_fill_manual(values = cat_colors,
                       limits = names(cat_colors),
                       drop = FALSE )+
-    # overlay sample data as stars
-    geom_point(
-      data = plot_water_chem,
-      aes(x = DT_round, y = category, shape = "Sample Data", color = "Sample Data"),
-      size = 3,
-      stroke = 1.1
-    ) +
     scale_shape_manual(
       name = "",
-      values = c("Sample Data" = 5)   # star shape (you can use 5 for diamond)
+      values = c("Sample Data" = 23)
     ) +
-    scale_color_manual(
-      name = "",
-      values = c("Sample Data" = "black")
-    ) +
+    # scale_color_manual(
+    #   name = "",
+    #   values = c("Sample Data" = "black")
+    # ) +
     theme(
       panel.grid = element_blank(),
       legend.position = "right",
