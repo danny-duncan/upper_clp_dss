@@ -135,7 +135,9 @@ load_sensor_data <- function(
     all_data <- bind_rows(ross_data, fc_data) %>%
       distinct()
     #Save Combined Datasets
-    write_parquet(all_data, file.path(output_directory, paste0("compiled_all_sensor_data_", Sys.Date(), ".parquet")))
+    file_path <- file.path(output_directory, paste0("compiled_all_sensor_data_", Sys.Date(), ".parquet"))
+    write_parquet(all_data, file_path)
+    message("Saved all sensor data to ", file_path )
     # Return the data
     return(all_data)
     }
@@ -150,7 +152,9 @@ load_sensor_data <- function(
     all_data <- bind_rows(ross_data, fc_data) %>%
       distinct()
     #Save Combined Datasets
-    write_parquet(all_data, file.path(output_directory, paste0("compiled_all_sensor_data_", Sys.Date(), ".parquet")))
+    file_path <- file.path(output_directory, paste0("compiled_all_sensor_data_", Sys.Date(), ".parquet"))
+    write_parquet(all_data, file_path)
+    message("Saved all sensor data to ", file_path )
     # Return the data
     return(all_data)
     }
