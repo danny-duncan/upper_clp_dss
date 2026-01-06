@@ -1,0 +1,307 @@
+---
+title: "Accessing the NWM forecasts"
+author: "ROSSyndicate"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Purpose 
+
+This Rmd is meant to outline how to access and extract NWM Guidance forecasts. 
+NWM Guidance is different from the NWM Official Forecast, which is only available
+for some locations during some time periods (that we don't really understand).
+
+The nwmTools package, which seemed like the most straightforward package to use
+here is super outdated and no longer works without some finessing (finessing is 
+included here). 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(nhdplusTools)
+library(sf)
+# for now, don't worry about grabbing nwmTools, I've grabbed the necessary
+# functions and edited them to work.
+# install.packages("remotes")
+# remotes::install_github('mikejohnson51/nwmTools')
+# library(nwmTools)
+library(tidyverse)
+library(glue)
+library(rvest)
+library(ncdf4)
+library(httr)
+```
+
+## nwmTools functions
+
+These functions came from the nwmTools package, but most have been edited
+
+```{r}
+validate <- function(complete, field, value){
+  # check for field in source file
+  if(field %in% names(complete) & !is.null(value)){
+    # get all the options from the file for that field
+    opts = unique(complete[[field]])
+    # check to see that the value is in the list of field values
+    if(any(grepl(value, opts))){
+      return(filter(complete, grepl(!!value, get(field))))
+    } else {
+      stop(glue("{value} not a valid {field}. Choose from: {paste(opts, collapse = ', ')}"))
+    }
+  } else {
+    return(complete)
+  }
+}
+
+nwm_filter <- function(source, version = NULL, config = NULL, ensemble = NULL, 
+                      output= NULL, domain = NULL, date = NULL){
+  
+  startDate <- endDate <- NULL
+  
+  # Source ------------------------------------------------------------------
+  
+  meta = validate(nwmTools::nwm_data, "source", source) %>% 
+    validate("domain", domain) %>% 
+    validate("version", version) %>% 
+    validate("output", output) %>% 
+    validate("config", config) %>% 
+    validate("ensemble", ensemble) 
+  
+  
+  # Date ------------------------------------------------------------------ 
+  
+  if(!is.null(date)){
+    
+    meta = meta %>% 
+      mutate(startDate = ifelse(startDate == "..", 
+                                "1900-01-01",
+                                startDate),
+             endDate = ifelse(endDate == "..",  as.character(Sys.Date()), endDate))
+    
+    tmp = filter(meta, ymd(date, tz = "UTC") >= 
+                   as.POSIXct(startDate, tz = "UTC"),
+                 ymd(date, tz = "UTC") <= 
+                   as.POSIXct(endDate, tz = "UTC"))
+    
+    if(nrow(tmp) == 0){ 
+      stop("date not within allowed range: ", meta$startDate, "--", meta$endDate) 
+    } else {
+      meta = tmp 
+    }
+  }
+  
+  if(nrow(meta) > 1){warning('More then one viable source found...', call. = FALSE)}
+  
+  meta
+}
+
+#' Download Remote Files
+#' @param fileList fileList object
+#' @param outdir directory to write files
+#' @return data.frame
+#' @export
+
+download_files = function(fileList, outdir = "."){
+  
+  fileList$outfiles = paste0(outdir,"/", basename(fileList$urls))
+  
+  for(i in 1:nrow(fileList)){
+    if(!file.exists(fileList$outfiles[i])){
+      httr::GET(fileList$urls[i], 
+                write_disk(fileList$outfiles[i]),
+                httr::progress())
+    }
+  }
+
+  return(fileList)
+
+}
+
+#' Get NOMADs File List
+#' @inheritParams get_gcp_urls
+#' @param version server version (prod or para)
+#' @return data.frame
+#' @export
+
+get_nomads_urls = function(config = "medium_range",
+                           domain = "conus",
+                           date = NULL, 
+                           hour = NULL,
+                           minute = "00",
+                           num, 
+                           ensemble = NULL, 
+                           output = "channel_rt",
+                           version = "prod",
+                           outdir = NULL) {
+  
+  if (config == "medium_range_blend") version <- "v3.0" 
+  
+  meta = nwm_filter(source = "nomads", 
+                    version = version, 
+                    config = config, 
+                    output = output,
+                    ensemble = ensemble, 
+                    domain = domain)
+  
+  meta = meta[1,]
+  
+  tmp     = glue(strsplit(meta$http_pattern, 'nwm\\.')[[1]][1])
+  
+  dates   = html_attr(html_elements(read_html(tmp), "a"), "href")
+  dates = gsub("/", "", gsub("nwm.", "", dates))
+  
+  if(is.null(date)){ 
+    YYYYMMDD = tail(dates,1)
+    YYYYMMDD2 = tail(dates, 2)[1]
+  } else if(!gsub("-", "", date) %in% dates){
+    stop(date, " not avaliable")
+  } else {
+    YYYYMMDD = gsub("-", "", date)
+    YYYYMMDD2 = gsub("-", "", date)
+  }
+  
+  files   = tryCatch({
+    date <<- YYYYMMDD
+    html_attr(html_elements(read_html(glue('{tmp}/nwm.{YYYYMMDD}/{meta$bucket}/')), "a"), "href")
+  }, error = function(e){
+    date <<- YYYYMMDD2
+    html_attr(html_elements(read_html(glue('{tmp}/nwm.{YYYYMMDD2}/{meta$bucket}/')), "a"), "href")
+  })
+  
+  files  = grep(meta$output, files, value = TRUE)
+  files  = grep(".nc$", files, value = TRUE)
+  
+  if(is.null(hour)){
+    current = strsplit(tail(files, 1), "\\.")[[1]][[2]]
+    hour = gsub("t", "", gsub("z", "", current))
+  } 
+  
+  files  = grep(paste0("t", hour, "z"), files, value = TRUE)[1:num]
+  dates  = ymd_hm(paste0(date, hour, "00")) + hours(0:(num-1))
+  
+  df = data.frame(dateTime = dates, 
+                  urls     =  glue('{tmp}/nwm.{date}/{meta$bucket}/{files}'),
+                  output   =  output)
+  
+  if(!is.null(outdir)){
+    df = download_files(df,  outdir = outdir)
+  }
+  
+  return(df)
+  
+}
+
+```
+
+
+# Extracting data
+
+This is my version of the get_timeseries() function in the nwmTools package that
+doesn't work as written.
+
+```{r}
+read_nwm_streamflow <- function(ncfile, 
+                                comid, 
+                                varname = "streamflow") {
+  
+  # Open file
+  nc <- nc_open(ncfile)
+  
+  # Extract feature ids
+  feature_ids <- ncvar_get(nc, "feature_id")
+  
+  # Convert COMID to numeric if needed
+  comid <- as.numeric(comid)
+  
+  # Locate match
+  idx <- which(feature_ids == comid)
+  if (length(idx) == 0) {
+    warning(paste("COMID", comid, "not found in feature_id"))
+    return(tibble())
+  }
+  
+  # Pull the time dimension from the global attributes
+  forecast_datetime <- ncatt_get(nc, 0) %>% 
+    .$model_output_valid_time %>% 
+    # convert to datetime object
+    ymd_hms(., tz = "UTC") %>% 
+    with_tz(., tz = "Etc/GMT+7")
+
+  # Pull the valid time dimension from the global attributes
+  valid_datetime <- ncatt_get(nc, 0) %>% 
+    .$model_initialization_time %>% 
+    # convert to datetime object
+    ymd_hms(., tz = "UTC")%>% 
+    with_tz(., tz = "Etc/GMT+7")
+  
+  # Extract value matrix for the given varname
+  value_mat <- ncvar_get(nc, varname)
+  if (nrow(value_mat) < idx) {
+    stop("Index outside streamflow matrix bounds")
+  }
+  
+  value <- value_mat[idx]
+  
+  nc_close(nc)
+  
+  # Return tidy tibble
+  tibble(
+    valid_datetime = valid_datetime,
+    forecast_datetime = forecast_datetime,
+    value = value,
+    variable = varname, 
+    comid = comid
+  )
+  
+}
+
+```
+
+# Example run
+
+Here, we'll grab forecasts for the Cache La Poudre canyon mouth.
+
+Short-range forecast is 18h in advance
+Mid-range forecast is 10d in advance in 1h increments
+
+Note, this only works for the previous ~ 24 h of forecasts.
+
+```{r}
+# 12948 is big thompson with forecast info: https://water.noaa.gov/gauges/ESSC2
+# 2900705 is `Reach ID` for canyon mouth https://water.noaa.gov/gauges/FTDC2
+comid <- "2900705" 
+
+urls <- get_nomads_urls(config = "medium_range_blend", #short_range, medium_range, medium_range_blend
+                        date = "20251207", # date of forecast
+                        #ensemble = NA, # if medium_range, must supply ensemble number
+                        output = "channel_rt", 
+                        outdir = tempdir(),
+                        num = 24)
+
+files <- download_files(urls, outdir = tempdir())
+
+```
+
+And then we'll extract the data from these for our comid of choice.
+```{r}
+data <- map(files$outfiles, 
+    ~ read_nwm_streamflow(ncfile = .x, 
+                          comid = comid, 
+                          varname = "streamflow")) %>% 
+  bind_rows()
+
+```
+
+Data from here is reported in cms and the data we are comparing to is in cfs, 
+let's do a quick unit conversion.
+
+```{r}
+data <- data %>% 
+  mutate(q_cfs = value * 35.3147) 
+
+ggplot(data, aes(x = forecast_datetime, y = q_cfs)) +
+  geom_line()
+```
+
+Yay! That matches the NWM Guidance page.

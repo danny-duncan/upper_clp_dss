@@ -90,7 +90,7 @@ plot_tvt_fold_perf <- function( train_val_df, test_df, fold_set, fold_model, tar
   train_matrix <- train_set[, features]%>%
     mutate(across(everything(), as.numeric)) %>%
     as.matrix()
-  test_matrix <- testing[, features]%>%
+  test_matrix <- test_df[, features]%>%
     mutate(across(everything(), as.numeric)) %>%
     as.matrix()
   # Define prediction column name

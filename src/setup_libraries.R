@@ -59,6 +59,7 @@ invisible(
     "dataRetrieval",
     "RSelenium",
     "yaml",
+    "zen4R",
     # Development tools
     "devtools",
     "here",

@@ -135,7 +135,8 @@ generate_fc_grab_sample_data <- function(
           SC = any_of(c("TDS")),
           Cl = any_of(c("Cl")),
           lab_turb = any_of(c("Turbidity")),
-          TN = any_of(c("TN_calc"))
+          TN = any_of(c("TN_calc")),
+          Alkalinity = any_of(c("Alkalinity"))
         ) %>%
         # Add chemical columns for those that may not be found across all the data
         add_column_if_not_exists("TOC") %>%
@@ -144,6 +145,7 @@ generate_fc_grab_sample_data <- function(
         add_column_if_not_exists("Cl") %>%
         add_column_if_not_exists("lab_turb") %>%
         add_column_if_not_exists("TN") %>%
+        add_column_if_not_exists("Alkalinity") %>%
         mutate(
           Date = parse_date_time(Date, orders = c("ymd", "mdy")),
           # Extract site code from site name (before hyphen or first 3 letters)
@@ -160,9 +162,11 @@ generate_fc_grab_sample_data <- function(
           Cl = as.numeric(Cl),
           lab_turb = as.numeric(lab_turb),
           TN = as.numeric(TN),
-          collector = "FC"
+          Alkalinity = as.numeric(Alkalinity),
+          collector = "FC",
+          flag = NA
         ) %>%
-        add_flag(is.na(TOC), "ND") %>%
+        add_flag(is.na(TOC), "TOC_ND") %>%
         # set final order of the columns
         select(
           # DT columns
@@ -170,7 +174,7 @@ generate_fc_grab_sample_data <- function(
           # ID columns
           site_name, site_code, collector,
           # TOC and Chemical Data Columns
-          TOC, NO3, SC, Cl, TN, lab_turb,
+          TOC, NO3, SC, Cl, TN, lab_turb, Alkalinity,
           # Flag column
           flag
         )

@@ -89,7 +89,6 @@ pull_contrail_api <- function(start_DT, end_DT = Sys.time(), username, password,
   # Create session file for persistent cookies
   session_file <- tempfile()
 
-#TODO: Hide Contrail login URL
   contrail_login_url <- login_url
   continue_key <- gsub(x = str_extract(contrail_login_url, "continue=([^&]+)"), pattern = "continue=", replacement = "")
 
