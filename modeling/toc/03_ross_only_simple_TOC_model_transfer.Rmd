@@ -245,24 +245,24 @@ for predicting TOC in the Yampa as well.
 ```{r}
 plots <-set_names(features) %>%
   map( function(feat) {
-
-  cor <- round(cor(modeling_data[[feat]], modeling_data$TOC, use = "complete.obs"), 2)
-
-  ggplot(modeling_data, aes(x = .data[[feat]], y = TOC, color = collector)) +
-    geom_point() +
-    annotate(
-    "text",
-    x = mean(range(modeling_data[[feat]], na.rm = TRUE)), # middle of x range
-    y = max(modeling_data$TOC, na.rm = TRUE) * 0.95,      # 95% of y max (near top)
-    label = paste0("Corr: ", round(cor(modeling_data[[feat]], modeling_data$TOC, use = "complete.obs"), 2)),
-    hjust = 0.5,
-    vjust = 1,
-    size = 4
-  ) +
-    labs(x = feat, y = "TOC (mg/L)", color = "Collector") +
-    #facet_wrap(~watershed, scales = "free") +
-    ROSS_theme
-})
+    
+    cor <- round(cor(modeling_data[[feat]], modeling_data$TOC, use = "complete.obs"), 2)
+    
+    ggplot(modeling_data, aes(x = .data[[feat]], y = TOC, color = collector)) +
+      geom_point() +
+      annotate(
+        "text",
+        x = mean(range(modeling_data[[feat]], na.rm = TRUE)), # middle of x range
+        y = max(modeling_data$TOC, na.rm = TRUE) * 0.95,      # 95% of y max (near top)
+        label = paste0("Corr: ", round(cor(modeling_data[[feat]], modeling_data$TOC, use = "complete.obs"), 2)),
+        hjust = 0.5,
+        vjust = 1,
+        size = 4
+      ) +
+      labs(x = feat, y = "TOC (mg/L)", color = "Collector") +
+      #facet_wrap(~watershed, scales = "free") +
+      ROSS_theme
+  })
 
 
 plots%>%
@@ -404,81 +404,92 @@ dval <- xgb.DMatrix(
 # Set train vs val for early stopping
 watchlist <- list(train = dtrain, eval = dval)
 
-models <- list()
 
-#run through all hyper parameters and save to fold_models with name foldi_gridj
-for (j in 1:nrow(tune_grid)) {
+# only re-run if the models don't exist
+if (!file.exists(here("data/derived/models/TOC_transfer/all_basic_CLP_for_transfer.rds"))) {
   
-  #setup parameters for tune
-  params <- list(
-    objective = "reg:squarederror",
-    eval_metric = "rmse",
-    tree_method = "exact",
-    eta = tune_grid$eta[j],
-    gamma = tune_grid$gamma[j],
-    alpha = tune_grid$alpha[j],
-    lambda = tune_grid$lambda[j],
-    max_depth = tune_grid$max_depth[j],
-    subsample = tune_grid$subsample[j],
-    colsample_bytree = tune_grid$colsample_bytree[j],
-    min_child_weight  = tune_grid$min_child_weight[j]
-  )
+  models <- list()
   
-  #train model with hyper parameters
-  model_ij <- xgb.train(
-    params = params,
-    data = dtrain,
-    nrounds = tune_grid$nrounds[j],
-    watchlist = watchlist,
-    #change early stopping rounds based on eta (smaller eta, larger rounds)
-    early_stopping_rounds = ifelse(tune_grid$eta[j] >= 0.1, 250,
-                                   ifelse(tune_grid$eta[j] >= 0.01, 500,
-                                          1000)),
-    verbose = 0,
-    nthread = 1
-  )
-  
-  models[[j]] <- model_ij
-  
-  # pred_col <- paste0(target_col, "_guess")
-  # # Predictions on validation set
-  # val_data[[pred_col]] <- predict(
-  #   model_ij, dval,
-  #   iterationrange = c(1, model_ij$best_iteration)
-  # )
-  # rmse_val  <- rmse(val_data[[target_col]], val_data[[pred_col]])
-  # mae_val   <- mae( val_data[[target_col]], val_data[[pred_col]])
-  # bias_val  <- bias(val_data[[target_col]], val_data[[pred_col]])
-  # 
-  # # Predictions on training set (to measure overfitting)
-  # train_data[[pred_col]] <- predict(
-  #   model_ij, dtrain,
-  #   iterationrange = c(1, model_ij$best_iteration)
-  # )
-  # rmse_train  <- rmse(train_data[[target_col]], train_data[[pred_col]])
-  # mae_train   <- mae( train_data[[target_col]], train_data[[pred_col]])
-  # bias_train  <- bias(train_data[[target_col]], train_data[[pred_col]])
-  
-  val_rmse <- as.numeric(sub(".*eval-rmse:([0-9.]+).*", "\\1", model_ij$best_msg))
-  train_rmse <- as.numeric(sub(".*train-rmse:([0-9.]+).*", "\\1", model_ij$best_msg))
-  
-  perf <- rbind(perf, 
-                data.frame(
-                  grid_id = j,
-                  best_iter = model_ij$best_iteration,  # from early stopping
-                  rmse_val = val_rmse,
-                  rmse_train = train_rmse,
-                  diff = abs(val_rmse - train_rmse)
-                ))
-  
-  if(j/50 == round(j/50)){
-    cat(paste0("  Completed ", j, " of ", nrow(tune_grid), " hyperparameter combinations...\n"))
+  #run through all hyper parameters and save to fold_models with name foldi_gridj
+  for (j in 1:nrow(tune_grid)) {
+    
+    #setup parameters for tune
+    params <- list(
+      objective = "reg:squarederror",
+      eval_metric = "rmse",
+      tree_method = "exact",
+      eta = tune_grid$eta[j],
+      gamma = tune_grid$gamma[j],
+      alpha = tune_grid$alpha[j],
+      lambda = tune_grid$lambda[j],
+      max_depth = tune_grid$max_depth[j],
+      subsample = tune_grid$subsample[j],
+      colsample_bytree = tune_grid$colsample_bytree[j],
+      min_child_weight  = tune_grid$min_child_weight[j]
+    )
+    
+    #train model with hyper parameters
+    model_ij <- xgb.train(
+      params = params,
+      data = dtrain,
+      nrounds = tune_grid$nrounds[j],
+      watchlist = watchlist,
+      #change early stopping rounds based on eta (smaller eta, larger rounds)
+      early_stopping_rounds = ifelse(tune_grid$eta[j] >= 0.1, 250,
+                                     ifelse(tune_grid$eta[j] >= 0.01, 500,
+                                            1000)),
+      verbose = 0,
+      nthread = 1
+    )
+    
+    models[[j]] <- model_ij
+    
+    # pred_col <- paste0(target_col, "_guess")
+    # # Predictions on validation set
+    # val_data[[pred_col]] <- predict(
+    #   model_ij, dval,
+    #   iterationrange = c(1, model_ij$best_iteration)
+    # )
+    # rmse_val  <- rmse(val_data[[target_col]], val_data[[pred_col]])
+    # mae_val   <- mae( val_data[[target_col]], val_data[[pred_col]])
+    # bias_val  <- bias(val_data[[target_col]], val_data[[pred_col]])
+    # 
+    # # Predictions on training set (to measure overfitting)
+    # train_data[[pred_col]] <- predict(
+    #   model_ij, dtrain,
+    #   iterationrange = c(1, model_ij$best_iteration)
+    # )
+    # rmse_train  <- rmse(train_data[[target_col]], train_data[[pred_col]])
+    # mae_train   <- mae( train_data[[target_col]], train_data[[pred_col]])
+    # bias_train  <- bias(train_data[[target_col]], train_data[[pred_col]])
+    
+    val_rmse <- as.numeric(sub(".*eval-rmse:([0-9.]+).*", "\\1", model_ij$best_msg))
+    train_rmse <- as.numeric(sub(".*train-rmse:([0-9.]+).*", "\\1", model_ij$best_msg))
+    
+    perf <- rbind(perf, 
+                  data.frame(
+                    grid_id = j,
+                    best_iter = model_ij$best_iteration,  # from early stopping
+                    rmse_val = val_rmse,
+                    rmse_train = train_rmse,
+                    diff = abs(val_rmse - train_rmse)
+                  ))
+    
+    if(j/50 == round(j/50)){
+      cat(paste0("  Completed ", j, " of ", nrow(tune_grid), " hyperparameter combinations...\n"))
+    }
+    
   }
   
+  write_rds(models, here("data/derived/models/TOC_transfer/all_basic_CLP_for_transfer.rds"))
+  write_csv(perf, here("data/derived/models/TOC_transfer/all_basic_CLP_for_transfer_performance.csv"))
+  
+} else {
+  
+  models <- read_rds(here("data/derived/models/TOC_transfer/all_basic_CLP_for_transfer.rds"))
+  perf <- read_csv(here("data/derived/models/TOC_transfer/all_basic_CLP_for_transfer_performance.csv"))
+  
 }
-
-write_rds(models, here("data/derived/models/TOC_transfer/all_basic_CLP_for_transfer.rds"))
-write_csv(perf, "data/derived/models/TOC_transfer/all_basic_CLP_for_transfer_performance.csv")
 ```
 
 ```{r}
@@ -499,11 +510,19 @@ with the least difference between training and validation, assuming that it
 represents the most balanced model in training.
 
 ```{r}
-
-best_seq_model <- best_rows$grid_id[1]
-xgb_model <- models[[best_model]]
-
-write_rds(xgb_model, here("data/derived/models/TOC_transfer/best_basic_CLP_for_transfer.RDS"))
+if (!file.exists(here("data/derived/models/TOC_transfer/best_basic_CLP_for_transfer.RDS"))) {
+  
+  best_model <- best_rows$grid_id[1]
+  
+  xgb_model <- models[[best_model]]
+  
+  write_rds(xgb_model, here("data/derived/models/TOC_transfer/best_basic_CLP_for_transfer.RDS"))
+  
+} else {
+  
+  xgb_model <- read_rds(here("data/derived/models/TOC_transfer/best_basic_CLP_for_transfer.RDS"))
+  
+}
 
 xgb_model
 
@@ -515,8 +534,6 @@ Using the CLP model, we'll do a blind application of that to the Yampa data just
 to get an idea of general performance.
 
 ```{r}
-xgb_model <- read_rds(here("data/derived/models/TOC_transfer/best_basic_CLP_for_transfer.RDS"))
-
 # set up data matrix for xgb
 xgb_yampa <- xgb.DMatrix(
   data = as.matrix(yampa[, features]),
@@ -531,7 +548,7 @@ rmse(yampa$TOC, yampa$naive_pred)
 
 ggplot(yampa, aes(x = TOC, y = naive_pred)) +
   geom_point()+
-    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red")
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red")
 
 ```
 
@@ -574,100 +591,100 @@ max depth, eta, and some of the other regularization parameters), so this tune
 grid is pretty small.
 
 ```{r}
-models_yampa <- list()
-seq_perf <- data.frame()
 
-#xgboost hyper parameters
-sequential_tune_grid <- expand.grid(
-  nrounds = 10000,
-  max_depth = xgb_model$params$max_depth,
-  eta = xgb_model$params$eta,
-  gamma = xgb_model$params$gamma,
-  lambda = xgb_model$params$lambda,
-  alpha = xgb_model$params$alpha,
-  colsample_bytree = c(0.8, 0.9),
-  min_child_weight = c(2, 3),
-  subsample = c(0.5,0.8)
-)
-
-#run through all hyper parameters and save to fold_models with name foldi_gridj
-for (j in 1:nrow(sequential_tune_grid)) {
+if (!file.exists(here("data/derived/models/TOC_transfer/best_yampa_transfer_from_CLP.RDS"))) {
   
-  #setup parameters for tune
-  params <- list(
-    objective = "reg:squarederror",
-    eval_metric = "rmse",
-    eta = sequential_tune_grid$eta[j],
-    gamma = sequential_tune_grid$gamma[j],
-    alpha = sequential_tune_grid$alpha[j],
-    lambda = sequential_tune_grid$lambda[j],
-    max_depth = sequential_tune_grid$max_depth[j],
-    subsample = sequential_tune_grid$subsample[j],
-    colsample_bytree = sequential_tune_grid$colsample_bytree[j],
-    min_child_weight  = sequential_tune_grid$min_child_weight[j]
+  models_yampa <- list()
+  seq_perf <- data.frame()
+  
+  seq_params <- list(
+    max_depth = xgb_model$params$max_depth,
+    eta = xgb_model$params$eta,
+    gamma = xgb_model$params$gamma,
+    colsample_bytree = xgb_model$params$colsample_bytree,
+    min_child_weight = xgb_model$params$min_child_weight,
+    subsample = xgb_model$params$subsample
   )
   
-  #train model with hyper parameters
-  model_ij <- xgb.train(
-    params = params,
-    data = xgb_yampa_t,
-    nrounds = sequential_tune_grid$nrounds[j],
-    watchlist = yampa_watch,
-    #change early stopping rounds based on eta (smaller eta, larger rounds)
-    early_stopping_rounds = 500,
-    print_every_n = 1000,
-    verbose = 0,
-    nthread = 1
+  # Only vary REGULARIZATION parameters (lambda and alpha)
+  # These can be changed because they don't affect tree structure
+  warmstart_tune_grid <- expand.grid(
+    lambda = c(0.5, 1, 2, 5), # L2 regularization
+    alpha = c(0, 0.5, 1, 2)# L1 regularization
   )
   
-  models_yampa[[j]] <- model_ij
-  
-  val_rmse <- as.numeric(sub(".*eval-rmse:([0-9.]+).*", "\\1", model_ij$best_msg))
-  train_rmse <- as.numeric(sub(".*train-rmse:([0-9.]+).*", "\\1", model_ij$best_msg))
-  seq_perf <- rbind(seq_perf, data.frame(
-    grid_id = j,
-    best_iter  = model_ij$best_iteration,  # from early stopping
-    rmse_val = val_rmse,
-    rmse_train = train_rmse,
-    diff = abs(val_rmse - train_rmse)
-  ))
-  
-  if(j/50 == round(j/50)){
-    cat(paste0("  Completed ", j, " of ", nrow(sequential_tune_grid), " hyperparameter combinations...\n"))
+  #run through all hyper parameters and save to fold_models with name foldi_gridj
+  for (j in 1:nrow(warmstart_tune_grid)) {
+    
+    # Combine fixed structure with varying regularization
+    params <- c(
+      list(
+        objective = "reg:squarederror",
+        eval_metric = "rmse"
+      ),
+      seq_params,  # Fixed structural params
+      list(
+        alpha = warmstart_tune_grid$alpha[j],   # Varying
+        lambda = warmstart_tune_grid$lambda[j]  # Varying
+      )
+    )  
+    
+    model_ij <- xgb.train(
+      params = params,
+      data = xgb_yampa_t,
+      nrounds = 10000,  
+      watchlist = yampa_watch,
+      early_stopping_rounds = 2000,
+      verbose = 0,
+      nthread = 1,
+      xgb_model = xgb_model  # Warm start from base model
+    )
+    
+    models_yampa[[j]] <- model_ij
+    
+    val_rmse <- as.numeric(sub(".*eval-rmse:([0-9.]+).*", "\\1", model_ij$best_msg))
+    train_rmse <- as.numeric(sub(".*train-rmse:([0-9.]+).*", "\\1", model_ij$best_msg))
+    
+    seq_perf <- rbind(seq_perf, data.frame(
+      grid_id = j,
+      lambda = warmstart_tune_grid$lambda[j],
+      alpha = warmstart_tune_grid$alpha[j],
+      best_iter = model_ij$best_iteration,
+      rmse_val = val_rmse,
+      rmse_train = train_rmse,
+      diff = abs(val_rmse - train_rmse)
+    ))
+    
   }
   
+  ggplot(seq_perf) +
+    geom_histogram(aes(x = rmse_val, fill = "Val")) +
+    geom_histogram(aes(x = rmse_train, fill = "Train")) +
+    labs(title = paste("Val & Train RMSE by Grid ID"),
+         x = "RMSE", y = "density", fill = "Group") +
+    theme_minimal()
+  
+  seq_perf <- seq_perf[order(seq_perf$diff), ]
+  
+  write_rds(models_yampa, here("data/derived/models/TOC_transfer/yampa_transfer_models_from_CLP.rds"))
+  write_csv(seq_perf, here("data/derived/models/TOC_transfer/performance_yampa_transfer_from_CLP.csv"))
+  
+  best_seq_model <- seq_perf$grid_id[1]
+  seq_model <- models_yampa[[best_seq_model]]
+  
+  write_rds(seq_model, here("data/derived/models/TOC_transfer/best_yampa_transfer_from_CLP.RDS"))
+  
+} else {
+  
+  seq_model <- read_rds(here("data/derived/models/TOC_transfer/best_yampa_transfer_from_CLP.RDS"))
+  
 }
-```
-
-And then we'll look at performance:
-
-```{r}
-ggplot(seq_perf) +
-  geom_histogram(aes(x = rmse_val, fill = "Val")) +
-  geom_histogram(aes(x = rmse_train, fill = "Train")) +
-  labs(title = paste("Val & Train RMSE by Grid ID"),
-       x = "RMSE", y = "density", fill = "Group") +
-  theme_minimal()
-
-seq_perf <- seq_perf[order(seq_perf$diff), ]
-
-write_csv(seq_perf, here("data/derived/models/TOC_transfer/performance_yampa_transfer_from_CLP.csv"))
-```
-
-This particular split has a pretty big difference between train/validation, so let's just choose the one with the smallest distance. 
-
-```{r}
-best_seq_model <- seq_perf$grid_id[1]
-seq_model <- models_yampa[[best_seq_model]]
-
-write_rds(seq_model, here("data/derived/models/TOC_transfer/best_yampa_transfer_from_CLP.RDS"))
 
 ```
 
 And now apply to the test set.
 
 ```{r}
-seq_model <- read_rds( here("data/derived/models/TOC_transfer/best_yampa_transfer_from_CLP.RDS"))
 
 xgb_yampa_test <- xgb.DMatrix(
   data = as.matrix(yampa_test[, features]),
@@ -682,7 +699,7 @@ rmse(yampa_test$TOC, yampa_test$seq_pred)
 ggplot(yampa_test) +
   geom_point(aes(x = TOC, y = naive_pred, color = "naive")) +
   geom_point(aes(x = TOC, y = seq_pred, color = "sequential")) +
-    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   theme_bw() +
   scale_color_manual(values = c("sequential" = "black",
                                 "naive" = "grey")) +
