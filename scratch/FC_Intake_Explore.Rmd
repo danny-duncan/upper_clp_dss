@@ -1,7 +1,10 @@
 ---
 title: "Fort Collins Intake Data Explore"
 output: html_document
-date: "2025-11-20"
+date: "2026-01-08"
+editor_options: 
+  markdown: 
+    wrap: 80
 ---
 
 # Purpose
@@ -9,18 +12,23 @@ date: "2025-11-20"
 The purpose of this document is to explore the data provided to us from the City
 of Fort Collins at their intake/Munroe Canal for turbidity, TOC, alkalinity.
 
-```{r, echo = F, error = F, message = F}
+```{r, echo = F, error = F, message = F, warning = FALSE}
 knitr::opts_chunk$set(message = FALSE, warning = FALSE, error = FALSE)
 library(readxl)
 library(here)
 library(kableExtra)
+library(gghighlight)
 
 # remotes::install_github("https://github.com/anguswg-ucsb/cdssr")
 library(cdssr)
 library(tidyverse)
 ```
 
-## Total Organic Carbon
+# Total Organic Carbon
+
+## TOC from the FC intake
+
+We have intake TOC data since 2019.
 
 ```{r}
 
@@ -46,9 +54,68 @@ ggplot(toc, aes(x = doy, y = result, color = factor(year))) +
   scale_color_viridis_d() +
   labs(x = "day of year", y = "TOC (mg/L)", color = "year")
 
+```
+
+## Raw Water TOC
+
+This is data from the raw water station INSIDE the FC treatment facility, but
+the data record starts in 2010.
+
+```{r}
+rw_toc <- read_csv(here("data/raw/fc_intake_data/Poudre_Raw_Water_Sample_Station_TOC_2010-2025.csv")) %>% 
+  mutate(date = mdy(`Sampled Date`)) %>% 
+  select(date, TOC = `Corrected Result`) %>% 
+  filter(!is.na(TOC) & TOC > 1) %>%  # one oddball here.
+  mutate(doy = yday(date),
+         year = year(date))
+
+ggplot(rw_toc, aes(x = doy, y = TOC, color = factor(year))) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  scale_color_viridis_d() +
+  labs(x = "day of year", y = "TOC (mg/L)", color = "year")
+
+```
+
+Let's do a quick check of the data at intake and the data at the RW station to
+see how interchangable the values are.
+
+```{r}
+full_join(toc, rw_toc) %>% 
+  ggplot(aes(x = TOC, y = result)) +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey60") +
+  geom_point() +
+  labs(x = "TOC at raw water sink", y = "TOC at intake") +
+  theme_bw()
+
+```
+
+These are pretty darn close to interchangable, so if there are data available at
+the intake and not at the RW sink, let's use it, and generally take an average
+if there are multiple values available.
+
+## Collated TOC
+
+```{r}
+fc_TOC_record <- full_join(toc, rw_toc) %>% 
+  pivot_longer(cols = c(TOC, result),
+               names_to = "source",
+               values_to = "TOC") %>% 
+  filter(!is.na(TOC)) %>% 
+  summarise(mean_TOC = mean(TOC), 
+            .by = c(year, doy, date))
+
+ggplot(fc_TOC_record, aes(x = doy, y = mean_TOC, color = factor(year))) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  scale_color_viridis_d() +
+  labs(x = "day of year", y = "TOC (mg/L)", color = "year")
+
 flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
-                       start_date = min(toc$date, na.rm = T),
-                       end_date = max(toc$date, na.rm = T),
+                       start_date = min(fc_TOC_record$date, na.rm = T),
+                       end_date = max(fc_TOC_record$date, na.rm = T),
                        timescale = "day")%>%
   mutate(year = factor(year(datetime)), 
          doy = yday(datetime))
@@ -56,20 +123,24 @@ flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
 # faceted
 ggplot() +
   geom_area(data = flow_data,
-            aes(x = doy, y = value/200),
+            aes(x = doy, y = value/200), # divide flow by a silly amount for visualization
             fill = "gray70",
             alpha = 0.5) +
-  geom_point(data = toc, aes(x = doy, y = result, color = factor(year))) +
-  coord_cartesian(xlim = c(100, 200)) +
+  geom_point(data = fc_TOC_record, 
+             aes(x = doy, y = mean_TOC, color = factor(year))) +
   facet_wrap(year ~ ., scale = "free_y") +
   theme_bw() +
   scale_color_viridis_d() +
   labs(x = "day of year", y = "TOC (mg/L)", color = "year")
 
+# write_csv(fc_TOC_record, here("data/collated/FC_intake/fc_intake_TOC_record_2010-2025.csv"))
 ```
 
+# Alkalinity
 
-## Alkalinity
+## Alkalinity from intake
+
+Unlinke to TOC, alkalinity at the intake is available since 2012.
 
 ```{r}
 alk <- read_csv(here("data/raw/fc_intake_data/Poudre_Intake_Alkalinity.csv")) %>% 
@@ -114,105 +185,1006 @@ ggplot() +
 
 ```
 
-Alkalinity data is mostly Apr-Jun, and during this time there has never been a
-sample that is higher than the treatment matrix cutoff (60 mg/L), the only thing
-that we could do here is try to relate this to some other variable to give a warning
-that it might be a high alkalinity year in the spring.
+Alkalinity data at the intake is mostly Apr-Jun, and during this time there has
+never been a sample that is higher than the treatment matrix cutoff (60 mg/L),
+the only thing that we could do here is try to relate this to some other
+variable to give a warning that it might be a high alkalinity year in the
+spring.
 
-## Turbidity
+## Raw Water Alkalinity
+
+We also have the record of Alkalinity at the RW sink.
 
 ```{r}
-turb <- read_csv(here("data/raw/fc_intake_data/Intake and Munroe NTU.csv")) %>% 
-  select(SampleDatetime, 
-         Intake_NTU = N311_Intake_NTU, 
-         Munroe_NTU = N4118_Munroe_NTU) %>% 
-  mutate(datetime = ymd_hms(SampleDatetime),
-         date = date(datetime),
-         doy = yday(date),
+rw_alk <- read_csv(here("data/raw/fc_intake_data/Poudre_Raw_Water_Sample_Station_Alkalinity.csv")) %>% 
+  mutate(date = mdy(`Sampled Date`)) %>% 
+  select(date, alkalinity = `Corrected Result`) %>% 
+  #filter(!is.na(TOC) & TOC > 1) %>%  # one oddball here.
+  mutate(doy = yday(date),
          year = year(date))
 
-# looks like there is both high frequency and daily data here based on the
-# parsing issues
-
-# high-frequency data
-turb_rt <- turb %>% 
-  filter(!is.na(datetime)) %>% 
-  mutate(Munroe_NTU = case_when(Munroe_NTU <= 0 ~ NA_real_,
-                                Munroe_NTU >= 327.67 ~ NA_real_, 
-                                .default = Munroe_NTU),
-         Intake_NTU = case_when(Intake_NTU <= 0 ~ NA_real_,
-                                Intake_NTU >= 990 ~ NA_real_,
-                                .default = Intake_NTU))
-
-ggplot(turb_rt, aes(x = datetime)) +
-  geom_point(aes(y = Intake_NTU, color = "Intake")) +
-  geom_point(aes(y = Munroe_NTU, color = "Munroe")) +
+ggplot(rw_alk, aes(x = doy, y = alkalinity, color = factor(year))) +
+  geom_point() +
   theme_bw() +
   scale_color_viridis_d() +
-  labs(x = NULL, y = "turbidity (NTU)", color = "location")
+  labs(x = "day of year", y = "alkalinity (mg/L CaCO3)", color = "year")
 
+```
 
-turb_daily <- turb %>% 
-  filter(is.na(datetime)) %>% 
-  mutate(date = ymd(SampleDatetime),
-         doy = yday(date),
-         year = year(date)) %>% 
-  select(-SampleDatetime, -datetime)
+We still don't see anything higher than the 60 mg/L, but helpful to see the
+pattern.
 
-ggplot(turb_daily, aes(x = date)) +
-  geom_point(aes(y = Intake_NTU, color = "Intake")) +
-  geom_point(aes(y = Munroe_NTU, color = "Munroe")) +
+Let's do a quick check of the data at intake and the data at the RW station to
+see how interchangable the values are.
+
+```{r}
+full_join(alk, rw_alk) %>% 
+  ggplot(aes(x = alkalinity, y = result)) +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey60") +
+  geom_point() +
+  labs(x = "Alkalinity at raw water sink", y = "Alkalinity at intake") +
+  theme_bw() +
+  coord_cartesian(xlim = c(5, 50), ylim = c(5,50))
+
+```
+
+Also right on like TOC. We'll again take an average if there are multiple values
+available for a given date.
+
+## Collated Alkalinity
+
+```{r}
+fc_alk_record <- full_join(alk, rw_alk) %>% 
+  pivot_longer(cols = c(alkalinity, result),
+               names_to = "source",
+               values_to = "alkalinity") %>% 
+  filter(!is.na(alkalinity)) %>% 
+  summarise(mean_alk = mean(alkalinity), 
+            .by = c(year, doy, date))
+
+ggplot(fc_alk_record, aes(x = doy, y = mean_alk, color = factor(year))) +
+  geom_point() +
+  geom_line() +
   theme_bw() +
   scale_color_viridis_d() +
-  labs(x = NULL, y = "turbidity (NTU)", color = "location")
+  labs(x = "day of year", y = "Alkalinity (mg/L CaCO3)", color = "year")
 
-ggplot(turb_daily, aes(x = date)) +
-  geom_point(aes(y = Intake_NTU, color = "Intake")) +
-  geom_point(aes(y = Munroe_NTU, color = "Munroe")) +
-  theme_bw() +
+# write_csv(fc_alk_record, here("data/collated/FC_intake/fc_intake_alk_record_2010-2025.csv"))
+```
+
+Those peaks in 2012 data are very likely real (after High Park Fire).
+
+# Turbidity
+
+We have 15-minute data from the City at both the Intake and Munroe Canal. These
+data need a little QAQC love, so we'll take care of that. For Munroe Canal - not
+sure if this is in the canal or in the river at the canal. This is City of FC
+alternate Poudre source if the intake proper had an issue.
+
+## Collation and QAQC
+
+```{r}
+intake_turb <- read_csv(here("data/raw/fc_intake_data/Intake_Turbidity_2010-2025.csv"),
+                        col_names = c("datetime", "intake_turb_NTU"),
+                        skip = 1,
+                        col_select = c("datetime", "intake_turb_NTU"))
+
+munroe_turb <- read_csv(here("data/raw/fc_intake_data/Munroe_Turbidity_2013-2025.csv"),,
+                        col_names = c("datetime", "munroe_turb_NTU"),
+                        skip = 1,
+                        col_select = c("datetime", "munroe_turb_NTU")) 
+
+fc_turb <- full_join(intake_turb, munroe_turb) %>% 
+  pivot_longer(cols = c(munroe_turb_NTU, intake_turb_NTU),
+               names_to = "location",
+               values_to = "NTU") %>% 
+  mutate(NTU = case_when(NTU <= 0 ~ NA, 
+                         NTU >= 1000 ~ NA,
+                         NTU == 655.33 ~ NA,
+                         .default = NTU))
+
+```
+
+This still needs a little massaging, so let's look year-by-year.
+
+### First Pass QAQC
+
+<details open>
+<summary>Click to collapse year-by-year plots</summary>
+
+```{r}
+# plot year-by-year for outliers and errors
+map(2010:2025, \(y) {
+  start_date <- paste0(y, "-01-01")
+  end_date <- paste0(y + 1, "-01-01")
+  ggplot(fc_turb %>% filter(between(datetime, 
+                                    ymd(start_date), 
+                                    ymd(end_date))), 
+         aes(x = datetime, y = NTU, color = location)) +
+    geom_point() +
+    labs(title = y) +
+    scale_color_viridis_d() +
+    theme_bw() +
+    theme(legend.position = "bottom")
+  
+})
+```
+
+</details>
+
+-   2012 has a pretty significant data gap after high turbidity, might want to
+leave out.
+
+-   Prior to 2013, data was generally no higher than 100 NTU, starting in 2013
+the range increases to 1000. Maybe leave out data prior to 2013? That's also
+post-High Park Fire, so maybe it's real? It could also just be a sensor
+change?
+
+A few places to recode errant data:
+
+-   Sept 2015-Jun 2016
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-09-01"), 
+                                  ymd("2015-10-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
-  labs(x = NULL, y = "turbidity (NTU)", color = "location")
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-04-15"), 
+                                  ymd("2016-06-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2015-09-15"), ymd("2016-06-01")) &
+                         location == "munroe_turb_NTU" &
+                         NTU > 300, 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-09-01"), 
+                                  ymd("2015-10-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-04-15"), 
+                                  ymd("2016-06-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+```
+
+</details>
+
+-   Oct 2016-Apr 2017
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-10-15"), 
+                                  ymd("2016-11-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2017-03-20"), 
+                                  ymd("2017-04-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2016-10-24"), ymd("2017-04-03")) &
+                         location == "munroe_turb_NTU" &
+                         NTU > 500, 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-10-15"), 
+                                  ymd("2016-11-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2017-03-20"), 
+                                  ymd("2017-04-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+```
+
+</details>
+
+-   Nov 2017-Apr 2018
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2017-10-15"), 
+                                  ymd("2017-11-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2018-03-20"), 
+                                  ymd("2018-04-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2017-11-06"), ymd("2018-04-09")) &
+                         location == "munroe_turb_NTU" &
+                         NTU > 500, 
+                       NA, 
+                       NTU),
+         NTU = if_else(between(datetime, ymd("2017-12-001"), ymd("2018-04-01")) &
+                         location == "intake_turb_NTU" &
+                         NTU > 200, 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2017-10-15"), 
+                                  ymd("2017-11-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2018-03-20"), 
+                                  ymd("2018-04-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
 
 
 ```
 
-Based on the artifacts in the data, it looks like the daily data is just a 
-summary of the real time, we can drop it and summarize from the RT ourselves.
+</details>
 
-Boxplots look pretty rough for these data, so we'll just plot the 95%, 75% 50%, 
-25% and 5% in ribbons, with and without Q from the canyon mouth
+-   Oct 2023 - Apr 2024
+
+<details>
+<summary>Click to expand plots</summary>
 
 ```{r}
-turb_q <- turb_rt %>%
-  summarize(p05 = quantile(Intake_NTU, 0.05, na.rm = TRUE),
-            p25 = quantile(Intake_NTU, 0.25, na.rm = TRUE),
-            p50 = quantile(Intake_NTU, 0.50, na.rm = TRUE),
-            p75 = quantile(Intake_NTU, 0.75, na.rm = TRUE),
-            p95 = quantile(Intake_NTU, 0.95, na.rm = TRUE),
-            .by = c(year, doy, date))
-
-ggplot(turb_q, aes(x = doy)) +
-  # 5–95% band
-  geom_ribbon(aes(ymin = p05, ymax = p95, fill = "5 - 95%")) +
-  # 25–75% band
-  geom_ribbon(aes(ymin = p25, ymax = p75, fill = "25 - 75%")) +
-  # Median line
-  geom_line(aes(y = p50, color = "median"), color = "black") +
-  # 100 NTU threshold
-  geom_abline(aes(color = "100 NTU threshold"), color = "orange", 
-              slope = 0, intercept = 100, lty = 2) +
-  facet_grid(year ~ ., scales = "free_y") +
-  coord_cartesian(xlim = c(75, 275)) +
-  labs(y = "Intake Turbidity (NTU)",
-       x = "Day of Year",
-       title = "Daily Turbidity Quantile Bands",
-       fill = "Quantile Bands") +
-  scale_fill_manual(values = c("5 - 95%" = "grey85",
-                               "25 - 75%" = "grey60"),
-                    breaks = c("5 - 95%", "25 - 75%")) +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-10-15"), 
+                                  ymd("2023-11-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
   theme_bw() +
   theme(legend.position = "bottom")
 
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2024-03-20"), 
+                                  ymd("2024-04-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2023-10-23"), ymd("2024-04-08")) &
+                         location == "munroe_turb_NTU" &
+                         NTU > 600, 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-10-15"), 
+                                  ymd("2023-11-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2024-03-20"), 
+                                  ymd("2024-04-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+```
+
+</details>
+
+### Second Pass
+
+Plot year-by-year to re-check cleaning
+
+<details open>
+<summary>Click to collapse year-by-year plots</summary>
+
+```{r}
+# plot year-by-year for outliers and errors
+map(2010:2025, \(y) {
+  start_date <- paste0(y, "-01-01")
+  end_date <- paste0(y + 1, "-01-01")
+  ggplot() +
+    geom_area(data = flow_data %>% 
+                filter(between(datetime, 
+                               ymd(start_date), 
+                               ymd(end_date))),
+              aes(x = datetime, y = value/10),
+              fill = "blue",
+              alpha = 0.3) +
+    geom_point(data = fc_turb %>% filter(between(datetime, 
+                                                 ymd(start_date), 
+                                                 ymd(end_date))), 
+               aes(x = datetime, y = NTU, color = location)) +
+    labs(title = y,
+         y = "turbidity (NTU)") +
+    scale_color_viridis_d() +
+    theme_bw() +
+    theme(legend.position = "bottom")
+})
+
+```
+
+</details>
+
+Still a few artifacts here:
+
+-   Sept 2011 before data gap
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2011-09-01"), 
+                             ymd("2011-10-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2011-09-01"), 
+                                               ymd("2011-10-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2011-09-04"), ymd("2011-09-05")) &
+                         NTU > 10, 
+                       NA, 
+                       NTU))
+
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2011-09-01"), 
+                             ymd("2011-10-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2011-09-01"), 
+                                               ymd("2011-10-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+```
+
+</details>
+
+-   Apr 2013 before data gap
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2013-04-15"), 
+                             ymd("2013-05-15"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2013-04-15"), 
+                                               ymd("2013-05-15"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2013-04-29"), ymd("2013-05-01")) &
+                         NTU > 10, 
+                       NA, 
+                       NTU))
+
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2013-04-15"), 
+                             ymd("2013-05-15"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2013-04-15"), 
+                                               ymd("2013-05-15"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+```
+
+</details>
+
+-   Munroe 2015 Apr - Jul miscalibrated
+
+If you look at the quantiles, the relationship between the two locations for
+this period is super different from every other year:
+
+![](images/clipboard-1972777210.png)
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2015-04-01"), 
+                             ymd("2015-07-31"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2015-04-01"), 
+                                               ymd("2015-07-31"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 week") +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2015-04-06"), ymd("2015-07-16")) &
+                         location == "munroe_turb_NTU",
+                       NA, 
+                       NTU))
+
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2015-04-01"), 
+                             ymd("2015-07-31"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2015-04-01"), 
+                                               ymd("2015-07-31"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 week") +
+  theme(legend.position = "bottom")
+
+```
+
+</details>
+
+-   Apr 2016 Munroe (after data gap)
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2016-04-01"), 
+                             ymd("2016-05-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2016-04-01"), 
+                                               ymd("2016-05-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2016-04-25"), ymd("2016-04-28")) &
+                         location == "munroe_turb_NTU" &
+                         NTU < 10,
+                       NA, 
+                       NTU))
+
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2016-04-01"), 
+                             ymd("2016-05-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2016-04-01"), 
+                                               ymd("2016-05-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+```
+
+</details>
+
+-   May 2019 intake (flatlined near 0)
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2019-05-01"), 
+                             ymd("2019-06-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2019-05-01"), 
+                                               ymd("2019-06-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  labs(y = "turbidity (NTU)") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2019-05-15"), ymd("2019-05-18")) &
+                         location == "intake_turb_NTU" &
+                         NTU < 8,
+                       NA, 
+                       NTU))
+
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2019-05-01"), 
+                             ymd("2019-06-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2019-05-01"), 
+                                               ymd("2019-06-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  labs(y = "turbidity (NTU)") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+```
+
+</details>
+
+-   Jun 2020 Munroe (after data gap)
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2020-06-01"), 
+                             ymd("2020-07-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2020-06-01"), 
+                                               ymd("2020-07-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2020-06-16"), ymd("2020-06-18")) &
+                         location == "munroe_turb_NTU" &
+                         NTU >10,
+                       NA, 
+                       NTU))
+
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2020-06-01"), 
+                             ymd("2020-07-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2020-06-01"), 
+                                               ymd("2020-07-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+```
+
+</details>
+
+-   Aug 2021 intake
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2021-08-01"), 
+                             ymd("2021-09-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2021-08-01"), 
+                                               ymd("2021-09-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2021-08-10"), ymd("2021-08-13")) &
+                         location == "intake_turb_NTU" &
+                         NTU < 5,
+                       NA, 
+                       NTU))
+
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2021-08-01"), 
+                             ymd("2021-09-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2021-08-01"), 
+                                               ymd("2021-09-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+```
+
+</details>
+
+-   Jul 2021 Munroe
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2021-07-01"), 
+                             ymd("2021-08-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2021-07-01"), 
+                                               ymd("2021-08-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2021-07-21"), ymd("2021-07-28")) &
+                         location == "munroe_turb_NTU" &
+                         NTU > 10,
+                       NA, 
+                       NTU))
+
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2021-07-01"), 
+                             ymd("2021-08-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2021-07-01"), 
+                                               ymd("2021-08-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+```
+
+</details>
+
+-   Apr 2025 Munroe
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2025-04-01"), 
+                             ymd("2025-05-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2025-04-01"), 
+                                               ymd("2025-05-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2025-04-02"), ymd_hm("2025-04-02 12:00")) &
+                         location == "munroe_turb_NTU",
+                       NA, 
+                       NTU))
+
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2025-04-01"), 
+                             ymd("2025-05-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2025-04-01"), 
+                                               ymd("2025-05-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+```
+
+</details>
+
+-   Sept 2025 Munroe
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2025-09-01"), 
+                             ymd("2025-10-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2025-09-01"), 
+                                               ymd("2025-10-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, ymd("2025-09-25"), ymd_hm("2025-09-28 12:00")) &
+                         location == "munroe_turb_NTU",
+                       NA, 
+                       NTU))
+
+ggplot() +
+  geom_area(data = flow_data %>% 
+              filter(between(datetime, 
+                             ymd("2025-09-01"), 
+                             ymd("2025-10-01"))), 
+            aes(x = datetime, y = value/10),
+            fill = "blue",
+            alpha = 0.3) +
+  geom_point(data = fc_turb %>% filter(between(datetime, 
+                                               ymd("2025-09-01"), 
+                                               ymd("2025-10-01"))), 
+             aes(x = datetime, y = NTU, color = location)) +
+  scale_color_viridis_d() +
+  labs(y = "turbidity (NTU)") +
+  theme_bw() +
+  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+```
+
+</details>
+
+### Final check
+
+Plot to re-check cleaning year-by-year
+
+<details open>
+<summary>Click to collapse year-by-year </summary> 
+
+```{r}
+# plot year-by-year for outliers and errors
+map(2010:2025, \(y) {
+  start_date <- paste0(y, "-01-01")
+  end_date <- paste0(y + 1, "-01-01")
+  ggplot() +
+    geom_area(data = flow_data %>% 
+                filter(between(datetime, 
+                               ymd(start_date), 
+                               ymd(end_date))),
+              aes(x = datetime, y = value/10),
+              fill = "blue",
+              alpha = 0.3) +
+    geom_point(data = fc_turb %>% filter(between(datetime, 
+                                                 ymd(start_date), 
+                                                 ymd(end_date))), 
+               aes(x = datetime, y = NTU, color = location)) +
+    labs(title = y,
+         y = "turbidity (NTU)")  +
+    scale_color_viridis_d() +
+    theme_bw() +
+    theme(legend.position = "bottom")
+})
+
+```
+
+</details>
+
+Okay, that's a lot better, still some noise, but generally okay. There's some
+persistent near-zero noise sometimes during runoff, but I think that with
+quantiles we should be okay including those in any training/validation data.
+
+### Daily Quantiles
+
+For the purpose of visualization and a dataset for training and validation, we'll 
+get some quantiles (95%, 75%, 50%, 25% and 5%) and plot in ribbons, with 
+Q from the canyon mouth. These quantiles assume that min/max might be a bit misleading
+due to the noise in the data.
+
+
+```{r}
+turb_q <- fc_turb %>% 
+  mutate(date = date(datetime),
+         doy = yday(date),
+         year = year(date)) %>%
+  filter(!is.na(NTU)) %>% 
+  summarize(p05 = quantile(NTU, 0.05),
+            p25 = quantile(NTU, 0.25),
+            p50 = quantile(NTU, 0.50),
+            p75 = quantile(NTU, 0.75),
+            p95 = quantile(NTU, 0.95),
+            n = n(),
+            .by = c(year, doy, date, location))
+
+# data that have the same quantile values on a given day or that have low n 
+# should be excluded here
+turb_q_filt <- turb_q %>% 
+  # we want to make sure we have at least 75% of the days values
+  filter(n > 96*0.75) %>% 
+  # and that all the values are not the same (indicating something is wrong with the sensor)
+  filter(p05 != p95) %>% 
+  filter(p25 != p75)
+
+date_sequence <- seq.Date(min(turb_q$date), max(turb_q$date)) %>% 
+  tibble(date = .) %>% 
+  mutate(doy = yday(date),
+         year = year(date)) %>% 
+  cross_join(., tibble(location = c("munroe_turb_NTU", "intake_turb_NTU")))
+
+turb_q_filt <- left_join(date_sequence, turb_q_filt)
+
+```
+
+
+```{r, fig.height=12, fig.width=8}
 flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
                        start_date = min(turb_q$date, na.rm = T),
                        end_date = max(turb_q$date, na.rm = T),
@@ -221,7 +1193,7 @@ flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
          doy = yday(datetime))
 
 # with Q
-ggplot(turb_q, aes(x = doy)) +
+ggplot(turb_q_filt, aes(x = doy)) +
   geom_area(data = flow_data,
             aes(x = doy, y = value/30),
             fill = "lightblue",
@@ -235,9 +1207,10 @@ ggplot(turb_q, aes(x = doy)) +
   # 100 NTU threshold
   geom_abline(aes(color = "100 NTU threshold"), color = "orange", 
               slope = 0, intercept = 100, lty = 2) +
-  facet_grid(year ~ ., scales = "free_y") +
-  coord_cartesian(xlim = c(75, 275)) +
-  labs(y = "Intake Turbidity (NTU)",
+  facet_grid(year ~ location) +
+  coord_cartesian(xlim = c(75, 275),
+                  ylim = c(0, 150)) +
+  labs(y = "turbidity (NTU)",
        x = "Day of Year",
        title = "Daily Turbidity Quantile Bands",
        fill = "Quantile Bands") +
@@ -249,54 +1222,81 @@ ggplot(turb_q, aes(x = doy)) +
 
 ```
 
-And look at Munroe Canal - not sure if this is in the canal or in the river
-at the canal. This is their alternate Poudre source if the intake proper had an
-issue.
+For kicks, let's look at the relationship
 
 ```{r}
-turb_q_munroe <- turb_rt %>%
-  summarize(p05 = quantile(Munroe_NTU, 0.05, na.rm = TRUE),
-            p25 = quantile(Munroe_NTU, 0.25, na.rm = TRUE),
-            p50 = quantile(Munroe_NTU, 0.50, na.rm = TRUE),
-            p75 = quantile(Munroe_NTU, 0.75, na.rm = TRUE),
-            p95 = quantile(Munroe_NTU, 0.95, na.rm = TRUE),
-            .by = c(year, doy))
-
-ggplot(turb_q_munroe, aes(x = doy)) +
-  # 5–95% band
-  geom_ribbon(aes(ymin = p05, ymax = p95, fill = "5 - 95%")) +
-  # 25–75% band
-  geom_ribbon(aes(ymin = p25, ymax = p75, fill = "25 - 75%")) +
-  # Median line
-  geom_line(aes(y = p50, color = "median"), color = "black") +
-  # 100 NTU threshold
-  geom_abline(aes(color = "100 NTU threshold"), color = "orange", 
-              slope = 0, intercept = 100, lty = 2) +
-  facet_grid(year ~ ., scales = "free_y") +
-  coord_cartesian(xlim = c(75, 275)) +
-  labs(y = "Munroe Canal Turbidity (NTU)",
-       x = "Day of Year",
-       title = "Daily Turbidity Quantile Bands",
-       fill = "Quantile Bands") +
-  scale_fill_manual(values = c("5 - 95%" = "grey85",
-                               "25 - 75%" = "grey60"),
-                    breaks = c("5 - 95%", "25 - 75%")) +
+turb_q_filt %>% 
+  select(date, year, p50, location) %>% 
+  filter(year != 2015) %>% 
+  pivot_wider(names_from = location,
+              values_from = p50) %>% 
+  ggplot(., aes(x = intake_turb_NTU, y = munroe_turb_NTU, color = factor(year))) +
+  geom_point() +
   theme_bw() +
-  theme(legend.position = "bottom")
+  labs(x = "median daily turbidity at intake (NTU)",
+       y = "median daily turbidity at Munroe (NTU)",
+       color = "year") +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey60") +
+  scale_color_viridis_d() +
+  coord_cartesian(xlim = c(0, 120),
+                  ylim = c(0, 120))
 
+```
+
+Still some outliers, but overall, this looks like we've done sufficient QAQC to
+move on. For kicks, let's just flag any data where there is greater than a 25%
+difference between Munroe and the Intake. These data might be real, but they
+also might not and we may wish to keep them out of the training dataset.
+
+We'll do this using symmetric differencing at the median value.
+
+```{r}
+flagged <- turb_q_filt %>%
+  pivot_wider(id_cols = c(date, doy, year),
+              names_from = location,
+              values_from = p50) %>%
+  mutate(pct_diff = abs(munroe_turb_NTU - intake_turb_NTU) /
+           ((munroe_turb_NTU + intake_turb_NTU) / 2),
+         flag_diff = if_else(pct_diff > 1,
+                             "suspect",
+                             NA)) %>% 
+  select(date, pct_diff, flag_diff) 
+
+
+turb_q_flagged <- full_join(turb_q_filt, flagged)
+
+turb_q_flagged %>% 
+  select(date, year, p50, location, flag_diff) %>% 
+  pivot_wider(names_from = location,
+              values_from = p50) %>% 
+  ggplot(., aes(x = intake_turb_NTU, y = munroe_turb_NTU)) +
+  geom_point() +
+  theme_bw() +
+  labs(x = "median daily turbidity at intake (NTU)",
+       y = "median daily turbidity at Munroe (NTU)",
+       color = "year") +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey60") +
+  scale_color_viridis_d() +
+  coord_cartesian(xlim = c(0, 120),
+                  ylim = c(0, 120)) +
+  gghighlight(is.na(flag_diff))
+
+# write_csv(turb_q_flagged, here("data/collated/FC_intake/fc_intake_munroe_turbidity_quantile_record_2010-2025.csv"))
 ```
 
 And let's tally how many times each quantile was above the 50 NTU, which is when
 City of FC starts to monitor for high turbidity:
 
 ```{r}
-turb_q %>% 
+turb_q_flagged %>% 
+  filter(year != 2015, location == "intake_turb_NTU") %>% 
   pivot_longer(cols = c(p05, p25, p50, p75, p95), 
                names_to = "quantile", 
                values_to = "turb_ntu") %>% 
   filter(turb_ntu > 50) %>% 
   count(quantile, year) %>% 
   pivot_wider(names_from = quantile, values_from = n) %>% 
+  # no instances of p05 above 50
   select(year, p95, p75, p50, p25) %>% 
   arrange(year) %>% 
   kable(caption = "Number of Days Turbidity Quantiles Exceeded 50 NTU",
