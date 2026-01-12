@@ -78,6 +78,9 @@ ggplot(rw_toc, aes(x = doy, y = TOC, color = factor(year))) +
 
 ```
 
+Interesting to note that the 2013 flood is very evident in these data - see the
+spike in late season TOC.
+
 Let's do a quick check of the data at intake and the data at the RW station to
 see how interchangable the values are.
 
@@ -190,6 +193,9 @@ never been a sample that is higher than the treatment matrix cutoff (60 mg/L),
 the only thing that we could do here is try to relate this to some other
 variable to give a warning that it might be a high alkalinity year in the
 spring.
+
+In the data that Sam has explored and anecdotally, alkalinity is more of an 
+issue for Greeley whose intake is further downstream.
 
 ## Raw Water Alkalinity
 
@@ -685,7 +691,53 @@ ggplot() +
 If you look at the quantiles, the relationship between the two locations for
 this period is super different from every other year:
 
-![](images/clipboard-1972777210.png)
+```{r, echo=FALSE}
+turb_q <- fc_turb %>% 
+  mutate(date = date(datetime),
+         doy = yday(date),
+         year = year(date)) %>%
+  filter(!is.na(NTU)) %>% 
+  summarize(p05 = quantile(NTU, 0.05),
+            p25 = quantile(NTU, 0.25),
+            p50 = quantile(NTU, 0.50),
+            p75 = quantile(NTU, 0.75),
+            p95 = quantile(NTU, 0.95),
+            n = n(),
+            .by = c(year, doy, date, location))
+
+# data that have the same quantile values on a given day or that have low n 
+# should be excluded here
+turb_q_filt <- turb_q %>% 
+  # we want to make sure we have at least 75% of the days values
+  filter(n > 96*0.75) %>% 
+  # and that all the values are not the same (indicating something is wrong with the sensor)
+  filter(p05 != p95) %>% 
+  filter(p25 != p75)
+
+date_sequence <- seq.Date(min(turb_q$date), max(turb_q$date)) %>% 
+  tibble(date = .) %>% 
+  mutate(doy = yday(date),
+         year = year(date)) %>% 
+  cross_join(., tibble(location = c("munroe_turb_NTU", "intake_turb_NTU")))
+
+turb_q_filt <- left_join(date_sequence, turb_q_filt)
+
+turb_q_filt %>% 
+  select(date, year, p50, location) %>% 
+  pivot_wider(names_from = location,
+              values_from = p50) %>% 
+  ggplot(., aes(x = intake_turb_NTU, y = munroe_turb_NTU, color = factor(year))) +
+  geom_point() +
+  theme_bw() +
+  labs(x = "median daily turbidity at intake (NTU)",
+       y = "median daily turbidity at Munroe (NTU)",
+       color = "year") +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey60") +
+  scale_color_viridis_d() +
+  coord_cartesian(xlim = c(0, 120),
+                  ylim = c(0, 120)) +
+  gghighlight(year == 2015)
+```
 
 <details>
 <summary>Click to expand plots</summary>
@@ -1244,7 +1296,7 @@ turb_q_filt %>%
 ```
 
 Still some outliers, but overall, this looks like we've done sufficient QAQC to
-move on. For kicks, let's just flag any data where there is greater than a 25%
+move on. For kicks, let's just flag any data where there is greater than a 100%
 difference between Munroe and the Intake. These data might be real, but they
 also might not and we may wish to keep them out of the training dataset.
 
