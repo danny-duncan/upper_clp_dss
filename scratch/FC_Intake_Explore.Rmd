@@ -280,7 +280,9 @@ fc_turb <- full_join(intake_turb, munroe_turb) %>%
                values_to = "NTU") %>% 
   mutate(NTU = case_when(NTU <= 0 ~ NA, 
                          NTU >= 1000 ~ NA,
-                         NTU == 655.33 ~ NA,
+                         round(NTU, 0) == 655 & location == "munroe_turb_NTU" ~ NA,
+                         round(NTU, 0) == 630 & location == "munroe_turb_NTU" ~ NA,
+                         round(NTU, 0) == 555 & location == "munroe_turb_NTU" ~ NA,
                          .default = NTU))
 
 ```
