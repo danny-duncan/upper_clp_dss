@@ -29,7 +29,7 @@ library(Metrics)
 library(glue)
 library(SHAPforxgboost)
 
-set.seed(123)
+set.seed(17)
 #set version for saving (update when changes are significant)
 #version = "20251211"
 # function to apply sensor transformations for TOC modeling
@@ -556,14 +556,33 @@ Since there is just one year of yampa data, and I don't know much about the WS,
 I'm just going to do a random split of the sites for training (4 sites)/validation (2 sites)/test (2 sites)
 
 ```{r}
-yampa_ids <- unique(yampa$id)
-train_yamp <- sample(yampa_ids, 4)
-val_yamp <- sample(yampa_ids[!yampa_ids %in% train_yamp], 2)
-test_yamp <- yampa_ids[!yampa_ids %in% c(train_yamp, val_yamp)]
-
-yampa_train <- yampa %>% filter(id %in% train_yamp)
-yampa_val <- yampa %>% filter(id %in% val_yamp)
-yampa_test <- yampa %>% filter(id %in% test_yamp)
+if (!file.exists(here("data/derived/models/TOC_transfer/yampa_simple_TOC_transfer_tvt.csv"))) {
+  
+  yampa_ids <- unique(yampa$id)
+  train_yamp <- sample(yampa_ids, 4)
+  val_yamp <- sample(yampa_ids[!yampa_ids %in% train_yamp], 2)
+  test_yamp <- yampa_ids[!yampa_ids %in% c(train_yamp, val_yamp)]
+  
+  yampa_train <- yampa %>% filter(id %in% train_yamp)
+  yampa_val <- yampa %>% filter(id %in% val_yamp)
+  yampa_test <- yampa %>% filter(id %in% test_yamp)
+  
+  yampa_tvt <- reduce(list(yampa_train %>% mutate(group = "train"),
+                           yampa_val %>% mutate(group = "val"),
+                           yampa_test %>% mutate(group = "test")),
+                      full_join)
+  
+  write_csv(yampa_tvt, here("data/derived/models/TOC_transfer/yampa_simple_TOC_transfer_tvt.csv")) 
+  
+} else {
+  
+  yampa_tvt <- read_csv(here("data/derived/models/TOC_transfer/yampa_simple_TOC_transfer_tvt.csv"))
+  
+  yampa_train <- yampa_tvt %>% filter(group == "train") %>% select(-group)
+  yampa_val <- yampa_tvt %>% filter(group == "val") %>% select(-group)
+  yampa_test <- yampa_tvt %>% filter(group == "test") %>% select(-group)
+  
+}
 
 yampa_t_w <- toc_high_weights(yampa_train)
 yampa_v_w <- toc_high_weights(yampa_val)
