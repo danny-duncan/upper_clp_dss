@@ -286,7 +286,9 @@ fc_turb <- full_join(intake_turb, munroe_turb) %>%
                values_to = "NTU") %>% 
   mutate(NTU = case_when(NTU <= 0 ~ NA, 
                          NTU >= 1000 ~ NA,
-                         NTU == 655.33 ~ NA,
+                         round(NTU, 0) == 655 & location == "munroe_turb_NTU" ~ NA,
+                         round(NTU, 0) == 630 & location == "munroe_turb_NTU" ~ NA,
+                         round(NTU, 0) == 555 & location == "munroe_turb_NTU" ~ NA,
                          .default = NTU))
 
 ```
@@ -464,7 +466,7 @@ fc_turb <- fc_turb %>%
                          NTU > 500, 
                        NA, 
                        NTU),
-         NTU = if_else(between(datetime, ymd("2017-12-001"), ymd("2018-04-01")) &
+         NTU = if_else(between(datetime, ymd("2017-12-01"), ymd("2018-04-01")) &
                          location == "intake_turb_NTU" &
                          NTU > 200, 
                        NA, 
@@ -608,7 +610,7 @@ ggplot() +
   theme(legend.position = "bottom")
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2011-09-04"), ymd("2011-09-05")) &
+  mutate(NTU = if_else(between(datetime, ymd("2011-09-04"), ymd("2011-09-06")) &
                          NTU > 10, 
                        NA, 
                        NTU))
