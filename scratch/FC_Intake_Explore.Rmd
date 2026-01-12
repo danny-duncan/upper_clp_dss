@@ -604,7 +604,7 @@ ggplot() +
   theme(legend.position = "bottom")
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2011-09-04"), ymd("2011-09-05")) &
+  mutate(NTU = if_else(between(datetime, ymd("2011-09-04"), ymd("2011-09-06")) &
                          NTU > 10, 
                        NA, 
                        NTU))
