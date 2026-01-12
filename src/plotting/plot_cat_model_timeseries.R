@@ -180,7 +180,7 @@ plot_cat_model_timeseries <- function( model_input_df, water_chem_df, target_col
       strip.text = element_text(face = "bold"),
     ) +
     labs(
-      title = paste0("TOC Categorical Model Estimate for ", site_title, " from ", format(start_DT, "%Y/%m/%d"), "-", format(end_DT, "%Y/%m/%d")),
+      title = paste0(gsub("_cat", "", target_col), " Categorical Model Estimate for ", site_title, " from ", format(start_DT, "%Y/%m/%d"), "-", format(end_DT, "%Y/%m/%d")),
       subtitle = subtitle_arg,
       x = "Date",
       y = paste0("Category ", gsub("_cat", "", target_col), " (", units, ")"),
