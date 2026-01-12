@@ -26,15 +26,22 @@
 #'   \code{water_chem_df} and \code{sensor\_df}. Default is "site".
 #'
 #' @return A data frame where every row from the original \code{water_chem_df} is present,
-#'   augmented with the columns from the closest matched sensor reading. Unmatched
-#'   samples will have \code{NA} values for sensor-derived columns.
+#'    with the columns from the closest matched sensor reading added. Unmatched
+#'   samples will have \code{NA} values for sensor-derived columns and the sensor datetime column.
+#'   The output includes:
+#'   \itemize{
+#'   \item \code{site_col}: Site identifier. Default column name is "site".
+#'   \item \code{sensor_datetime}: Datetime of the matched sensor reading (or \code{NA} if no match).
+#'   \item \code{sample_datetime}: Datetime of the lab sample.
+#'   \item Sensor feature columns specified in \code{features}.
+#'   \item All original columns from \code{water_chem_df}.
 #'
 #' @details
-#' The function includes robust input validation, checking for the existence of
-#' required columns, correct data types (POSIXct), and timezone consistency.
+#' The function will take in a water chemistry data frame and a sensor data frame, and output a matchup dataset based on the provided time window.
+#' It performs input validation, checking for the existence of required columns, correct data types (POSIXct for `dt_sensor_col` and `dt_chem_col`), and timezone consistency.
 #'
 #' Sensor data availability (\code{data_avail}) is determined by checking if all
-#' specified \code{features} are non-\code{NA} for a given row. If a \code{data_avail}
+#' specified \code{features} are non-\code{NA} for a given timestamp. If a \code{data_avail}
 #' column already exists in \code{sensor_df}, it is used directly; otherwise, it is
 #' calculated internally.
 #'
