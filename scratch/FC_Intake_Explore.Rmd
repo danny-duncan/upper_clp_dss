@@ -460,7 +460,7 @@ fc_turb <- fc_turb %>%
                          NTU > 500, 
                        NA, 
                        NTU),
-         NTU = if_else(between(datetime, ymd("2017-12-001"), ymd("2018-04-01")) &
+         NTU = if_else(between(datetime, ymd("2017-12-01"), ymd("2018-04-01")) &
                          location == "intake_turb_NTU" &
                          NTU > 200, 
                        NA, 
