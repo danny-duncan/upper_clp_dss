@@ -1,0 +1,456 @@
+---
+title: "Greeley Intake Alkalinity Exploration"
+author: "Sam Struthers"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, out.width = '100%')
+source("src/setup_libraries.R")
+source("src/collation/load_grab_sample_data.R")
+source("src/collation/load_sensor_data.R")
+library(Metrics)
+library(kableExtra)
+```
+
+# Goal
+
+In addition to TOC, treatment operators also need to understand alkalinity at a given point of time due to it's interactions with TOC / Chlorine. Treatment operators rely on thresholds to make their decisions based on this matrix:
+
+```{r , echo = FALSE }
+
+tibble(
+  `Source Water TOC (mg/L)` = c(">2.0 to 4.0", ">4.0 to 8.0", ">8.0"),
+  `0-60` = c("35.0%", "45.0%", "50.0%"),
+  `>60-120` = c("25.0%", "35.0%", "40.0%"),
+  `>120` = c("15.0%", "25.0%", "30.0%")
+) %>%
+  kable(
+    align = "c", 
+    caption = "CDPHE Required TOC Removal Matrix"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"), full_width = FALSE) %>%
+  add_header_above(c(" " = 1, "Source Water Alkalinity, mg/L, as CaCO3" = 3)) %>%
+  column_spec(1, bold = TRUE)
+
+```
+
+
+From B's analysis in `FC_Intake_Explore`, we can see that Fort Collins Intake rarely experiences Alkalinity above the 60 mg/L threshold but we have anecdotal info from Greeley that they do not. Greeley's CLP and Horsetooth blend typically keeps them in the 0-60 range but having info on CLP alkalinity would be useful.
+
+# Load datasets
+
+We will be using alkalinity data collected by Fort Collins & Greeley as part of their joint source water monitoring. We do not have any alkalinity data. We will also focus on sites where we have sensors/flow to see if those data can be used as well. 
+
+```{r}
+
+water_chem <- load_grab_sample_data()
+
+alk_data <- water_chem%>%
+  filter(!is.na(Alkalinity),
+         #filter to sites where we have sensor data
+         site_code %in% c("pbr", "pnf", # close to PMAN/ FC Intake
+                          "pbd", # At Greeley Intake
+                          "chd", "sfm", 
+                          "nfg"))%>%
+  select(Date, site_code, site_name, Alkalinity, SC, pH)%>%
+  mutate(year = year(Date), 
+         doy = yday(Date))%>%
+  mutate(ws = if_else(site_code == "nfg", "NF", "CLP"))
+
+```
+
+## Grab flow for this period
+
+```{r}
+#Read in flow data
+flow_data <- get_sw_ts(
+     abbrev = "CLAFTCCO",
+     start_date = min(alk_data$Date, na.rm = T),
+     end_date = max(alk_data$Date, na.rm = T),
+     timescale = "day"
+ )%>%
+  rename(canyon_mouth_cfs = value )%>%
+  mutate(canyon_mouth_cfs_rescale = rescale(canyon_mouth_cfs, to = c(0,100)))%>%
+  select(datetime, canyon_mouth_cfs, canyon_mouth_cfs_rescale)
+
+flow_data_nf <- get_sw_ts(
+     abbrev = "CLANSECO",
+     start_date = min(alk_data$Date, na.rm = T),
+     end_date = max(alk_data$Date, na.rm = T),
+     timescale = "day"
+ )%>%
+  rename(nf_cfs = value)%>%
+  mutate(nf_cfs_rescale = rescale(nf_cfs, to = c(0,100)))%>%
+  select(datetime, nf_cfs, nf_cfs_rescale)
+```
+
+### Calculate proportion of NF flow to mainstem flow
+
+
+```{r}
+all_flow <- flow_data %>%
+  left_join(flow_data_nf, by = c("datetime"))%>%
+  mutate(nf_prop = nf_cfs / canyon_mouth_cfs )%>%
+    mutate(year = factor(year(datetime)), 
+    doy = yday(datetime))%>%
+  filter(doy >= 60 & doy <= 325)
+
+```
+
+
+# Check out distribution and timing of alkalinity data
+
+### Sitewise distribution of alkalinity
+
+```{r}
+#Sitewise dist
+ggplot(alk_data, aes(x = Alkalinity, fill = site_code))+
+  geom_histogram()+
+  geom_vline(xintercept = 60, linetype = "dashed", color = "red")+
+  facet_wrap(~ws, scale = "free_x")+
+  labs(title = "Alkalinity Distribution by Site",
+       x = "Alkalinity (mg/L as CaCO3)", 
+       y = "Count", 
+       fill = "Site")
+```
+
+This appears to confirm that Mainstem CLP alkalinity is generally below 60 mg/L while NF alkalinity is generally above 60 mg/L. The only site that gets greater than 60 mg/L on occasion is PBD (Greeley Intake).
+
+### Alkalinity over time in CLP
+
+```{r}
+#timeseries
+ggplot(alk_data%>%filter(site_code != "nfg"), aes(x = doy, y = Alkalinity, color = site_code))+
+  geom_point()+
+  geom_line(data = all_flow, aes(x = doy, y = canyon_mouth_cfs_rescale), color = "black", alpha = 0.5)+
+  geom_line(data = all_flow, aes(x = doy, y = nf_cfs_rescale), color = "blue", alpha = 0.5)+
+  geom_hline(yintercept = 60, linetype = "dashed", color = "red")+
+  facet_wrap(~year)+
+  ylim(0,100)+
+  labs(title = "Alkalinity Measurements Over Time",
+       x = "Date",
+       y = "Alkalinity (mg/L as CaCO3)")
+```
+
+Events > 60 mg/L appear to occur in spring and fall/winter at PBD (Greeley Intake) and are not sustained for > 1 sampling event (~monthly) 
+
+### When is alk > 60 mg/L?
+
+```{r}
+#DOY when alk is > 60
+ggplot(alk_data %>% filter(Alkalinity > 60), aes(x = doy, y = Alkalinity, 
+                                                 shape = site_code,
+                                                 color = factor(year)))+
+  geom_point()+
+  facet_wrap(~ws)+
+  #geom_line(data = flow_data, aes(x = doy, y = value_rescale), color = "black", alpha = 0.5)+
+  #facet_wrap(~year)+
+  labs(title = "Alkalinity Measurements Over Time (>60 mg/L)",
+       x = "Date",
+       y = "Alkalinity (mg/L as CaCO3)", 
+       color = "Year", 
+       shape = "Site")
+```
+
+Appears Mainstem CLP Alk is rarely above 60 mg/L but when it does it is in the spring and fall/winter. The NF site (nfg) has year-round measurements above 60 mg/L
+
+# Potential models  of Alkalinity
+
+We want to provide Greeley with some idea of when alkalinity may be elevated at their intake based on available data and flow data (NF contribution). We will explore these relationships below. 
+
+## Test SC & Alkalinity relationship
+
+Our sensors have SC data so we will first explore that relationship as it may be easier to model in real-time
+
+```{r}
+
+ggplot(alk_data, aes(x = SC, y = Alkalinity, color = factor(year)))+
+  geom_point()+
+  ylim(0,100)+
+  #geom_smooth(method = "lm", se = F)+
+  facet_wrap(~site_code)+
+  labs(title = "Specific Conductance vs Alkalinity",
+       x = "Specific Conductance (µS/cm)",
+       y = "Alkalinity (mg/L as CaCO3)", 
+       color = "Site")
+
+```
+
+At sites with more yearly variation in SC and Alkalinity (nfg, pbd, pnf), there appears to be a positive relationship between SC and Alkalinity. This is promising as we have SC sensors at Greeley Intake (PBD) and Fort Collins Intake (PMAN (close to PNF)).
+
+## Test pH & Alkalinity relationship
+
+Our sensors have pH data so we should also explore that relationship as it may be easier to model in real-time
+
+```{r}
+
+ggplot(alk_data, aes(x = pH, y = Alkalinity, color = factor(year)))+
+  geom_point()+
+  ylim(0,100)+
+  #geom_smooth(method = "lm", se = F)+
+  facet_wrap(~site_code)+
+  labs(title = "pH vs Alkalinity",
+       x = "pH",
+       y = "Alkalinity (mg/L as CaCO3)", 
+       color = "Site")
+
+```
+
+The relationship is not any stronger than SC so we will focus on SC for now (more reliable sensors and less daily variation in pH)
+
+## Test NF contribution idea
+
+Since the NF appears to have high alkalinity and is between the CLP and Greeley Intake, we will explore the relationship between NF contribution to mainstem flow and alkalinity at Greeley Intake (PBD). In this case, we will test the proportion of NF flow to mainstem flow (nf_prop) against alkalinity at the Greeley Intake (PBD).
+
+```{r}
+alk_data_nf_flows <- alk_data%>%
+  left_join(all_flow %>%
+              select(datetime, canyon_mouth_cfs, nf_cfs, nf_prop), by = c("Date" = "datetime"))%>%
+  filter(site_code == "pbd" & nf_prop >= 0 )%>%
+  filter(!is.na(Alkalinity) & !is.na(SC) & !is.na(nf_prop))
+  
+
+  ggplot(alk_data_nf_flows, aes(x = nf_prop, y = Alkalinity, color = factor(year)))+
+  geom_point(size =3 )+
+  labs(title = "NF/CLP Flow Ratio vs Alkalinity at PBD",
+       x = "nf_cfs / canyon_mouth_cfs ",
+       y = "Alkalinity (mg/L as CaCO3)", 
+       color = "Year")
+
+```
+
+It is not perfect but there does appear to be a positive relationship between NF contribution to mainstem flow and alkalinity at Greeley Intake (PBD). We will explore combining this with SC to see if we can improve predictions.
+
+# Linear Models of this Relationship
+
+We will use linear models to explore how well SC and NF contribution can predict alkalinity at Greeley Intake (PBD). In this case, we will only use samples from pbd.
+
+## SC Alone
+
+```{r}
+alk_sc_lm <- lm(Alkalinity ~ SC, data = alk_data_nf_flows %>% filter(site_code == "pbd"))
+summary(alk_sc_lm)
+
+alk_preds <- alk_data_nf_flows %>%
+  mutate(alk_pred = predict(alk_sc_lm, newdata = .), 
+         residual = Alkalinity - alk_pred)%>%
+  filter(!is.na(alk_pred))
+```
+
+### Relationship between NF proportion and residuals
+
+```{r}
+ggplot(alk_preds, aes(x = nf_prop, y = residual, color = factor(year)))+
+  geom_point()+
+  geom_hline(yintercept = 0, linetype = "dashed")+
+  labs(title = "Proportion of NF Flow vs Alkalinity Residuals at PBD",
+       x = "Ratio of NF Flow to Mainstem Flow",
+       y = "Alkalinity Residuals (mg/L as CaCO3)", 
+       color = "Year")
+```
+
+## SC + NF Proportion
+
+```{r}
+alk_sc_nf_lm <- lm(Alkalinity ~ nf_prop + SC, data = alk_data_nf_flows)
+summary(alk_sc_nf_lm)
+
+alk_preds <- alk_preds %>%
+  mutate(alk2_pred = predict(alk_sc_nf_lm, newdata = .), 
+         residual2 = Alkalinity - alk2_pred)%>%
+  filter(!is.na(alk2_pred) | !is.na(alk_pred))
+
+
+
+```
+
+## Adding in DOY component
+
+
+```{r}
+alk_sc_nf_doy_lm <- lm(Alkalinity ~ nf_prop * SC * doy, data = alk_data_nf_flows)
+summary(alk_sc_nf_lm)
+
+alk_preds <- alk_preds %>%
+  mutate(alk3_pred = predict(alk_sc_nf_doy_lm, newdata = .), 
+         residual3 = Alkalinity - alk3_pred)%>%
+  filter(!is.na(alk3_pred) | !is.na(alk2_pred) | !is.na(alk_pred))
+```
+
+## Plots
+
+```{r}
+model1 <- ggplot(alk_preds, aes(x = Alkalinity, y = alk_pred, color = factor(year)))+
+  geom_point()+
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")+
+    annotate("text", x = 30, y = 70, label = paste0("RMSE: ", round(Metrics::rmse(alk_preds$Alkalinity, alk_preds$alk_pred),2), " mg/L"), size = 5)+
+  geom_hline(yintercept = 60, linetype = "dashed", color = "red")+
+  geom_vline(xintercept = 60, linetype = "dashed", color = "red")+
+  labs(title = "Obs vs Pred Alkalinity (SC only model) at PBD",
+       x = "Obs Alkalinity (mg/L as CaCO3)",
+       y = "Pred Alkalinity (mg/L as CaCO3)", 
+       color = "Year")
+
+model2 <- ggplot(alk_preds, aes(x = Alkalinity, y = alk2_pred, color = factor(year)))+
+  geom_point()+
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")+
+    geom_hline(yintercept = 60, linetype = "dashed", color = "red")+
+  geom_vline(xintercept = 60, linetype = "dashed", color = "red")+
+  annotate("text", x = 30, y = 70, label = paste0("RMSE: ", round(Metrics::rmse(alk_preds$Alkalinity, alk_preds$alk2_pred),2), " mg/L"), size = 5)+
+  labs(title = "Obs vs Pred Alkalinity (SC + NF prop model) at PBD",
+       x = "Obs Alkalinity (mg/L as CaCO3)",
+       y = "Pred Alkalinity (mg/L as CaCO3)", 
+       color = "Year")
+model3 <- ggplot(alk_preds, aes(x = Alkalinity, y = alk3_pred, color = factor(year)))+
+  geom_point()+
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")+
+  annotate("text", x = 30, y = 70, label = paste0("RMSE: ", round(Metrics::rmse(alk_preds$Alkalinity, alk_preds$alk3_pred),2), " mg/L"), size = 5)+
+    geom_hline(yintercept = 60, linetype = "dashed", color = "red")+
+  geom_vline(xintercept = 60, linetype = "dashed", color = "red")+
+  labs(title = "Obs vs Pred Alkalinity (SC + NF prop model + DOY ) at PBD",
+       x = "Obs Alkalinity (mg/L as CaCO3)",
+       y = "Pred Alkalinity (mg/L as CaCO3)", 
+       color = "Year")
+
+  model1
+  
+  model2
+  
+  model3
+  
+```
+
+
+## Checking out all models
+
+```{r}
+alk_rmse = Metrics::rmse(alk_preds$Alkalinity, alk_preds$alk_pred)
+alk_bias = bias(alk_preds$Alkalinity, alk_preds$alk_pred)
+alk_mse = mse(alk_preds$Alkalinity, alk_preds$alk_pred)
+alk2_rmse = Metrics::rmse(actual = alk_preds$Alkalinity,predicted =  alk_preds$alk2_pred)
+alk2_bias = bias(actual = alk_preds$Alkalinity,predicted =  alk_preds$alk2_pred)
+alk2_mse = mse(actual = alk_preds$Alkalinity,predicted =  alk_preds$alk2_pred)
+alk3_rmse = Metrics::rmse(actual = alk_preds$Alkalinity,predicted =  alk_preds$alk3_pred)
+alk3_bias = bias(actual = alk_preds$Alkalinity,predicted =  alk_preds$alk3_pred)
+alk3_mse = mse(actual = alk_preds$Alkalinity,predicted =  alk_preds$alk3_pred)
+
+
+ggplot(alk_preds, aes(x = Alkalinity))+
+  geom_point(aes(y = alk_pred, color = "SC only"), size = 2)+
+  geom_point(aes(y = alk2_pred, color = "SC + NF prop"), size = 2)+
+  geom_point(aes(y = alk3_pred, color = "SC + NF prop + DOY"), size = 2)+
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")+
+  labs(title = "Obs vs Pred Alkalinity at PBD",
+       y = "Predicted Alkalinity (mg/L as CaCO3)",
+       x = "Actual Alkalinity (mg/L as CaCO3)", 
+       color = "Model")+
+  xlim(20,100)+
+  ylim(20,100)
+
+tibble(
+  Model = c("SC only", "SC + NF prop", "SC + NF prop + DOY"),
+  RMSE = c(alk_rmse, alk2_rmse, alk3_rmse),
+  Bias = c(alk_bias, alk2_bias, alk3_bias),
+  MSE = c(alk_mse, alk2_mse, alk3_mse)
+)%>%
+  knitr::kable()
+
+```
+
+Metrics:
+- RMSE SC only model: `r round(alk_rmse,2)` mg/L as CaCO3
+- RMSE SC + NF prop model: `r round(alk2_rmse,2)` mg/L as CaCO3
+
+# Lets see how our sonde SC data compares to grabs
+
+```{r}
+sensor_data <- load_sensor_data()
+
+trim_data <- sensor_data%>%
+  filter(site %in% c("pbd", "sfm", "pman", "pbr", "chd") & parameter == "Specific Conductivity")%>%
+  mutate(date = as_date(DT_round), 
+         site = if_else(site == "pman", "pnf", site))%>%
+  summarise(sensor_sc = mean(mean_cleaned, na.rm = T),
+            n_measure = sum(!is.na(mean_cleaned)),
+            .by = c( "date", "site"))%>%
+  filter(n_measure >= 48) #need > 1/2 of a day's data to use 
+
+sonde_alk_comp <- trim_data%>%
+  left_join(alk_data, by = c("date" = "Date", "site" = "site_code"))
+
+ggplot(sonde_alk_comp, aes(x = sensor_sc, y = SC, color = site))+
+  geom_point()+
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")+
+  #coord_cartesian(xlim = c(30, 150), ylim = c(30,150))+
+  labs(title = "Sonde vs Grab Specific Conductance across CLP",
+       x = "Sonde SC (µS/cm)",
+       y = "Grab SC (µS/cm)",
+       color = "Site")
+
+ggplot(sonde_alk_comp, aes(x = sensor_sc, y = Alkalinity, color = site))+
+  geom_point()+
+  labs(title = "Sonde SC vs Grab Alkalinity across CLP",
+       x = "Sonde SC (µS/cm)",
+       y = "Grab Alkalinity (mg/L as CaCO3)",
+       color = "Site")
+
+```
+
+
+## Linear model between sonde SC and Alkalinity
+
+```{r}
+sonde_sc_lm <- lm(Alkalinity ~ sensor_sc, data = sonde_alk_comp)
+summary(sonde_sc_lm)
+
+sonde_alk_preds <- sonde_alk_comp %>%
+  mutate(alk_pred = predict(sonde_sc_lm, newdata = .), 
+         residual = Alkalinity - alk_pred)%>%
+  filter(!is.na(alk_pred))
+ggplot(sonde_alk_preds, aes(x = Alkalinity, y = alk_pred, color = site))+
+  geom_point()+
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed")+
+  labs(title = "Obs vs Pred Alkalinity (Sonde SC)", 
+       x = "Obs Alkalinity (mg/L as CaCO3)",
+       y = "Pred Alkalinity (mg/L as CaCO3)", 
+       color = "Site")+
+  coord_cartesian(xlim = c(0,70), ylim = c(0,70))
+
+```
+
+## Applying to full PBD timeseries
+
+```{r}
+
+sonde_alk_preds <- sonde_alk_comp%>%
+  filter(site == "pbd")%>%
+  mutate(alk_pred = predict(sonde_sc_lm, newdata = .))
+
+  ggplot(sonde_alk_preds, aes(x = date))+
+  geom_line(aes(y = alk_pred, color = "Sensor Prediction"))+
+  geom_point(data = alk_data %>% filter(site_code == "pbd" & year(Date) >= 2020), aes(x = as_date(Date), y = Alkalinity, color = "Grab Samples"))+
+    geom_line(data = alk_data %>% filter(site_code == "pbd" & year(Date) >= 2020), aes(x = as_date(Date), y = Alkalinity, color = "Grab Samples"))+
+    scale_color_manual(values = c("Sensor Prediction" = "blue", "Grab Samples" = "black"))+
+  labs(title = "Predicted Alkalinity at PBD using Sonde SC",
+       x = "Date",
+       y = "Alkalinity (mg/L as CaCO3)", 
+       color = "Legend")
+
+  metric_data <- sonde_alk_preds %>%
+    filter(!is.na(Alkalinity) & year(date) >= 2020)
+  
+  rmse_sonde_alk = Metrics::rmse(metric_data$Alkalinity, metric_data$alk_pred)
+
+```
+
+This model using sonde SC alone has an RMSE of `r round(rmse_sonde_alk,2)` mg/L as CaCO3 which is better than the model above but includes significantly fewer data points/variation. 
+
+# Future Work
+
+- Explore adding NF proportion, pH, DOY to model
+- Looking at getting additional data from downstream PWQN sites (higher SC and likely higher alk ) to improve model across higher values. This data is available from here: https://west.gselements.com/DataAnalysisIndex.aspx, I have pulled this data for the lower CLP sites I know of but I'd like to do a bit more validation/get more recent data before incorporating it into this analysis. 
+
+- Explore non-linear models 
+
