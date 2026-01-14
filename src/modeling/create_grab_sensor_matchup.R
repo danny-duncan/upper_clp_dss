@@ -139,7 +139,7 @@ create_grab_sensor_matchup <- function(water_chem_df,
       select(site = !!sym(site_col), sensor_datetime = !!sym(dt_sensor_col), any_of(features)) %>%
       filter(data_avail == TRUE)# Only join to rows with available data
 
-  }else{
+  } else {
     # Create the data_avail column in sensor_df (if it doesn't exist)
     sensor_df_filtered <- sensor_df %>%
       #column selection and renaming
