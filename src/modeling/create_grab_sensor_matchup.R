@@ -106,7 +106,6 @@ create_grab_sensor_matchup <- function(water_chem_df,
   #Check that dt_sensor_col and dt_chem_col are POSIXct and use have the same TZ
   is_dt_chem_posixct <- inherits(water_chem_df[[dt_chem_col]], "POSIXct")
   is_dt_sensor_posixct <- inherits(sensor_df[[dt_sensor_col]], "POSIXct")
-
   if( !is_dt_chem_posixct & !is_dt_sensor_posixct){
     stop(paste0("Both '", dt_chem_col, "' and '", dt_sensor_col, "' columns must be of POSIXct type"))
   }
