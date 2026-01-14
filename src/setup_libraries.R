@@ -26,6 +26,7 @@ invisible(
     "janitor",
     "broom",
     # Stats/modeling
+    "yardstick",
     "stats",
     "RcppRoll",
     "trend",

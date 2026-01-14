@@ -56,18 +56,20 @@ set.seed(123)
 ## Load Functions
 
 ```{r, include=FALSE}
+#load grab sample data function
+source("src/collation/load_grab_sample_data.R")
 # function to apply sensor transformations for TOC modeling
 source("src/modeling/apply_sensor_transformations_toc.R")
 #function to apply training scale
 source("src/modeling/apply_training_scale.R")
+# function to test features in xgboost categorical models
+source("src/modeling/xgboost_feature_selection_cat.R")
 # function to tune xgboost hyperparameters
 source("src/modeling/xgboost_hyperparameter_tuning_cat.R")
 #function to plot performance of each fold
 source("src/plotting/plot_tvt_fold_acc.R")
 #function to plot performance of each fold
 source("src/plotting/plot_train_test_ensemble_acc.R")
-#load grab sample data function
-source("src/collation/load_grab_sample_data.R")
 #function to plot model timeseries
 source("src/plotting/plot_cat_model_timeseries.R")
 
@@ -86,7 +88,7 @@ Here, we read in the sensor data, apply min-max scaling defined in the `apply_se
 
 ```{r}
 # Read in all data to create scaling parameters
-wide_data_file <- list.files(here("data","collated", "sensor"), pattern = "all_sensor_data_.*\\.parquet", full.names = TRUE)%>%
+wide_data_file <- list.files(here("data","collated", "sensor"), pattern = "all_sensor_data_wide.*\\.parquet", full.names = TRUE)%>%
   tail(1)
 
 # Use the complete sensor dataset for scaling parameters (assuming sensor has all necessary columns already)
@@ -399,161 +401,11 @@ high_corr_pairs
 
 First, we will start with our base model (live sensor data only) and then test adding in other features to see if they improve performance. We will use the default hyperparameters below for all models to keep things consistent. Once we have tested all the features together, we will want to trim it down a bit so we are not using too many highly correlated features or overfitting the model due to lack of data
 
-#### Function to test features & defaults
+#### Run across folds testing different features to see which improve general performance
 
-This just runs a basic xgboost model with the specified features and default hyperparameters. It returns feature importance, shap values, and best iteration info for each fold.
+Here I run the function `xgboost_feature_selection_cat` and am going to look at feature importance and shap values to see which features are most useful, then trim features back to reduce our correlative and overfitting issues.
 
 ```{r}
-
- test_features <- function(train_val,
-                          features_to_test,
-                          target,
-                          default_hyper_params,
-                          weight_fun = NULL) {
-  
-  # double check that there are no duplicates in features
-  features_to_test <- unique(features_to_test)
-  
-  #create blank dataframes to store importance/shap values
-  importance_df <- tibble(Feature = features_to_test)
-  shap_val_df <- tibble(Feature = features_to_test)
-  best_msgs <- tibble()
-  models <- list()
-  
-  for(i in unique(train_val$fold_id)){
-    
-    #train val split
-    train_data <- train_val %>%
-      filter(fold_id != i) %>%
-      select(any_of(c(features_to_test, target, "id", "sensor_datetime", "collector")))
-    
-    val_data <- suppressMessages(
-      train_val %>%
-        anti_join(train_data)
-     )
-    
-    #weight data or don't if no function provided
-    if(is.null(weight_fun)){
-      weight_fun <- function(df) {rep(1, nrow(df))}
-    }
-    w_train <- weight_fun(train_data)
-    w_val   <- weight_fun(val_data)
-    
-    #prep matrices
-    dtrain <- xgb.DMatrix(
-      data = as.matrix(train_data[, features_to_test]),
-      label = train_data[[target]],
-      weight = w_train
-    )
-    
-    dval <- xgb.DMatrix(
-      data = as.matrix(val_data[, features_to_test]),
-      label = val_data[[target]],
-      weight = w_val
-    )
-    
-    watchlist <- list(train = dtrain, eval = dval)
-    
-    #Train model with defaults
-    model <- xgb.train(
-      params = default_hyper_params,
-      data = dtrain,
-      nrounds = 10000,
-      watchlist = watchlist,
-      early_stopping_rounds = 1000,
-      print_every_n = 1000,
-      verbose = 0,
-      nthread = 1
-    )
-    #Save model
-    models[[i]] <- model
-    #Save best msg
-    best_msg <- tibble(
-      fold_id = i,
-      best_iteration = model$best_iteration,
-      best_msg = model$best_msg
-    ) %>%
-      #clean up message
-      mutate(
-        train_mlogloss = as.numeric(str_extract(best_msg, "(?<=train-mlogloss:)\\d+\\.\\d+")),
-        eval_mlogloss  = as.numeric(str_extract(best_msg, "(?<=eval-mlogloss:)\\d+\\.\\d+"))
-      )%>%
-      select(-best_msg)
-    #best message
-    best_msgs <- bind_rows(best_msgs, best_msg)%>%
-      distinct()
-    
-    
-    #Feature importance
-    importance_df <- importance_df%>%
-      left_join(xgb.importance(feature_names = features_to_test, model = model)%>%
-                  dplyr::rename_with( #fix column names
-                    ~ glue::glue("{.x}_fold_{i}"),
-                    .cols = c(Gain, Cover, Frequency)
-                  ), by = "Feature")
-    # # SHAP 
-    # function to get predictions
-    explainer <- function(object, newdata) {
-      preds <- predict(object, as.matrix(newdata))
-      
-      # Convert to matrix: rows = samples, cols = classes
-      preds_mat <- matrix(preds, ncol = default_hyper_params$num_class, byrow = TRUE)
-      
-      # Get the maximum probability for each sample
-      max_probs <- apply(preds_mat, 1, max)
-      
-      return(max_probs)
-    }
-  shap_values_train <- fastshap::explain(
-      object = model,
-      X = as.data.frame(train_data[, features_to_test]),
-      pred_wrapper = explainer,
-      nsim = 10,
-      adjust = TRUE,
-      shap_only = FALSE
-    )["shapley_values"]%>%
-      as.data.frame()%>%
-     tibble::rownames_to_column("sample")%>%
-       select(-sample)%>%
-       pivot_longer(cols = everything(), names_to = "Feature", values_to = "train_shap")%>%
-       summarize(train_mean_abs_shap = mean(abs(train_shap)), .by = "Feature")%>%
-       mutate(Feature = gsub("shapley_values.", "", Feature))
-    
-     shap_values_val <- fastshap::explain(
-      object = model,
-      X = as.data.frame(val_data[, features_to_test]),
-      pred_wrapper = explainer,
-      nsim = 10,
-      adjust = TRUE,
-      shap_only = FALSE
-    )["shapley_values"]%>%
-      as.data.frame()%>%
-     tibble::rownames_to_column("sample")%>%
-       select(-sample)%>%
-       pivot_longer(cols = everything(), names_to = "Feature", values_to = "val_shap")%>%
-       summarize(val_mean_abs_shap = mean(abs(val_shap)), .by = "Feature")%>%
-       mutate(Feature = gsub("shapley_values.", "", Feature))
-
-    shap_val <- shap_values_val%>%
-      left_join(shap_values_train, by = "Feature")%>%
-      dplyr::rename_with( #fix column names
-        ~ glue::glue("{.x}_fold_{i}"),
-        .cols = c(val_mean_abs_shap, train_mean_abs_shap)
-      )
-    shap_val_df <- shap_val_df%>%
-      left_join(shap_val, by = c("Feature"))
-  }
-  
-  #output
-  list(
-    model = models,
-    features = features_to_test, 
-    best_msg = best_msgs,
-    model_importance = importance_df, 
-    shap_values = shap_val_df
-  )
-  
-}
 
 #xgboost hyper parameters
 
@@ -579,13 +431,6 @@ high_weight = function(df) {
 }
 
 target = "TOC_cat"
-```
-
-#### Run across folds testing different features to see which improve performance
-
-Here I run the function and am going to look at feature importance and shap values to see which features are most useful, then trim features back to reduce our correlative and overfitting issues.
-
-```{r}
 
 #set aside sensor data that are generally useful
 general_features <- c("FDOMc","Sensor_Turb","Sensor_Cond", "Chl_a", "Temp")
@@ -616,10 +461,10 @@ feature_results <- map(
     
     #Trimming down to most important features from all features (based on importance and shap values) to reduce overfitting
     # trimmed_features = c(general_features, "fdom_corr_max_6hr", "f_sc", "f_x_turb", "sin_doy" , "turb_median_12hr", "daily_canyon_flow_cfs")
-  ) , ~test_features(
-    train_val = train_val,
+  ) , ~xgboost_feature_selection_cat(
+    train_val_df = train_val,
     features_to_test = .x,
-    target = "TOC_cat",
+    target_col = "TOC_cat",
     default_hyper_params = default_hyper_params
   ))
 ```

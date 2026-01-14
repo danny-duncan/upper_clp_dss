@@ -171,7 +171,7 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
     mutate(
       collector = "ROSS",
       site_code = tolower(site_code),
-      DT_mst = ymd_hms(DT_mst_char),
+      DT_mst = ymd_hms(DT_mst_char, tz = "MST"),
       DT_mst_char = as.character(DT_mst_char),
       # fixing site names based on sonde deployments with ROSS/Virridy sondes
       site_code = case_when(
@@ -194,7 +194,7 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
       # ID columns
       site_name = Site, site_code, collector,
       # TOC and Chemical Data Columns
-      TOC, DOC, NO3, SC, Cl, TN, lab_turb = Turbidity, ChlA, NH4, PO4, TSS,
+      TOC, DOC, NO3, SC, Cl, TN, lab_turb = Turbidity, ChlA, NH4, PO4, TSS,pH,
       # in-situ field measurements
       Field_DO_mgL, Field_Cond_uS_cm = Field_Cond_µS_cm, Field_Temp_C,
       # Spatial information columns
