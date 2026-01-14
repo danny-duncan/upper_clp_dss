@@ -1,6 +1,6 @@
 ---
 title: "Real Time Chl-a Modeling Cache la Poudre"
-authors: "Sam Struthers- CSU ROSS"
+author: "Sam Struthers - CSU ROSS"
 date: "`r Sys.Date()`"
 output: html_document
 ---
@@ -46,7 +46,7 @@ cdwr_creds <- read_yaml(here("creds", "CDWRCreds.yml"))$api_key
 
 
 #set warnings to F
-knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, fig.dim = c(12,10))
 ```
 
 # Load Sensor and Grab Sample Data
@@ -219,12 +219,16 @@ We will use the `create_grab_sensor_matchup()` function to create the matchup da
 
 ```{r}
 
+if(file.exists(here("data", "derived", "matchup_datasets", paste0("parsed_chla_sensor_", version, ".parquet")))){
+  matchup_results <- read_parquet(here("data", "derived", "matchup_datasets", paste0("parsed_chla_sensor_", version, ".parquet")))
+} else {
 matchup_results <- create_grab_sensor_matchup(
   water_chem_df = water_chem,
   sensor_df = sensor_final,
   features = features,
   acceptable_time_window_hours = 3
 )
+}
 
 ```
 
@@ -257,24 +261,20 @@ missing_samples <- matchup_results%>%
 
 cat("Number of samples with no match up:\n", sum(missing_samples$n_missing), " of ", nrow(matchup_results) )
 print(missing_samples, n = Inf)
-```
 
 ### Save Matchup file
-```{r}
-write_parquet(matchup_results,here("data", "derived", "matchup_datasets", paste0("parsed_chla_sensor_", version, ".parquet")))
+
+#write_parquet(matchup_results,here("data", "derived", "matchup_datasets", paste0("parsed_chla_sensor_", version, ".parquet")))
+
 ```
 
 # Prepare Dataset for Modeling
 
-## Read in matchup dataset
+## Clean up Matchup Dataset
 
 We will also remove any NAs in sensor_datetime (ie no matchup occured) and set the categories for chl-a
 
 ```{r}
-
-# matchup_results <- list.files(here("data","derived", "matchup_datasets"), pattern = "parsed_chla_sensor_", full.names = TRUE)%>%
-#   tail(1)%>%
-# read_parquet(.)
 
 # Read in all matches data
 all_matches <- matchup_results %>%
@@ -470,7 +470,7 @@ For our model training we will first do some feature tuning to see which feature
 Target: (ChlA and by extension ChlA_cat)
 
 
-```{r out.width="100%"}
+```{r}
 
 # Combine training/validation and testing data
 modeling_data <- train_val %>%
@@ -691,8 +691,6 @@ importance_tables$fewest_features%>%
 
 ##### Shapley Values
 
-Skipping for now!
-
 ```{r}
 # #table with all shap values
 shap_summary <- map_dfr(feature_results, ~{
@@ -751,7 +749,7 @@ ggplot(shap_long, aes(x = feature_set, y = Feature, fill = mean_shap)) +
 
 After trimming down a couple of features (minimal improvement/low shap values), we should take a quick look at model performance in TV space with our base model (default hyperparameters)
 
-```{r out.width="100%"}
+```{r fig.dim=c(10,8)}
 
 best_models <- feature_results$fewest_features$model
 ft_tv_plot <- map(1:3, ~plot_tvt_fold_acc(fold_model = best_models[[.x]],
@@ -797,21 +795,22 @@ tune_grid = expand.grid(
   num_class = length(unique(train_val$ChlA_cat))
 )
 
-high_weight = function(df) {
-  ifelse(df$ChlA_cat == 3, 10, # highest ChlA category = highest weight
-       ifelse(df$ChlA_cat == 2, 10, 
-               ifelse(df$ChlA_cat == 1, 5,
-               1))) #lowest category = base weight
+high_weight <- function(df) {
+  case_when(
+    df$ChlA_cat == 3 ~ 4, # highest ChlA category = highest weight
+    df$ChlA_cat == 2 ~ 2, 
+    .default = 1          # lowest categories (including 1 or NA) = base weight
+  )
 }
 set.seed(123)
-
+# 
 hyperp_results <- xgboost_hyperparameter_tuning_cat(
-  data = train_val %>% select(ChlA_cat, id = site, fold_id, any_of(features)), 
+  data = train_val %>% select(ChlA_cat, id = site, fold_id, any_of(features)),
   weights = high_weight,
   tune_grid = tune_grid,
   target_col = "ChlA_cat",
   site_col = "id",
-  units = "mg/L", 
+  units = "mg/L",
   class_levels = c("0-2", "2-4", "4-8", "6+"))
 
 ```
@@ -826,7 +825,7 @@ hyperp_results[[1]]$perf_dist
 hyperp_results[[1]]$eval_plot
 hyperp_results[[1]]$tv_plot
 
-best_fold_1_grid <- 14
+best_fold_1_grid <- 38
 ```
 
 ### Fold 2
@@ -836,7 +835,7 @@ hyperp_results[[2]]$perf_dist
 hyperp_results[[2]]$eval_plot
 hyperp_results[[2]]$tv_plot
 
-best_fold_2_grid <- 105
+best_fold_2_grid <- 60
 
 ```
 
@@ -847,7 +846,7 @@ hyperp_results[[3]]$perf_dist
 hyperp_results[[3]]$eval_plot
 hyperp_results[[3]]$tv_plot
 
-best_fold_3_grid <- 37
+best_fold_3_grid <- 65
 
 ```
 
@@ -856,7 +855,7 @@ best_fold_3_grid <- 37
 ```{r}
 
 full_model <- map(1:3, function(i) {
-  
+
   best_grid <- paste0("grid_", get(glue("best_fold_{i}_grid")))
   model_info <- hyperp_results[[i]]$grid_results[[best_grid]]
   list(
@@ -867,6 +866,8 @@ full_model <- map(1:3, function(i) {
     validation_data = train_val %>% filter(fold_id == i)
   )
 })
+# Read in model to look at results (Comment out code from last few chunks)
+#full_model <- readRDS(here("data", "derived", "models","chla_realtime", "in_dev", paste0("chla_categorical_xgboost_models_",version,".rds")))
 
 ```
 
@@ -965,8 +966,9 @@ hyperparam_tv_plots <- map(1:3, ~plot_tvt_fold_acc(train_df = full_model[[.x]]$t
 
 hp_tv_plot<- wrap_plots(hyperparam_tv_plots, ncol = 2, guides = "collect")&
   theme(legend.position = "bottom")
+#ggsave(here("docs/uclp_dss/figs/realtime_chla_modeling/performance/chla_cat_model_fold_validation_performance.png"), width = 14, height = 10)
+
 hp_tv_plot
-ggsave("docs/uclp_dss/figs/realtime_chla_modeling/performance/chla_cat_model_fold_validation_performance.png", width = 14, height = 10)
 
 ```
 
@@ -974,7 +976,7 @@ ggsave("docs/uclp_dss/figs/realtime_chla_modeling/performance/chla_cat_model_fol
 
 We should hope that all our tuning efforts have improved the model!!
 
-```{r}
+```{r fig.dim = c(14,14)}
 # Compare best hyperparameter model to default hyperparameter model
 final_plot <- wrap_plots(
   ft_tv_plot,
@@ -1001,7 +1003,7 @@ If we want to test additional ideas for bias correction or look at model perform
 
 ```{r}
 #commented out so we don't overwrite existing model files
-saveRDS(full_model, file = here("data", "derived", "models","chla_realtime", "in_dev", paste0("chla_categorical_xgboost_models_",version,".rds")))
+#saveRDS(full_model, file = here("data", "derived", "models","chla_realtime", "in_dev", paste0("chla_categorical_xgboost_models_",version,".rds")))
 #if we want to reload model
 #full_model <- readRDS(here("data", "derived", "models","chla_realtime", "in_dev", paste0("chla_categorical_xgboost_models_",version,".rds")))
 
@@ -1041,7 +1043,7 @@ plots
 
 ### All folds together
 
-```{r}
+```{r, fig.dim= c(10,8)}
 # Single plot with all folds
 wrap_plots(plots, ncol = 1, guides = "collect") &
   theme(legend.position = "bottom")
@@ -1107,14 +1109,14 @@ chd_plot <- plot_cat_model_timeseries(model_input_df = sensor_ts,
                                       end_DT = "2025-09-05 00:00",
                                       cat_colors = c("0-2" = "#a6cee3", "2-4" = "#b2df8a", "4-6" = "orange", "6+" = "red2"),
                                       subtitle_arg = "No Site Flow")
-
-chd_plot
-
 # ggsave(here("docs", "uclp_dss", "figs", "realtime_chla_modeling", "timeseries", paste0("chambers_outflow_20250501_20250705_cat_chla.png")),
 #        plot = chd_plot,
 #        width = 12,
 #        height = 8,
 #        dpi = 300)
+chd_plot
+
+
 
 ```
 
@@ -1137,14 +1139,14 @@ pfal_plot <- plot_cat_model_timeseries(
   subtitle_arg = "Baseline Model",
   cat_colors = c("0-2" = "#a6cee3", "2-4" = "#b2df8a", "4-6" = "orange", "6+" = "red2")
 )
-
-pfal_plot
-
 # ggsave(
 #   here("docs", "uclp_dss", "figs", "realtime_chla_modeling", "timeseries",
 #        paste0("pfal_20250416_20250710_cat_chla.png")),
 #   plot = pfal_plot, width = 12, height = 8, dpi = 300
 # )
+pfal_plot
+
+
 
 
 ```
@@ -1168,14 +1170,15 @@ pbr_plot <- plot_cat_model_timeseries(
   subtitle_arg = "Baseline Model",
   cat_colors = c("0-2" = "#a6cee3", "2-4" = "#b2df8a", "4-6" = "orange", "6+" = "red2")
 )
+# ggsave(
+#   here("docs", "uclp_dss", "figs", "realtime_chla_modeling", "timeseries",
+#        paste0("pbr_20250416_20251010_cat_chla.png")),
+#   plot = pbr_plot, width = 12, height = 8, dpi = 300
+# )
 
 pbr_plot
 
-ggsave(
-  here("docs", "uclp_dss", "figs", "realtime_chla_modeling", "timeseries",
-       paste0("pbr_20250416_20251010_cat_chla.png")),
-  plot = pbr_plot, width = 12, height = 8, dpi = 300
-)
+
 
 
 ```
@@ -1199,14 +1202,15 @@ pbd_plot <- plot_cat_model_timeseries(
   subtitle_arg = "Baseline Model",
   cat_colors = c("0-2" = "#a6cee3", "2-4" = "#b2df8a", "4-6" = "orange", "6+" = "red2")
 )
+# ggsave(
+#   here("docs", "uclp_dss", "figs", "realtime_chla_modeling", "timeseries",
+#        paste0("pbd_20250816_20251120_cat_chla.png")),
+#   plot = pbd_plot, width = 12, height = 8, dpi = 300
+# )
 
 pbd_plot
 
-ggsave(
-  here("docs", "uclp_dss", "figs", "realtime_chla_modeling", "timeseries",
-       paste0("pbd_20250816_20251120_cat_chla.png")),
-  plot = pbd_plot, width = 12, height = 8, dpi = 300
-)
+
 
 
 ```
