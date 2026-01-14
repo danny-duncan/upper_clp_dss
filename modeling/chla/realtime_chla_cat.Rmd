@@ -587,11 +587,13 @@ Then I am going to look at feature importance and shap values to see which featu
   num_class        = length(unique(train_val$ChlA_cat)) 
 )
 
-#weighting function for ChlA categories to emphasize high ChlA values
-high_weight = function(df) {
-  ifelse(df$ChlA_cat == 3, 4, # highest ChlA category = highest weight
-       if_else(df$ChlA_cat == 2, 2, 
-               1)) #lowest two categories = base weight
+# Weighting function for ChlA categories to emphasize high ChlA values
+high_weight <- function(df) {
+  case_when(
+    df$ChlA_cat == 3 ~ 4, # highest ChlA category = highest weight
+    df$ChlA_cat == 2 ~ 2, 
+    .default = 1          # lowest categories (including 1 or NA) = base weight
+  )
 }
 
 #set aside sensor data that are generally useful
