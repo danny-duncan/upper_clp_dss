@@ -76,7 +76,7 @@
 
 create_grab_sensor_matchup <- function(water_chem_df,
                                        sensor_df,
-                                       features = c("Chl-a Fluorescence" , "FDOM Fluorescence" ,"Specific Conductivity","Temperature" , "Turbidity"),
+                                       features = c("Chl-a Fluorescence", "FDOM Fluorescence", "Specific Conductivity", "Temperature", "Turbidity"),
                                        acceptable_time_window_hours = 3,
                                        dt_sensor_col = "DT_round",
                                        dt_chem_col = "DT_sample",
