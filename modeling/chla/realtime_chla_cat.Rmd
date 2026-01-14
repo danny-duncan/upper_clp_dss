@@ -139,7 +139,7 @@ sensor_lagged <- sensor_data %>%
       calc_lagged_parameter(site_col = "site", parameter_col = "Turbidity",
                             dt_col = "DT_hourly_round", lag_fun = "median",
                             time_period = "24 hour", new_value_col = "turb_median_12hr")%>%
-      #48 hour median chl-a (proxy for high chl-a)
+      # recent DO data
       calc_lagged_parameter(site_col = "site", parameter_col = "DO",
                             dt_col = "DT_hourly_round", lag_fun = "var",
                             time_period = "48 hour", new_value_col = "do_var_48hr")%>%
