@@ -19,6 +19,9 @@ library(nhdplusTools)
 library(mapview)
 library(arrow)
 library(ross.wq.tools)
+library(cdssr)
+library(scales)
+library(snotelr)
 # remotes::install_github("rossyndicate/ross.wq.tools")
 library(tidyverse)
 
@@ -35,7 +38,8 @@ Get all chl-a grab samples from our collated data set (`load_grab_sample_data()`
 grab_chla <- load_grab_sample_data() %>% 
   select(site_code, site_name, date = Date,
          ChlA, Field_DO_mgL:distance_upstream_km, Lat:flag) %>% 
-  filter(!is.na(ChlA), !Campaign %in% c("Mainstem - Lower", "Lower Tributary"))
+  filter(!is.na(ChlA), !Campaign %in% c("Mainstem - Lower", "Lower Tributary")) %>% 
+  mutate(year = year(date))
 
 # check for flags
 unique(grab_chla$flag)
@@ -44,12 +48,12 @@ unique(grab_chla$flag)
 Plot the data to see what it looks like
 
 ```{r}
-ggplot(grab_chla, aes(x = yday(date), y = ChlA)) +
+ggplot(grab_chla, aes(x = yday(date), y = ChlA, color = factor(year))) +
   geom_point()+
   facet_grid(location_type ~ ., scales = "free_y") +
   theme_bw()
 
-ggplot(grab_chla, aes(x = yday(date), y = ChlA)) +
+ggplot(grab_chla, aes(x = yday(date), y = ChlA, color = factor(year))) +
   geom_point()+
   facet_grid(Campaign ~ ., scales = "free_y") +
   theme_bw()
@@ -65,7 +69,8 @@ walk(unique(grab_chla$location_type), function(loc) {
     filter(location_type == loc) %>% 
     ggplot(. , aes(x = yday(date), y = ChlA, color = factor(year(date)))) +
     geom_point() +
-    facet_wrap(site_name ~ ., scales = "free_y")
+    labs(title = loc) +
+    facet_grid(site_name ~ ., scales = "free_y")
   print(gg)
   
 })
@@ -79,13 +84,247 @@ grab_chla %>%
   filter(Campaign == "Mainstem - Upper") %>% 
   ggplot(. , aes(x = yday(date), 
                  y = ChlA, 
-                 color = site_code, 
-                 shape = factor(year(date)))) +
+                 color = site_code)) +
+  facet_grid(year(date) ~ .) +
   geom_point() +
   theme_bw() +
   scale_color_viridis_d()
 
 ```
+
+And we'll add q here, since we know there is a temp/q connection:
+
+```{r}
+#Read in flow data
+flow_data <- get_sw_ts(
+  abbrev = "CLAFTCCO",
+  start_date = min(grab_chla$date, na.rm = T),
+  end_date = max(grab_chla$date, na.rm = T),
+  timescale = "day"
+) %>%
+  rename(canyon_mouth_cfs = value) %>%
+  mutate(canyon_mouth_cfs_rescale = rescale(canyon_mouth_cfs, to = c(0,10)))%>%
+  select(datetime, canyon_mouth_cfs, canyon_mouth_cfs_rescale) %>% 
+  mutate(date = date(datetime)) %>% 
+  summarise(mean_cfs = mean(canyon_mouth_cfs),
+            mean_rescale = mean(canyon_mouth_cfs_rescale),
+            .by = date)
+
+ggplot() +
+  geom_area(data = flow_data %>% 
+              arrange(date) %>%
+              mutate(year = year(date)) %>% 
+              filter(year > 2021),
+            aes(x = yday(date), y = mean_rescale, group = 1),
+            fill = "gray70",
+            alpha = 0.5) +
+  geom_point(data = grab_chla %>%
+               filter(Campaign == "Mainstem - Upper") %>% mutate(year = year(date)),
+             aes(x = yday(date),
+                 y = ChlA,
+                 color = site_code)) +
+  facet_grid(year(date) ~ .) +
+  theme_bw() +
+  scale_color_viridis_d()
+
+```
+
+And let's look at snotel
+
+```{r}
+site_meta <- snotel_info()
+huc8_code <- "10190007"
+sites_in_huc8 <- site_meta %>%
+  filter(grepl(huc8_code, description))
+# Extract site IDs to a vector
+site_ids <- sites_in_huc8$site_id
+
+# Download daily SNOTEL data
+snotel_data <- snotel_download(site_id = site_ids,
+                               internal = TRUE,
+                               metric = TRUE) %>% 
+  mutate(date = ymd(date))
+
+snotel_data <- snotel_data %>% 
+  mutate(doy = yday(date),
+         year = year(date))
+
+snotel_data %>% 
+  filter(between(year, 2022, 2025)) %>% 
+  ggplot(., aes(x = doy, y = snow_water_equivalent, color = factor(site_id))) +
+  geom_line() +
+  facet_grid(year ~ .)
+labs(title = paste("SWE for HUC 8", huc8_code),
+     x = "Date",
+     y = "Snow Water Equivalent (mm)") +
+  theme_minimal()
+```
+
+And add it in without chl-a data:
+
+```{r}
+ggplot() +
+  geom_area(data = flow_data %>% 
+              arrange(date) %>%
+              mutate(year = year(date)) %>% 
+              filter(year > 2021),
+            aes(x = yday(date), y = mean_rescale, group = 1),
+            fill = "gray70",
+            alpha = 0.5) +
+  geom_line(data = snotel_data %>%
+              filter(between(year, 2022, 2025)) %>%
+              mutate(swe_scaled = rescale(snow_water_equivalent, c(0, 10))),
+            aes(x = doy, y = swe_scaled, lty = factor(site_name))) +
+  geom_point(data = grab_chla %>%
+               filter(Campaign == "Mainstem - Upper") %>% mutate(year = year(date)),
+             aes(x = yday(date),
+                 y = ChlA,
+                 color = site_name)) +
+  labs(x = "day of year", 
+       y = "chlorophyll a (ug/L)\nrescaled Q at canyon mouth (grey)\nrescaled SWE (lines)",
+       color = "chl-a sample site",
+       lty = "snotel site") +
+  facet_grid(year(date) ~ .) +
+  theme_bw() +
+  scale_color_viridis_d() 
+
+```
+
+Given that there is also a presumed relationship between temp and discharge and
+chlorophyl-a, let's look at that:
+
+```{r}
+temp_q <- snotel_data %>%
+  filter(between(year, 2022, 2025)) %>%
+  summarize(mean_temp = mean(temperature_mean, na.rm = T), 
+            .by = c(date, doy, year)) %>% 
+  left_join(., flow_data) %>% 
+  mutate(temp_q = mean_temp/mean_cfs) %>% 
+  filter(!is.na(temp_q))
+
+ggplot() +
+  geom_area(data = temp_q,
+            aes(x = doy, y = rescale(temp_q, c(0,10)), group = 1),
+            fill = "gray70",
+            alpha = 0.5) +
+  geom_point(data = grab_chla %>%
+               filter(Campaign == "Mainstem - Upper") %>% mutate(year = year(date)),
+             aes(x = yday(date),
+                 y = ChlA,
+                 color = site_name)) +
+  labs(x = "day of year", 
+       y = "chlorophyll a (ug/L)\nrescaled temp/Q (grey)",
+       color = "monitoring site") +
+  facet_grid(year(date) ~ .) +
+  theme_bw() +
+  scale_color_viridis_d() 
+```
+
+This makes me think the driving force is not temp AND q related, but is more 
+dominantly controlled by Q and the connection of how water moves through the system.
+The hypothesis here, is that when Q is high, it's moving through high-elevation
+reservoirs and it "scrapes" algal growth from the outflow and it then travels
+down the river. 
+
+Given that, let's look at at some of the data from sensor networks that have 
+data just below reservoirs or that are inputs that may help us understand where 
+some of the higher values in chlorophyll-a might be coming from.
+
+```{r}
+stations <- tribble(
+  ~abbrev, ~name,
+  "JOEBELCO", "JW below JW",
+  "JWCCHACO", "JW below Chambers",
+  "LAPLODCO", "Poudre below Long Draw",
+  "LAPTUNCO", "Laramie Tunnel",
+  "CLANSECO", "North Fork"
+)
+
+streamflow_data <- map(stations$abbrev, 
+                       function(station){
+                         get_sw_ts(abbrev = station, 
+                                   start_date = "2022-01-01", 
+                                   end_date = "2025-12-31")
+                       }) %>% 
+  bind_rows()  %>% 
+  mutate(date = ymd(datetime)) %>% 
+  select(date, abbrev, value, meas_unit) %>% 
+  mutate(value = if_else(value == -999,
+                         NA,
+                         value),
+         doy = yday(date),
+         year = year(date)) %>% 
+  full_join(., stations) 
+  
+
+ggplot(streamflow_data, aes(x = doy, y = value, lty = name)) +
+  geom_line() +
+  facet_grid(year ~ .) +
+  theme_bw()
+```
+
+```{r}
+ggplot() +
+  geom_line(data = streamflow_data %>% 
+              mutate(cfs_rescaled = rescale(value, c(0,10))),
+            aes(x = doy, y = cfs_rescaled, lty = name)) +
+  geom_point(data = grab_chla %>%
+               filter(Campaign == "Mainstem - Upper") %>% 
+               mutate(year = year(date)),
+             aes(x = yday(date),
+                 y = ChlA,
+                 color = site_name)) +
+  labs(x = "day of year", 
+       y = "chlorophyll a (ug/L)\nrescaled temp/Q (grey)",
+       color = "monitoring site") +
+  facet_grid(year ~ .) +
+  theme_bw() +
+  scale_color_viridis_d() 
+
+```
+
+Well, maybe there is something here, but it's all anecdotal. We could probably 
+also dig into this a bit more, but not right now. 
+
+And let's compare the reservoir chl-a and outflow chl-a, just to understand what
+relationship is there, if any.
+
+```{r}
+grab_chla %>% 
+  filter(location_type %in% c("Reservoir", "Outflow")) %>% 
+  mutate(res_name = str_remove(site_name, " Reservoir| Outflow")) %>% 
+  select(res_name, date, ChlA, location_type) %>% 
+  pivot_wider(names_from = "location_type", values_from = "ChlA") %>% 
+  filter(!is.na(Reservoir) & !is.na(Outflow)) %>% 
+  ggplot(., aes(x = Reservoir, y = Outflow, color = yday(date))) +
+  geom_point() +
+  labs(x = "Reservoir Chlorophyll-a (ug/L)",
+       y = "Outflow Chlorophyll-a (ug/L)") +
+  theme_bw() +
+  scale_color_viridis_c() +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") 
+```
+
+And let's break that out by reservoir:
+
+```{r}
+grab_chla %>% 
+  filter(location_type %in% c("Reservoir", "Outflow")) %>% 
+  mutate(res_name = str_remove(site_name, " Reservoir| Outflow")) %>% 
+  select(res_name, date, ChlA, location_type) %>% 
+  pivot_wider(names_from = "location_type", values_from = "ChlA") %>% 
+  filter(!is.na(Reservoir) & !is.na(Outflow)) %>% 
+  ggplot(., aes(x = Reservoir, y = Outflow, color = yday(date))) +
+  geom_point() +
+  labs(x = "Reservoir Chlorophyll-a (ug/L)",
+       y = "Outflow Chlorophyll-a (ug/L)") +
+  theme_bw() +
+  facet_grid(res_name ~ .) +
+  scale_color_viridis_c() +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") 
+```
+
+
 
 # Calculate some additional metrics per site
 
@@ -552,4 +791,5 @@ ggplot(test, aes(x = baseline_chla_ens, y = ChlA)) +
            label = metrics_text, size = 4)
 
 ```
+
 
