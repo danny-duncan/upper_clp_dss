@@ -22,6 +22,7 @@ library(ross.wq.tools)
 library(cdssr)
 library(scales)
 library(snotelr)
+library(kableExtra)
 # remotes::install_github("rossyndicate/ross.wq.tools")
 library(tidyverse)
 
@@ -45,18 +46,28 @@ grab_chla <- load_grab_sample_data() %>%
 unique(grab_chla$flag)
 ```
 
-Plot the data to see what it looks like
+No flags. Great. Plot the data to see what it looks like
 
 ```{r}
 ggplot(grab_chla, aes(x = yday(date), y = ChlA, color = factor(year))) +
   geom_point()+
   facet_grid(location_type ~ ., scales = "free_y") +
-  theme_bw()
+  labs(x = "day of year",
+       color = "year",
+       y = "chlorophyll-a (ug/L)") +
+  theme_bw() +
+  scale_color_viridis_d()
 
 ggplot(grab_chla, aes(x = yday(date), y = ChlA, color = factor(year))) +
   geom_point()+
-  facet_grid(Campaign ~ ., scales = "free_y") +
-  theme_bw()
+  facet_grid(Campaign ~ ., 
+             scales = "free_y",
+             labeller = label_wrap_gen(width = 15)) +
+  labs(x = "day of year",
+       color = "year",
+       y = "chlorophyll-a (ug/L)") +
+  theme_bw() +
+  scale_color_viridis_d()
 
 ```
 
@@ -69,8 +80,15 @@ walk(unique(grab_chla$location_type), function(loc) {
     filter(location_type == loc) %>% 
     ggplot(. , aes(x = yday(date), y = ChlA, color = factor(year(date)))) +
     geom_point() +
-    labs(title = loc) +
-    facet_grid(site_name ~ ., scales = "free_y")
+    labs(title = loc,
+         x = "day of year",
+         color = "year",
+         y = "chlorophyll-a (ug/L)") +
+    facet_grid(site_name ~ ., 
+               scales = "free_y",
+               labeller = label_wrap_gen(width = 15)) +
+    theme_bw() +
+    scale_color_viridis_d()
   print(gg)
   
 })
@@ -79,36 +97,40 @@ walk(unique(grab_chla$location_type), function(loc) {
 
 And look at just the mainstem upper poudre, which is what we care about
 
-```{r}
+```{r, fig.dim=c(6,8)}
 grab_chla %>% 
   filter(Campaign == "Mainstem - Upper") %>% 
   ggplot(. , aes(x = yday(date), 
                  y = ChlA, 
-                 color = site_code)) +
-  facet_grid(year(date) ~ .) +
+                 color = factor(year(date)))) +
+  labs(x = "day of year",
+       y = "chlorophyll-a (ug/L)",
+       color = "year") +
+  facet_grid(site_name ~ .,
+             labeller = label_wrap_gen(width = 15))  +
   geom_point() +
   theme_bw() +
   scale_color_viridis_d()
 
 ```
 
-And we'll add q here, since we know there is a temp/q connection:
+## Covariate Exploration
+
+And we'll add q here, since we suspect there is a temp/q connection:
 
 ```{r}
 #Read in flow data
-flow_data <- get_sw_ts(
-  abbrev = "CLAFTCCO",
-  start_date = min(grab_chla$date, na.rm = T),
-  end_date = max(grab_chla$date, na.rm = T),
-  timescale = "day"
-) %>%
-  rename(canyon_mouth_cfs = value) %>%
-  mutate(canyon_mouth_cfs_rescale = rescale(canyon_mouth_cfs, to = c(0,10)))%>%
-  select(datetime, canyon_mouth_cfs, canyon_mouth_cfs_rescale) %>% 
+flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
+                       start_date = min(grab_chla$date, na.rm = T),
+                       end_date = max(grab_chla$date, na.rm = T),
+                       timescale = "day") %>%
+  filter(between(yday(datetime), 100, 350)) %>% 
+  mutate(canyon_mouth_cfs_rescale = rescale(value, to = c(0,10)))%>%
+  select(datetime, canyon_mouth_cfs = value, canyon_mouth_cfs_rescale) %>% 
   mutate(date = date(datetime)) %>% 
   summarise(mean_cfs = mean(canyon_mouth_cfs),
             mean_rescale = mean(canyon_mouth_cfs_rescale),
-            .by = date)
+            .by = date) 
 
 ggplot() +
   geom_area(data = flow_data %>% 
@@ -119,7 +141,9 @@ ggplot() +
             fill = "gray70",
             alpha = 0.5) +
   geom_point(data = grab_chla %>%
-               filter(Campaign == "Mainstem - Upper") %>% mutate(year = year(date)),
+               filter(Campaign == "Mainstem - Upper",
+                      between(yday(date), 100, 350)) %>% 
+               mutate(year = year(date)),
              aes(x = yday(date),
                  y = ChlA,
                  color = site_code)) +
@@ -129,7 +153,7 @@ ggplot() +
 
 ```
 
-And let's look at snotel
+And let's look at snotel SWE
 
 ```{r}
 site_meta <- snotel_info()
@@ -151,16 +175,17 @@ snotel_data <- snotel_data %>%
 
 snotel_data %>% 
   filter(between(year, 2022, 2025)) %>% 
-  ggplot(., aes(x = doy, y = snow_water_equivalent, color = factor(site_id))) +
+  ggplot(., aes(x = doy, y = snow_water_equivalent, color = site_name)) +
   geom_line() +
-  facet_grid(year ~ .)
-labs(title = paste("SWE for HUC 8", huc8_code),
-     x = "Date",
-     y = "Snow Water Equivalent (mm)") +
-  theme_minimal()
+  facet_grid(year ~ .) +
+  labs(title = paste("SWE for HUC 8", huc8_code),
+       x = "Date",
+       y = "Snow Water Equivalent (mm)",
+       color = "SNOTEL site") +
+  theme_bw()
 ```
 
-And add it in without chl-a data:
+And add it in with chl-a data:
 
 ```{r}
 ggplot() +
@@ -172,18 +197,21 @@ ggplot() +
             fill = "gray70",
             alpha = 0.5) +
   geom_line(data = snotel_data %>%
-              filter(between(year, 2022, 2025)) %>%
+              filter(between(year, 2022, 2025),
+                     between(doy, 100, 350)) %>%
               mutate(swe_scaled = rescale(snow_water_equivalent, c(0, 10))),
             aes(x = doy, y = swe_scaled, lty = factor(site_name))) +
   geom_point(data = grab_chla %>%
-               filter(Campaign == "Mainstem - Upper") %>% mutate(year = year(date)),
+               filter(Campaign == "Mainstem - Upper",
+                      between(yday(date), 100, 350)) %>% 
+               mutate(year = year(date)),
              aes(x = yday(date),
                  y = ChlA,
                  color = site_name)) +
   labs(x = "day of year", 
-       y = "chlorophyll a (ug/L)\nrescaled Q at canyon mouth (grey)\nrescaled SWE (lines)",
+       y = "chlorophyll-a (ug/L)\nrescaled Q at canyon mouth (grey)\nrescaled SWE (lines)",
        color = "chl-a sample site",
-       lty = "snotel site") +
+       lty = "SNOTEL site") +
   facet_grid(year(date) ~ .) +
   theme_bw() +
   scale_color_viridis_d() 
@@ -195,7 +223,8 @@ chlorophyl-a, let's look at that:
 
 ```{r}
 temp_q <- snotel_data %>%
-  filter(between(year, 2022, 2025)) %>%
+  filter(between(year, 2022, 2025),
+         between(doy, 100, 350)) %>%
   summarize(mean_temp = mean(temperature_mean, na.rm = T), 
             .by = c(date, doy, year)) %>% 
   left_join(., flow_data) %>% 
@@ -203,12 +232,14 @@ temp_q <- snotel_data %>%
   filter(!is.na(temp_q))
 
 ggplot() +
-  geom_area(data = temp_q,
+  geom_line(data = temp_q,
             aes(x = doy, y = rescale(temp_q, c(0,10)), group = 1),
-            fill = "gray70",
-            alpha = 0.5) +
+            alpha = 0.5,
+            lty = 1) +
   geom_point(data = grab_chla %>%
-               filter(Campaign == "Mainstem - Upper") %>% mutate(year = year(date)),
+               filter(Campaign == "Mainstem - Upper",
+                      between(yday(date), 100, 350)) %>% 
+               mutate(year = year(date)),
              aes(x = yday(date),
                  y = ChlA,
                  color = site_name)) +
@@ -224,7 +255,8 @@ This makes me think the driving force is not temp AND q related, but is more
 dominantly controlled by Q and the connection of how water moves through the system.
 The hypothesis here, is that when Q is high, it's moving through high-elevation
 reservoirs and it "scrapes" algal growth from the outflow and it then travels
-down the river. 
+down the river. There is also likely too few samples to make much of a 
+connection between the temp/q relationship and the presence of chlorophyll-a.
 
 Given that, let's look at at some of the data from sensor networks that have 
 data just below reservoirs or that are inputs that may help us understand where 
@@ -255,15 +287,19 @@ streamflow_data <- map(stations$abbrev,
          doy = yday(date),
          year = year(date)) %>% 
   full_join(., stations) 
-  
+
 
 ggplot(streamflow_data, aes(x = doy, y = value, lty = name)) +
   geom_line() +
   facet_grid(year ~ .) +
+  labs(x = "day of year",
+       y = "flow (cfs)",
+       lty = "streamflow site") +
   theme_bw()
 ```
 
-```{r}
+
+```{r, fig.dim=c(10, 6)}
 ggplot() +
   geom_line(data = streamflow_data %>% 
               mutate(cfs_rescaled = rescale(value, c(0,10))),
@@ -275,8 +311,9 @@ ggplot() +
                  y = ChlA,
                  color = site_name)) +
   labs(x = "day of year", 
-       y = "chlorophyll a (ug/L)\nrescaled temp/Q (grey)",
-       color = "monitoring site") +
+       y = "chlorophyll a (ug/L)\nrescaled Q (lines)",
+       color = "monitoring site",
+       lty = "stream gague site") +
   facet_grid(year ~ .) +
   theme_bw() +
   scale_color_viridis_d() 
@@ -284,7 +321,8 @@ ggplot() +
 ```
 
 Well, maybe there is something here, but it's all anecdotal. We could probably 
-also dig into this a bit more, but not right now. 
+also dig into this a bit more, but not right now since this will mostly be a correlation
+between very few data points. 
 
 And let's compare the reservoir chl-a and outflow chl-a, just to understand what
 relationship is there, if any.
@@ -324,11 +362,29 @@ grab_chla %>%
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") 
 ```
 
+Interesting to see that some reservoirs are more correlated with their outflow 
+values:
 
+```{r, echo=FALSE}
+grab_chla %>% 
+  filter(location_type %in% c("Reservoir", "Outflow")) %>% 
+  mutate(res_name = str_remove(site_name, " Reservoir| Outflow")) %>% 
+  select(res_name, date, ChlA, location_type) %>% 
+  pivot_wider(names_from = "location_type", values_from = "ChlA") %>% 
+  filter(!is.na(Reservoir) & !is.na(Outflow)) %>% 
+  summarize(r_pearson = cor(Reservoir, Outflow),
+            r_spearman = cor(Reservoir, Outflow, method = "spearman"),
+            n = n(),
+            .by = res_name) %>% 
+  arrange(-r_pearson) %>% 
+  kable(label = "Correlation between Reservoir and Outflow chlorophyll-a", 
+        col.names = c("Reservoir Name", "Pearson Correlation", "Spearman Correlation", "n"))
+```
 
-# Calculate some additional metrics per site
+## NHD info scrape
 
-Grab some info from NHD that we need for some crawling!
+Grabbing some NHD info here - we don't use this later in the script, but I don't 
+want to delete yet.
 
 ```{r}
 # Poudre HUC
@@ -504,6 +560,8 @@ grab_site_info <- grab_chla %>%
 
 # Simplistic models for Chlorophyll-a
 
+## Polynomial Equation
+
 Try some simplistic methods for predicting Chlorophyll-a. The relationship looks
 like a shallow polynomial equation, so we'll just give that a shot.
 
@@ -544,9 +602,12 @@ ggplot(chla_ms_site_info, aes(x = distance_upstream_km, y = residuals)) +
 It's usually pretty bad practice to apply polynomial equation to environmental
 data (because there generally is not an explainable reason for it), this relationship
 is probably related to solar radiation and water temperature, which have a similar
-pattern that is better characterized by a sinusoidal curve. Let's try an NLS model
-with those assumptions. We're going to do this more rigorously by holding out the
-2025 data to test this development on.
+pattern that is better characterized by a sinusoidal curve. 
+
+## Sinusoidal Equation
+
+Let's try an NLS model with those assumptions. We're going to do this more 
+rigorously by holding out the 2025 data to test this development on.
 
 ```{r}
 test <- chla_ms_site_info %>% 
@@ -734,28 +795,28 @@ RMSE: `r round(rmse_nls_ens, 2)`
 MAE: `r round(mae_nls_ens, 2)`
 Bias: `r round(bias_nls_ens, 2)`
 
-Performance is much better in the ensemble. This makes sense because the AIC 
+Performance is slightly better in the ensemble. This makes sense because the AIC 
 and BIC values were all smaller than the non-ensemble version (because there was
 a lot less variability to try to explain). We'll export the ensemble baselines.
 
 ```{r}
-# write_rds(fit_nls1, 
+# write_rds(fit_nls1,
 #           here(paste0("data/derived/models/chla_baseline/working/sinusoidal_ens1_doy_v",
 #                       version_date,
 #                       ".rds")))
 # 
-# write_rds(fit_nls2, 
+# write_rds(fit_nls2,
 #           here(paste0("data/derived/models/chla_baseline/working/sinusoidal_ens2_doy_v",
 #                       version_date,
 #                       ".rds")))
 # 
-# write_rds(fit_nls3, 
+# write_rds(fit_nls3,
 #           here(paste0("data/derived/models/chla_baseline/working/sinusoidal_ens3_doy_v",
 #                       version_date,
 #                       ".rds")))
 ```
 
-# Plot fit metrics
+## Plot fit metrics
 
 ```{r}
 ggplot(test, aes(x = doy)) +
@@ -791,5 +852,13 @@ ggplot(test, aes(x = baseline_chla_ens, y = ChlA)) +
            label = metrics_text, size = 4)
 
 ```
+
+Cool, so we'll never predict over ~1.4ug/L here and again, that makes sense 
+because we're just encoding this model with DOY. 
+
+If there were more data here, I think we could probably create a ML model that
+used some combination of SNOTEL SWE change, Q, air temp, DOY, distance from res/
+river inflow and some release/flow information to make a reasonably good model, 
+but there is insufficient data to do that here. 
 
 
