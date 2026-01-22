@@ -114,6 +114,9 @@ grab_chla %>%
 
 ```
 
+Interesting to see an anecdotal decrease in variability in the upper poudre (Poudre below
+Poudre Falls, Poudre before Rustic) in days ~150-175.
+
 ## Covariate Exploration
 
 And we'll add q here, since we suspect there is a temp/q connection:
@@ -219,7 +222,10 @@ ggplot() +
 ```
 
 Given that there is also a presumed relationship between temp and discharge and
-chlorophyl-a, let's look at that:
+chlorophyl-a, let's look at that. Since the data are here, we'll use the average
+temp from the snotel stations. Keep in mind these will have less variability 
+than the actual air temperature further down the canyon - and especially at the
+canyon mouth where we're pull Q data from.
 
 ```{r}
 temp_q <- snotel_data %>%
@@ -380,6 +386,10 @@ grab_chla %>%
   kable(label = "Correlation between Reservoir and Outflow chlorophyll-a", 
         col.names = c("Reservoir Name", "Pearson Correlation", "Spearman Correlation", "n"))
 ```
+
+Sam notes that some of these, particularly Barnes, Comanche, Hourglass, Peterson
+are sampled weekly irrelevant of stream flow, which can skew the relationship
+between reservoir and outflow.
 
 ## NHD info scrape
 
