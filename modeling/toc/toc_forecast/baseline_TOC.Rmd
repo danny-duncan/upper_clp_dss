@@ -1,8 +1,10 @@
 ---
 title: "Baseline TOC model development in CLP"
-date: "2025-10-01"
+date: "2026-01-23"
 output: html_document
 ---
+
+# Purpsoe
 
 The purpose of this markdown is to explore the relationship between TOC and 
 snowmelt signals within the CLP, with the intention of creating a baseline 
@@ -150,7 +152,7 @@ chem %>%
 
 # GAM time
 
-Great, now let's play with a GAM fit, for now, we wont do a TVT, because I just 
+Great, now let's play with a GAM fit, for now, we won't do a TVT, because I just 
 want to see if it works. I have played with including the Upper Tribs, but they
 don't add much value here, so leaving out.
 
@@ -446,27 +448,29 @@ metrics_text <- paste0(
 
 
 # pred - obs scatter plot!
-ggplot(test_2025, aes(x = pred_avg, y = toc_doc)) +
-  geom_point(color = "blue", alpha = 0.6, size = 2) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
-  labs(y = "Observed TOC (mg/L)",
-       x = "Predicted TOC (ensemble, mg/L)",
-       title = "GAM Ensemble Predictions vs Observed (2025)") +
-  annotate("text", x = 3, y = 8, 
-           hjust = 0, vjust = 1, 
-           label = metrics_text, size = 4) +
-  theme_bw(base_size = 14) +
-  coord_cartesian(xlim = c(3, 8), ylim = c(3, 8))
-
-# for kicks, look at performance by site
-ggplot(test_2025, aes(x = pred_avg, y = toc_doc)) +
+ggplot(test_2025, aes(y = pred_avg, x = toc_doc)) +
   geom_point(color = "blue", alpha = 0.6, size = 2) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(x = "Observed TOC (mg/L)",
        y = "Predicted TOC (ensemble, mg/L)",
-       title = "GAM Ensemble Predictions vs Observed (2025)") +
+       title = "GAM Ensemble Predictions vs Observed (2025)",
+       subtitle = "TOC ~ DOY + distance upstream") +
+  annotate("text", x = 1, y = 10, 
+           hjust = 0, vjust = 1, 
+           label = metrics_text, size = 4) +
   theme_bw(base_size = 14) +
-  coord_cartesian(xlim = c(3, 8), ylim = c(3, 8)) +
+  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10))
+
+# for kicks, look at performance by site
+ggplot(test_2025, aes(y = pred_avg, x = toc_doc)) +
+  geom_point(color = "blue", alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (2025)",
+       subtitle = "TOC ~ DOY + distance upstream") +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10)) +
   facet_wrap(site_name ~ .)
 
 ```
@@ -514,11 +518,11 @@ And let's save these models as the baseline:
 
 ```{r}
 
-# write_rds(fit_1, here("data/upper_clp_dss/modeling/TOC_baseline/TOC_GAM_fit1_v2025-10-01.rds"))
-# write_rds(fit_2, here("data/upper_clp_dss/modeling/TOC_baseline/TOC_GAM_fit2_v2025-10-01.rds"))
-# write_rds(fit_3, here("data/upper_clp_dss/modeling/TOC_baseline/TOC_GAM_fit3_v2025-10-01.rds"))
-# write_rds(fit_4, here("data/upper_clp_dss/modeling/TOC_baseline/TOC_GAM_fit4_v2025-10-01.rds"))
-# write_rds(fit_5, here("data/upper_clp_dss/modeling/TOC_baseline/TOC_GAM_fit5_v2025-10-01.rds"))
+# write_rds(fit_1, here("data/derived/models/TOC_baseline/TOC_GAM_fit1_v2026-01-23.rds"))
+# write_rds(fit_2, here("data/derived/models/TOC_baseline/TOC_GAM_fit2_v2026-01-23.rds"))
+# write_rds(fit_3, here("data/derived/models/TOC_baseline/TOC_GAM_fit3_v2026-01-23.rds"))
+# write_rds(fit_4, here("data/derived/models/TOC_baseline/TOC_GAM_fit4_v2026-01-23.rds"))
+# write_rds(fit_5, here("data/derived/models/TOC_baseline/TOC_GAM_fit5_v2026-01-23.rds"))
 
 ```
 
