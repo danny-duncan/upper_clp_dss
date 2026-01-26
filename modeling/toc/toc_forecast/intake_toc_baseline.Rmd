@@ -198,7 +198,7 @@ Let's just use the magnitude/timing from the Q/SWE data here. I've explored othe
 combinations, and this one (linear model of maximum Q
 at the canyon mouth) seems to be the best performing. 
 
-For reference, I tride a multiple linear regression...
+For reference, I tried a multiple linear regression...
 
 ```{r, message = FALSE}
 lm_TOC <- lm(mean_TOC ~ canyon_mouth_cfs + snow_water_equivalent,
@@ -207,7 +207,8 @@ lm_TOC <- lm(mean_TOC ~ canyon_mouth_cfs + snow_water_equivalent,
 summary(lm_TOC)
 ```
 
-But the slopes aren't significant.
+But the slopes aren't significant. Because max Q happens after max TOC, we'll
+just use SWE here (even though magnitude of Q is better performing.)
 
 ```{r, message = FALSE}
 lm_TOC <- lm(mean_TOC ~ snow_water_equivalent,
