@@ -210,7 +210,7 @@ summary(lm_TOC)
 But the slopes aren't significant.
 
 ```{r, message = FALSE}
-lm_TOC <- lm(mean_TOC ~ canyon_mouth_cfs,
+lm_TOC <- lm(mean_TOC ~ snow_water_equivalent,
              data = max_q_toc)
 
 summary(lm_TOC)
@@ -237,11 +237,26 @@ BIAS = bias(max_q_toc$mean_TOC, max_q_toc$pred_toc)
 
 ```
 
+And for internals, let's add year labels here:
+
+```{r}
+ggplot(max_q_toc, aes(x = mean_TOC, 
+                      y = pred_toc,
+                      label = factor(year))) +
+  geom_point() +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(6, 13), ylim = c(6, 13)) +
+  labs(x = "maximum TOC in runoff period (mg/L)",
+       y = "predicted max TOC in runoff period (mg/L)")+
+  geom_text(vjust = -0.5, hjust = 0.5)
+
+```
+
 There is a caveat here, though:
 
-
 ```{r, message = FALSE}
-ggplot(max_q_toc, aes(x = toc_max_doy, y = q_max_doy)) +
+ggplot(max_q_toc, aes(x = toc_max_doy, y = q_max_doy, shape = factor(year))) +
   geom_point() +
   geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
   theme_bw() +
