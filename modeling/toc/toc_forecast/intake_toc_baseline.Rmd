@@ -1,0 +1,344 @@
+---
+title: "FC Intake TOC Exploration"
+author: "ROSSyndicate"
+date: "2026-01-24"
+output: html_document
+---
+
+# Purpose
+
+This markdown is meant to explore seasonal maxima of TOC data at the FC intake 
+and the relationship between TOC and the SWE from Snotel - this is a baseline
+for a seasonal forecast.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+library(tidyverse)
+library(here)
+library(cdssr)
+library(snotelr)
+library(Metrics)
+```
+
+# Load in data
+
+```{r, message = FALSE}
+# intake TOC
+fc_intake <- read_csv(here("data/collated/FC_intake/fc_intake_TOC_record_2010-2025.csv"))
+
+# read in flow data at canyon mouth
+flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
+                       start_date = "2010-01-01",
+                       end_date = "2025-12-31",
+                       timescale = "day") %>%
+  select(datetime, canyon_mouth_cfs = value) %>% 
+  mutate(date = date(datetime), 
+         year = year(date),
+         doy = yday(date))
+
+
+# grab snotel data in HUC8
+snotel_sites <- snotel_info() %>%
+  filter(grepl("10190007", description))
+
+# Download daily SNOTEL data
+snotel_data <- snotel_download(site_id = snotel_sites$site_id,
+                               internal = TRUE,
+                               metric = TRUE) %>% 
+  mutate(date = ymd(date),
+         doy = yday(date),
+         year = year(date))
+
+```
+
+# Summarize data to annual stats
+
+Here, we'll grab the max TOC, max flow, and maximum SWE per year (and per site
+for SWE). This summarizes the data pretty succinctly for a simple descriptive 
+model of the data on hand. We mostly care about magnitude and timing.
+
+```{r, message = FALSE}
+fc_annual_max <- fc_intake %>% 
+  arrange(-mean_TOC) %>% 
+  slice(1, .by = year) %>% 
+  arrange(year) %>% 
+  rename(toc_max_date = date,
+         toc_max_doy = doy) 
+
+q_max <- flow_data %>% 
+  select(-datetime) %>% 
+  filter(between(doy, 100, 250)) %>% 
+  arrange(-canyon_mouth_cfs) %>% 
+  slice(1, .by = year) %>% 
+  arrange(year) %>% 
+  rename(q_max_date = date,
+         q_max_doy = doy) 
+
+swe_max <- snotel_data %>% 
+  select(doy, year, site_id, snow_water_equivalent:temperature_mean) %>% 
+  arrange(-snow_water_equivalent) %>% 
+  slice(1, .by = c(year, site_id)) %>% 
+  arrange(year) %>% 
+  rename(snotel_doy = doy) %>% 
+  mutate(snotel_doy = if_else(snotel_doy > 200, snotel_doy - 365, snotel_doy))
+
+max_q_toc <- full_join(fc_annual_max, q_max) %>% 
+  left_join(., swe_max)
+
+```
+
+## Snotel correlations
+
+Let's just look at the snotel data across stations and see where our best 
+correlations arefor TOC magnitude and timing.
+
+```{r, message = FALSE}
+ggplot(max_q_toc, aes(x = toc_max_doy, y = snotel_doy)) +
+  facet_wrap(site_id ~ .) +
+  geom_smooth(method = "lm", se = FALSE, color = "grey80", lty = 2) +
+  geom_point() +
+  labs(x = "TOC maxima DOY",
+       y = "day of SWE maximum") +
+  theme_bw()
+
+ggplot(max_q_toc, aes(x = toc_max_doy, y = snow_water_equivalent)) +
+  facet_wrap(site_id ~ ., scales = "free_y") +
+  geom_smooth(method = "lm", se = FALSE, color = "grey80", lty = 2) +
+  geom_point() +
+  labs(x = "TOC maxima DOY",
+       y = "SWE maximum") +
+  theme_bw()
+
+ggplot(max_q_toc, aes(x = mean_TOC, y = snow_water_equivalent)) +
+  facet_wrap(site_id ~ ., scales = "free_y") +
+  geom_smooth(method = "lm", se = FALSE, color = "grey80", lty = 2) +
+  geom_point() +
+  labs(x = "TOC maxima (mg/L)",
+       y = "SWE maximum") +
+  theme_bw()
+
+ggplot(max_q_toc, aes(x = canyon_mouth_cfs, y = snow_water_equivalent)) +
+  facet_wrap(site_id ~ ., scales = "free_y") +
+  geom_smooth(method = "lm", se = FALSE, color = "grey80", lty = 2) +
+  geom_point() +
+  labs(x = "Q maximum @ canyon mouth (cfs)",
+       y = "SWE maximum") +
+  theme_bw()
+
+ggplot(max_q_toc, aes(x = q_max_doy, y = snotel_doy)) +
+  facet_wrap(site_id ~ ., scales = "free_y") +
+  geom_smooth(method = "lm", se = FALSE, color = "grey80", lty = 2) +
+  geom_point() +
+  labs(x = "day of Q maximum @ canyon mouth",
+       y = "day of SWE maximum") +
+  theme_bw()
+
+```
+
+Interestingly enough, the SNOTEL station best correlated with max TOC and peak 
+canyon Q is Deadman (North Fork). For the sake of this exploration, we are
+only going to use the Snotel data from that station. 
+
+```{r, message = FALSE}
+max_q_toc <- max_q_toc %>% 
+  filter(site_id == 438)
+```
+
+### Snotel data reduction
+
+```{r, message = FALSE}
+snotel_data %>% 
+  filter(year >= 2010, site_id == 438) %>% 
+  select(snow_water_equivalent:precipitation) %>% 
+  plot()
+```
+
+Given the high correlation between snow depth and swe, and min and mean temp, 
+we will drop snow depth and mean temp.
+
+```{r, message = FALSE}
+max_q_toc <- max_q_toc %>% 
+  select(-c(snow_depth, temperature_mean))
+```
+
+## Flow/toc correlations
+
+Let's explore some correlations in this dataset between the variables.
+
+```{r, message = FALSE}
+ggplot(max_q_toc, aes(x = q_max_doy, y = toc_max_doy, 
+                      color = mean_TOC, size = canyon_mouth_cfs)) +
+  coord_cartesian(xlim = c(120, 200), ylim = c(120, 200)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(intercept = 0,
+              slope = 1,
+              lty = 2,
+              color = "grey80") +
+  labs(x = "day of max Q @ canyon mouth",
+       y = "day of max TOC @ intake",
+       color = "max TOC (mg/L)",
+       size = "max Q @ canyon mouth (cfs)") +
+  scale_color_viridis_c() +
+  theme_bw()
+
+ggplot(max_q_toc, aes(y = mean_TOC, x = canyon_mouth_cfs)) +
+  geom_smooth(se = FALSE, method = "lm", color = "orange", lty = 2) +
+  geom_point(aes(size = snow_water_equivalent), alpha = 0.5) +
+  theme_bw() +
+  labs(x = "max Q @ canyon mouth (cfs)",
+       y = "max TOC @ intake (mg/L)",
+       size = "max SWE @ deadman") +
+  theme(legend.position = "bottom")
+```
+
+Great, there are some kind of linear relationships here. 
+
+# Describing magnitude of TOC
+
+Let's just use the magnitude/timing from the Q/SWE data here. I've explored other
+combinations, and this one (linear model of maximum Q
+at the canyon mouth) seems to be the best performing. 
+
+For reference, I tride a multiple linear regression...
+
+```{r, message = FALSE}
+lm_TOC <- lm(mean_TOC ~ canyon_mouth_cfs + snow_water_equivalent,
+             data = max_q_toc)
+
+summary(lm_TOC)
+```
+
+But the slopes aren't significant.
+
+```{r, message = FALSE}
+lm_TOC <- lm(mean_TOC ~ canyon_mouth_cfs,
+             data = max_q_toc)
+
+summary(lm_TOC)
+```
+
+This is better for significance, so we'll apply it/visualize.
+
+```{r, message = FALSE}
+max_q_toc <- max_q_toc %>% 
+  mutate(pred_toc = predict(lm_TOC))
+
+ggplot(max_q_toc, aes(x = mean_TOC, 
+                      y = pred_toc)) +
+  geom_point() +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(6, 13), ylim = c(6, 13)) +
+  labs(x = "maximum TOC in runoff period (mg/L)",
+       y = "predicted max TOC in runoff period (mg/L)")
+
+RMSE = rmse(max_q_toc$mean_TOC, max_q_toc$pred_toc)
+MAE = mae(max_q_toc$mean_TOC, max_q_toc$pred_toc)
+BIAS = bias(max_q_toc$mean_TOC, max_q_toc$pred_toc)
+
+```
+
+There is a caveat here, though:
+
+
+```{r, message = FALSE}
+ggplot(max_q_toc, aes(x = toc_max_doy, y = q_max_doy)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  theme_bw() +
+  coord_cartesian(xlim = c(90, 200), ylim = c(90, 200)) +
+  labs(x = "day of max TOC",
+       y = "day of max Q")
+```
+
+There are instances where the max Q occurs AFTER max TOC.
+
+# Describing timing of max TOC
+
+We'll have the same caveat of peak Q timing for these data.
+
+```{r, message = FALSE}
+lm_TOC_doy <- lm(toc_max_doy ~ q_max_doy +
+                   snotel_doy,
+                 data = max_q_toc)
+
+summary(lm_TOC_doy)
+```
+
+Same issue here with significance.
+
+```{r, message = FALSE}
+lm_TOC_swe <- lm(toc_max_doy ~ snotel_doy,
+                 data = max_q_toc)
+
+summary(lm_TOC_swe)
+```
+
+But this time we loose some correlation. We'll apply both, with the 
+acknowledgement that there isn't statistical significance for adding max Q doy.
+
+```{r, message = FALSE}
+max_q_toc <- max_q_toc %>% 
+  mutate(pred_toc_doy = predict(lm_TOC_doy),
+         pred_toc_swe = predict(lm_TOC_swe))
+
+max_q_toc %>% 
+  pivot_longer(cols = c(pred_toc_doy, pred_toc_swe),
+               names_to = "model",
+               values_to = "doy") %>% 
+  mutate(model = factor(model, 
+                        levels = c("pred_toc_doy", "pred_toc_swe"), 
+                        labels = c("swe + q", "swe"))) %>% 
+  ggplot(., aes(x = toc_max_doy, y = doy, color = model)) +
+  geom_point() +
+  theme_bw() +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_color_viridis_d() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  labs(x = "day of maximum TOC",
+       y = "predicted day of maximum TOC",
+       color = "covariates") +
+  coord_cartesian(xlim = c(120, 165), ylim = c(120, 165)) 
+
+max_q_toc %>% 
+  summarize(RMSE_doy = rmse(max_q_toc$toc_max_doy, max_q_toc$pred_toc_doy),
+            MAE_doy = mae(max_q_toc$toc_max_doy, max_q_toc$pred_toc_doy),
+            BIAS_doy = bias(max_q_toc$toc_max_doy, max_q_toc$pred_toc_doy),
+            RMSE_swe = rmse(max_q_toc$toc_max_doy, max_q_toc$pred_toc_swe),
+            MAE_swe = mae(max_q_toc$toc_max_doy, max_q_toc$pred_toc_swe),
+            BIAS_swe = bias(max_q_toc$toc_max_doy, max_q_toc$pred_toc_swe))
+
+```
+
+And just using SWE date:
+
+```{r, message = FALSE}
+ggplot(max_q_toc, aes(x = toc_max_doy, y = pred_toc_swe)) +
+  #geom_smooth(method = "lm", se = FALSE, color = "grey80") +
+  geom_point() +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  labs(x = "day of maximum TOC",
+       y = "predicted day of maximum TOC") +
+  coord_cartesian(xlim = c(120, 165), ylim = c(120, 165)) 
+```
+
+Since we're using max SWE here, let's look at timing for that like we did 
+with Q.
+
+```{r, message = FALSE}
+ggplot(max_q_toc, aes(x = toc_max_doy, y = snotel_doy)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  theme_bw() +
+  coord_cartesian(xlim = c(90, 200), ylim = c(90, 200)) +
+  labs(x = "day of max TOC",
+       y = "day of max SWE") 
+
+```
+
+Great. No caveat here.
+
+Probably should try some ridge regression here to see if it allows for the use
+of additional variables without overfitting and reducing significance of variables
+with colinearity.
+
