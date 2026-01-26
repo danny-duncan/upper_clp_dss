@@ -325,7 +325,7 @@ max_q_toc %>%
 
 ```
 
-And just using SWE date:
+And just using max SWE date:
 
 ```{r, message = FALSE}
 ggplot(max_q_toc, aes(x = toc_max_doy, y = pred_toc_swe)) +
