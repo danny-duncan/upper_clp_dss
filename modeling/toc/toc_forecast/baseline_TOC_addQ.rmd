@@ -539,6 +539,7 @@ ggplot(newdata, aes(x = DOY, y = canyon_mouth_cfs, fill = ave_fit)) +
 Save models
 
 ```{r}
+range(mainstem_plus$DOY)
 
 # write_rds(fit_1, here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit1_v2026-01-23.rds"))
 # write_rds(fit_2, here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit2_v2026-01-23.rds"))
