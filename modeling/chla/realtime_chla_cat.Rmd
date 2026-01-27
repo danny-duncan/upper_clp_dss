@@ -447,7 +447,7 @@ ggplot(heat_data, aes(x = factor(ChlA_cat_range), y = group, fill = prop)) +
       "Training/Validation Set: ", nrow(train_val), " samples              ",
       "Testing Set: ", nrow(testing), " samples"
     ),
-    x = "ChlA (mg/L) Category",
+    x = "ChlA (ug/L) Category",
     y = "Model Group",
     fill = "Proportion"
   ) +
@@ -1060,7 +1060,7 @@ ensemble <- plot_train_test_ensemble_acc(
   test_df = testing,
   models = map(full_model, "model"),
   target_col = "ChlA_cat",
-  units = "mg/L",voting_method = "soft",class_levels = c("0-2", "2-4", "4-6", "6+")
+  units = "ug/L",voting_method = "soft",class_levels = c("0-2", "2-4", "4-6", "6+")
 )
 
 ensemble_plot <- wrap_plots(ensemble, ncol = 2, guides = "collect") &
