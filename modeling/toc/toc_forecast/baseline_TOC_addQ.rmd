@@ -1,0 +1,550 @@
+---
+title: "Baseline TOC + Q"
+author: "ROSSyndicate"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Purpsoe
+
+The purpose of this markdown is to add some complexity to the DOY / distance
+up canyon in `modeling/toc/toc_forecast/baseline_TOC.Rmd` by adding canyon mouth
+data, which we have forecast data for and can easily turn into an operational 
+model that refelects interannual variability.
+
+## Data
+
+```{r}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, error = FALSE)
+library(tidyverse)
+library(here)
+library(mgcv)
+library(Metrics)
+library(cdssr)
+
+source(here("src/collation/load_grab_sample_data.R"))
+
+metrics <- function(df, set_name) {
+  data.frame(
+    dataset = set_name,
+    rmse = sqrt(mean((df$toc_doc - df$pred)^2)),
+    r2   = cor(df$toc_doc, df$pred)^2
+  )
+}
+
+# grab chemistry data
+chem <- load_grab_sample_data()
+# and location info
+locations <- read_csv(here("data/raw/spatial/metadata/water_sampling_sites.csv"))
+
+chem <- left_join(chem, locations)
+
+mainstem <- chem %>% 
+  filter(Campaign %in% c("Mainstem - Upper", "South Fork") & 
+           location_type %in% c("Mainstem", "Stream", "Inflow")) %>% 
+  mutate(DOY = yday(Date),
+         year = year(Date), 
+         toc_doc = if_else(!is.na(TOC), TOC, DOC),
+         # to play with categorical variables, they failed.
+         identity = if_else(Campaign == "South Fork", 1, 0),
+         fire_signal = if_else(year %in% c(2021, 2022), 1, 0)) %>% 
+  # limit time, remove fire signal, remove flier
+  filter(!is.na(toc_doc), between(DOY, 100, 320), fire_signal == 0, toc_doc < 9) %>% 
+  rename(date = Date)
+
+# grab canyon flow
+flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
+                       start_date = min(mainstem$Date, na.rm = T) - days(7),
+                       end_date = max(mainstem$Date, na.rm = T) + days(7),
+                       timescale = "day") %>%
+  select(date = datetime, 
+         canyon_mouth_cfs = value) %>% 
+  filter(date >= min(mainstem$date) - days(7))
+
+ggplot(flow_data, aes(x = date, y = canyon_mouth_cfs)) +
+  geom_point() 
+
+mainstem_plus <- left_join(mainstem, flow_data) %>%
+  filter(!is.na(canyon_mouth_cfs))
+
+TOC_GAM_more_q <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs), 
+                      data = mainstem_plus)
+gam.check(TOC_GAM_more_q)
+
+plot(TOC_GAM_more_q, scheme = 2, too.far = 0.1, shade = TRUE)
+
+vis.gam(TOC_GAM_more_q, view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp", theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(TOC_GAM_more_q, view = c("distance_upstream_km", "canyon_mouth_cfs"),
+        plot.type = "persp", theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(TOC_GAM_more_q, view = c("DOY", "canyon_mouth_cfs"),
+        plot.type = "persp", theta = 30, phi = 30,
+        ticktype = "detailed")
+```
+
+Okay, there seems to bee some good convergence here. Let's do the same method for
+split as the baseline GAM for DOY and distance up stream:
+
+- Test: 2025
+- Fold 1: 2015 (both campaigns together)
+- Folds 2/3: 2023 Mainstem, 2023 South Fork
+- Folds 4/5: 2024 Mainstem, 2024 South Fork
+
+GAM diagnostics are interpreted using the gam.check() function. We want to make
+sure that:
+
+1) the model converged (second line of the output), the convergence value is very small,
+and ideally model rank is last (26/26 for instance)
+2) We are confident we are not finding a local minima in the convergence ("Hessian was positive difinitive")
+3) that the k is ~ 1 and the p value > 0.05
+4) we want the lowest k (default is 25 or c(5, 5)) while not maxing out the wiggles
+which is determined by k' (max number of wiggles) and edf (actual wiggles used)
+
+Some notes on interpretation and tuning:
+
+- If the p-value < 0.05, you need to add more complexity to the model (by increasing k)
+- The lower the k means it's less likely to be over fit. 
+- As long as the p value > 0.05 and k ~ 1, it's unlikely to be underfit.
+- A higher k risks being overfit, and not generalizable. 
+- If your edf is very close to k' (like, within 1 unit), you probably need to increase k
+
+My rule of thumb for making sure you don't overfit: 
+if the edf value of your model is less than the k' of a lower k, you might be overfit:
+
+edf = 20, k' = 48 (implying the k = c(7,7), or 7x7-1), you'd want to try k = c(6,6),
+which would have a k' of 35 (6x6-1), and ideally the edf would still be low with
+a smaller parameterization space.
+
+## CV Model 1
+
+```{r}
+valid_1 <- mainstem_plus %>% filter(year == 2015)
+train_1 <- anti_join(mainstem_plus, valid_1) %>% 
+  filter(year != 2025)
+
+# fit GAM
+fit_1 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs), data = train_1, method = "GCV.Cp")
+
+# check GAM diagnostics
+gam.check(fit_1)  
+
+# 3D perspective
+vis.gam(fit_1,
+        view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(fit_1,
+        view = c("DOY", "canyon_mouth_cfs"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(fit_1,
+        view = c("canyon_mouth_cfs", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+# generate predictions
+valid_1$pred <- predict(fit_1, newdata = valid_1)
+
+metrics(valid_1, "validation")
+```
+
+## CV Model 2
+
+```{r}
+valid_2 <- mainstem_plus %>% filter(year == 2023 & Campaign == "Mainstem - Upper")
+train_2 <- anti_join(mainstem_plus, valid_2) %>% 
+  filter(year != 2025)
+
+# fit GAM
+fit_2 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs), data = train_2, method = "GCV.Cp")
+
+# check GAM diagnostics
+gam.check(fit_2)  
+
+# 3D perspective
+vis.gam(fit_2,
+        view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(fit_2,
+        view = c("DOY", "canyon_mouth_cfs"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(fit_2,
+        view = c("canyon_mouth_cfs", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+# generate predictions
+valid_2$pred <- predict(fit_2, newdata = valid_2)
+
+metrics(valid_2, "validation")
+```
+
+## CV Model 3
+
+```{r}
+valid_3 <- mainstem_plus %>% filter(year == 2023 & Campaign == "South Fork")
+train_3 <- anti_join(mainstem_plus, valid_3) %>% 
+  filter(year != 2025)
+
+# fit GAM
+fit_3 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs), data = train_3, method = "GCV.Cp")
+
+# check GAM diagnostics
+gam.check(fit_3)  
+
+# 3D perspective
+vis.gam(fit_3,
+        view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(fit_3,
+        view = c("DOY", "canyon_mouth_cfs"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(fit_3,
+        view = c("canyon_mouth_cfs", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+# generate predictions
+valid_3$pred <- predict(fit_3, newdata = valid_3)
+
+metrics(valid_3, "validation")
+```
+
+## CV Model 4
+
+```{r}
+valid_4 <- mainstem_plus %>% filter(year == 2024 & Campaign == "Mainstem - Upper")
+train_4 <- anti_join(mainstem_plus, valid_4) %>% 
+  filter(year != 2025)
+
+# fit GAM
+fit_4 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs), data = train_4, method = "GCV.Cp")
+
+# check GAM diagnostics
+gam.check(fit_4)  
+
+# 3D perspective
+vis.gam(fit_4,
+        view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(fit_4,
+        view = c("DOY", "canyon_mouth_cfs"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(fit_4,
+        view = c("canyon_mouth_cfs", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+# generate predictions
+valid_4$pred <- predict(fit_4, newdata = valid_4)
+
+metrics(valid_4, "validation")
+```
+
+## CV Model 5
+
+```{r}
+valid_5 <- mainstem_plus %>% filter(year == 2024 & Campaign == "South Fork")
+train_5 <- anti_join(mainstem_plus, valid_5) %>% 
+  filter(year != 2025)
+
+# fit GAM
+fit_5 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs), data = train_5, method = "GCV.Cp")
+
+# check GAM diagnostics
+gam.check(fit_5)  
+
+# 3D perspective
+vis.gam(fit_5,
+        view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(fit_5,
+        view = c("DOY", "canyon_mouth_cfs"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+vis.gam(fit_5,
+        view = c("canyon_mouth_cfs", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+
+# generate predictions
+valid_5$pred <- predict(fit_5, newdata = valid_5)
+
+metrics(valid_5, "validation")
+```
+
+## Apply to test set
+
+```{r}
+test_2025 <- mainstem_plus %>% filter(year == 2025)
+
+# apply ensemble
+test_2025 <- test_2025 %>%
+  mutate(
+    pred1 = predict(fit_1,newdata = test_2025),
+    pred2 = predict(fit_2, newdata = test_2025),
+    pred3 = predict(fit_3, newdata = test_2025),
+    pred4 = predict(fit_4, newdata = test_2025),
+    pred5 = predict(fit_5, newdata = test_2025),
+    pred_avg = (pred1 + pred2 + pred3 + pred4 + pred5) / 5
+  )
+
+# calculate performance metrics
+mae_val  <- mae(test_2025$toc_doc, test_2025$pred_avg)
+rmse_val <- rmse(test_2025$toc_doc, test_2025$pred_avg)
+bias_val <- bias(test_2025$toc_doc, test_2025$pred_avg)
+
+# r2 from linear regression
+r2_val <- summary(lm(test_2025$toc_doc ~test_2025$pred_avg))$r.squared
+
+# format annotation text for plot
+metrics_text <- paste0(
+  "MAE = ", round(mae_val, 2),
+  "\nRMSE = ", round(rmse_val, 2),
+  "\nBias = ", round(bias_val, 2),
+  "\nR² = ", round(r2_val, 2)
+)
+
+
+# pred - obs scatter plot!
+ggplot(test_2025, aes(y = pred_avg, x = toc_doc)) +
+  geom_point(color = "blue", alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (2025)",
+       subtitle = "TOC ~ DOY + distance upstream + canyon mouth flow") +
+  annotate("text", x = 1, y = 10, 
+           hjust = 0, vjust = 1, 
+           label = metrics_text, size = 4) +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10))
+
+# for kicks, look at performance by site
+ggplot(test_2025, aes(y = pred_avg, x = toc_doc)) +
+  geom_point(color = "blue", alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (2025)",
+       subtitle = "TOC ~ DOY + distance upstream + canyon mouth flow") +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10)) +
+  facet_wrap(site_name ~ .)
+
+```
+
+This looks pretty good, but it honestly performs about the same as the simple
+model of DOY + distance upstream. 
+
+# Do a quick sensitivity check
+
+We're going to raise the canyon flow by 25% and see if TOC increases here. This
+will give us a better idea of whether or not adding flow actually might be better
+in an operational scenario.
+
+```{r}
+test_2025_sens <- test_2025 %>% 
+  mutate(canyon_mouth_cfs = canyon_mouth_cfs*1.25)
+
+# apply ensemble for test set
+test_2025_sens <- test_2025_sens %>%
+  mutate(
+    pred1 = predict(fit_1, newdata = test_2025_sens),
+    pred2 = predict(fit_2, newdata = test_2025_sens),
+    pred3 = predict(fit_3, newdata = test_2025_sens),
+    pred4 = predict(fit_4, newdata = test_2025_sens),
+    pred5 = predict(fit_5, newdata = test_2025_sens),
+    pred_avg = (pred1 + pred2 + pred3 + pred4 + pred5) / 5
+  )
+
+# bias should change
+bias_val_sens <- bias(test_2025_sens$toc_doc, test_2025_sens$pred_avg)
+
+# pred - obs scatter plot!
+ggplot(test_2025_sens, aes(y = pred_avg, x = toc_doc)) +
+  geom_point(color = "blue", alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (2025)",
+       subtitle = "TOC ~ DOY + distance upstream + 1.25 * canyon mouth flow") +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10))
+
+test_2025_sens <- test_2025_sens %>% 
+  select(date, site_name, toc_doc, pred_sens = pred_avg)
+
+sensitivity <- test_2025 %>% 
+  select(date, site_name, toc_doc, pred_avg) %>% 
+  left_join(., test_2025_sens) %>% 
+  unique()
+
+ggplot(sensitivity, aes(x = pred_avg, y = pred_sens)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  theme_bw() +
+  labs(x = "GAM predicted",
+       y = "GAM predicted 25% increase in flow")
+
+
+```
+
+Okay, there's some sensitivity here, let's try this model on 2015 data and see
+what it looks like - 2015 had 2x max flow than 2025, and we want to know if we 
+under predict or overpredict at all that year. Keep in mind that these data have
+already been "seen" by the GAM, so it's kind of cheating, but since we're using
+a 5-fold CV, this should give us a bit of an idea about performance in a scenario
+with really high Q.
+
+```{r}
+test_2015 <- mainstem_plus %>% 
+  filter(year(date) == 2015)
+
+# apply ensemble for test set
+test_2015 <- test_2015 %>%
+  mutate(
+    pred1 = predict(fit_1, newdata = test_2015),
+    pred2 = predict(fit_2, newdata = test_2015),
+    pred3 = predict(fit_3, newdata = test_2015),
+    pred4 = predict(fit_4, newdata = test_2015),
+    pred5 = predict(fit_5, newdata = test_2015),
+    pred_avg = (pred1 + pred2 + pred3 + pred4 + pred5) / 5
+  )
+
+# bias should change
+bias_val_2015 <- bias(test_2015$toc_doc, test_2015$pred_avg)
+
+# pred - obs scatter plot!
+ggplot(test_2015, aes(y = pred_avg, x = toc_doc)) +
+  geom_point(color = "blue", alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (2025)",
+       subtitle = "TOC ~ DOY + distance upstream + 1.25 * canyon mouth flow") +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10))
+
+```
+
+Well, it's right on. Interesting that even though Q was 2x, the max TOC was
+very similar to 2025. There were also many fewer samples in 2015, and it doesn't
+look like there were samples during the peak runoff, so interpret with a grain
+of salt.
+
+# Visualize the decision space for interpretability
+
+GAMs are pretty interpretable when they have fewer interacting variables. In this
+case, we can just create a synthetic space/time space and apply the model across
+it to visualize what happens up the canyon over time.
+
+```{r}
+# Make a prediction grid across DOY and distance
+newdata <- expand.grid(
+  DOY = seq(min(mainstem_plus$DOY), 
+            max(mainstem_plus$DOY), 
+            5),
+  distance_upstream_km = seq(min(mainstem_plus$distance_upstream_km),
+                             max(mainstem_plus$distance_upstream_km), 10),
+  canyon_mouth_cfs = seq(min(mainstem_plus$canyon_mouth_cfs),
+                         max(mainstem_plus$canyon_mouth_cfs),
+                         100)
+)
+
+# Get predictions from your GAMs for the grid
+newdata$fit1 <- predict(fit_1, newdata = newdata)
+newdata$fit2 <- predict(fit_2, newdata = newdata)
+newdata$fit3 <- predict(fit_3, newdata = newdata)
+newdata$fit4 <- predict(fit_4, newdata = newdata)
+newdata$fit5 <- predict(fit_5, newdata = newdata)
+
+# create ensemble prediction
+newdata <- newdata %>% 
+  mutate(ave_fit = (fit1 + fit2 + fit3 + fit4 + fit5) / 5)
+
+# heatmap + contour plot
+ggplot(newdata, aes(x = DOY, y = distance_upstream_km, fill = ave_fit)) +
+  geom_tile() +
+  geom_contour(aes(z = ave_fit), color = "white", alpha = 0.7) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(
+    fill = "Partial TOC",
+    x = "Day of Year",
+    y = "Distance upstream from Canyon Mouth (km)"
+  ) +
+  theme_minimal(base_size = 14) 
+
+ggplot(newdata, aes(x = distance_upstream_km, y = canyon_mouth_cfs, fill = ave_fit)) +
+  geom_tile() +
+  geom_contour(aes(z = ave_fit), color = "white", alpha = 0.7) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(
+    fill = "Partial TOC",
+    y = "Q at the canyon mouth",
+    x = "Distance upstream from Canyon Mouth (km)"
+  ) +
+  theme_minimal(base_size = 14) 
+
+ggplot(newdata, aes(x = DOY, y = canyon_mouth_cfs, fill = ave_fit)) +
+  geom_tile() +
+  geom_contour(aes(z = ave_fit), color = "white", alpha = 0.7) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(
+    fill = "Partial TOC",
+    x = "Day of Year",
+    y = "Q at the canyon mouth"
+  ) +
+  theme_minimal(base_size = 14) 
+
+```
+
+
+Save models
+
+```{r}
+range(mainstem_plus$DOY)
+
+# write_rds(fit_1, here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit1_v2026-01-23.rds"))
+# write_rds(fit_2, here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit2_v2026-01-23.rds"))
+# write_rds(fit_3, here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit3_v2026-01-23.rds"))
+# write_rds(fit_4, here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit4_v2026-01-23.rds"))
+# write_rds(fit_5, here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit5_v2026-01-23.rds"))
+
+```

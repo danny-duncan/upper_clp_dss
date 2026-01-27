@@ -1,0 +1,99 @@
+---
+title: "Apply GAM to intake"
+author: "ROSSyndicate"
+date: "2026-01-26"
+output: html_document
+---
+
+# Purpose
+
+This script is meant to apply the distributed TOC GAM model to assess its 
+performance at the intake for pre-forecasted Q baseline performance. 
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+library(here)
+library(tidyverse)
+library(cdssr)
+library(mgcv)
+library(Metrics)
+```
+
+# Data
+
+Load in the data from the intake and flow data at the canyon mouth.
+
+```{r}
+# intake TOC
+fc_intake <- read_csv(here("data/collated/FC_intake/fc_intake_TOC_record_2010-2025.csv"))
+
+# read in flow data at canyon mouth
+flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
+                       start_date = "2010-01-01",
+                       end_date = "2025-12-31",
+                       timescale = "day") %>%
+  select(datetime, canyon_mouth_cfs = value) %>% 
+  mutate(date = date(datetime), 
+         year = year(date),
+         doy = yday(date)) 
+
+intake_flow <- left_join(fc_intake, flow_data) %>% 
+  rename(DOY = doy) %>% 
+  # remove data outside the window used to build the model
+  filter(between(DOY, 107, 320)) %>% 
+  # making an estimate of distance as a bit further up from our sampling 
+  # location at poudre above north fork
+  mutate(distance_upstream_km = 8)
+
+```
+
+And load in the model files. 
+
+```{r}
+fit_1 <- read_rds(here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit1_v2026-01-23.rds"))
+fit_2 <- read_rds(here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit2_v2026-01-23.rds"))
+fit_3 <- read_rds(here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit3_v2026-01-23.rds"))
+fit_4 <- read_rds(here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit4_v2026-01-23.rds"))
+fit_5 <- read_rds(here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit5_v2026-01-23.rds"))
+```
+
+# Model application
+
+And now we'll apply the GAM defined by the data from the watershed (including
+both FC data and ROSS data, but not intake data).
+
+```{r}
+intake_flow <- intake_flow %>% 
+  mutate(pred_toc_1 = predict(fit_1, intake_flow),
+         pred_toc_2 = predict(fit_2, intake_flow),
+         pred_toc_3 = predict(fit_3, intake_flow),
+         pred_toc_4 = predict(fit_4, intake_flow),
+         pred_toc_5 = predict(fit_5, intake_flow),
+         pred_toc = (pred_toc_1 + pred_toc_2 + pred_toc_3 + pred_toc_4 + pred_toc_5) / 5)
+```
+
+And visualize.
+
+```{r}
+intake_flow %>% 
+  ggplot(., aes(x = mean_TOC, y = pred_toc)) + 
+  geom_point() +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  labs(x = "measured TOC @ intake (mg/L)",
+       y = "predicted TOC @ intake (mg/L)") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) 
+
+```
+
+And get some performance stats.
+
+```{r}
+intake_flow %>% 
+  .[complete.cases(.), ] %>% 
+  summarize(RMSE = rmse(mean_TOC, pred_toc), 
+            MAE = mae(mean_TOC, pred_toc),
+            BIAS = bias(mean_TOC, pred_toc))
+
+summary(lm(intake_flow$pred_toc ~ intake_flow$mean_TOC))
+```
+
