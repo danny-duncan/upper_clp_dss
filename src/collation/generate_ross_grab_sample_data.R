@@ -159,13 +159,12 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
                                                     "data",
                                                     "cleaned"),
                                         full.names = TRUE,
-                                        pattern = ".csv")
+                                        pattern = ".rds")
 
   if(length(raw_ross_chem_data_path) == 0){
     stop("No cleaned data file found. Please check the directory: ",
          here(raw_ross_chem_data_directory, version_name,"data","cleaned"))
   }
-
   # Grab and clean the ROSS chem data (originally pulled from zenodo)
   ross_chem_data <- read_ext(raw_ross_chem_data_path) %>%
     mutate(
@@ -175,12 +174,9 @@ generate_ross_grab_sample_data <- function(raw_ross_chem_data_directory = here("
       DT_mst_char = as.character(DT_mst_char),
       # fixing site names based on sonde deployments with ROSS/Virridy sondes
       site_code = case_when(
-        site_code == "archery" & DT_mst <= ymd("2024-11-30") ~ "archery_virridy",
-        site_code == "timberline" & DT_mst <= ymd("2024-11-30") ~ "riverbend_virridy",
-        site_code == "prospect" & DT_mst <= ymd("2024-11-30") ~ "cottonwood_virridy",
         # updating to new names
-        site_code == "timberline" & DT_mst >= ymd("2024-11-30") ~ "riverbend",
-        site_code == "prospect" & DT_mst >= ymd("2024-11-30") ~ "cottonwood",
+        site_code == "timberline" ~ "riverbend",
+        site_code == "prospect" ~ "cottonwood",
         site_code == "lincoln" ~ "udall",
         site_code == "legacy" ~ "salyer",
         site_code == "boxelder" ~ "elc",
