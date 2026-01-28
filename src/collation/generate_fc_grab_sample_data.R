@@ -110,7 +110,7 @@ generate_fc_grab_sample_data <- function(
   file_paths <- list.files(raw_fc_chem_data_path, full.names = TRUE)
 
   # Determine the file types (data or field notes) and separate the lists based on that ----
-  chem_data_file_paths <- file_paths[!grepl("field", file_paths, ignore.case = TRUE)]
+  chem_data_file_paths <- file_paths[!grepl("field|location|metadata", file_paths, ignore.case = TRUE)]
   field_note_file_paths <- file_paths[grepl("field", file_paths, ignore.case = TRUE)]
 
   # Read in the raw data for each file type ----
@@ -218,17 +218,28 @@ generate_fc_grab_sample_data <- function(
 
   # Join the chem data with the field notes ----
   fc_chem_data <- full_join(chem_data, field_data) %>%
-    distinct()
+    distinct()%>%
+    #fixing a site_code/name issues
+    mutate(site_code = if_else(site_code == "chr", "chd", site_code))
+
+  # Read in the site metadata to update site names ----
+  fc_meta_lookup <- read_ext(here("data/raw/chem/fc_clp_chem/location_metadata_fc.csv"))%>%
+    rename(Site = site_name)
+  # Update site names based on the metadata ----
+  fc_chem_data_updated <- fc_chem_data %>%
+    left_join(fc_meta_lookup, by = "site_code") %>%
+    mutate(site_name = coalesce( Site, site_name)) %>%
+    select(-Site)
 
   # Update the saved data ----
   if (update_data) {
     date <- Sys.Date()
     file_name <- paste0("fc_chem_data_", date, ".parquet")
     output_path <- file.path(output_directory, file_name)
-    write_parquet(fc_chem_data, output_path)
+    write_parquet(fc_chem_data_updated, output_path)
     message("Saved updated FC chemistry data to: ", output_path)
   }
 
-  # Return the combined FC chem data and FC field notes ----
-  return(fc_chem_data)
+  # Return the combined FC chem data, FC field notes and updated site names ----
+  return(fc_chem_data_updated)
 }
