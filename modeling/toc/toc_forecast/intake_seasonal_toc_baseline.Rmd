@@ -36,7 +36,7 @@ flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
          doy = yday(date))
 
 
-# grab snotel data in HUC8
+# grab sites in the HUC
 snotel_sites <- snotel_info() %>%
   filter(grepl("10190007", description))
 
@@ -47,6 +47,51 @@ snotel_data <- snotel_download(site_id = snotel_sites$site_id,
   mutate(date = ymd(date),
          doy = yday(date),
          year = year(date))
+
+# prep for PCA
+snotel_matrix <- snotel_data %>%
+  select(date, site_id, snow_water_equivalent) %>% 
+  pivot_wider(names_from = site_id, 
+              names_prefix = "swe_",
+              values_from = snow_water_equivalent) %>% 
+  .[complete.cases(.), ]
+
+# run PCA
+pca_snotel <- snotel_matrix %>% 
+  select(starts_with("swe_")) %>% 
+  prcomp(., center = TRUE, scale. = TRUE) 
+ 
+# make the dataframe
+snotel <- tibble(swe_pca = pca_snotel$x[,1], date = snotel_matrix$date) 
+
+# calculate melt from PCA statistic
+snotel <- snotel %>% 
+  arrange(date) %>% 
+  mutate(date_m14 = date - days(14), 
+         date_m7 = date - days(7),
+         date_m3 = date - days(3)) %>%
+  # join for differences
+  left_join(snotel %>%
+              select(date, swe_pca) %>%
+              rename(date_m14 = date,
+                     swe_pca_lag14 = swe_pca),
+            by = "date_m14") %>%
+  left_join(snotel %>%
+              select(date, swe_pca) %>%
+              rename(date_m7 = date,
+                     swe_pca_lag7 = swe_pca),
+            by = "date_m7") %>%
+  left_join(snotel %>% 
+              select(date, swe_pca) %>% 
+              rename(date_m3 = date,
+                     swe_pca_lag3 = swe_pca)) %>% 
+  # compute melt rate
+  mutate(melt_rate_14d = (swe_pca_lag14 - swe_pca) / 14,
+    melt_rate_7d = (swe_pca_lag7 - swe_pca) / 7,
+    melt_rate_3d = (swe_pca_lag3 - swe_pca) / 3) %>% 
+  select(-c(date_m14, swe_pca_lag14,
+            date_m7, swe_pca_lag7, 
+            date_m3, swe_pca_lag3))
 
 ```
 
