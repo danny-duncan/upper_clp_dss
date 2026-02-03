@@ -1,7 +1,7 @@
 ---
 title: "Baseline TOC + Q"
 author: "ROSSyndicate"
-date: "`r Sys.Date()`"
+date: "2026-01-28"
 output: html_document
 ---
 
@@ -14,7 +14,7 @@ model that refelects interannual variability.
 
 ## Data
 
-```{r}
+```{r, echo = FALSE, message = FALSE, warning = FALSE, error = FALSE}
 knitr::opts_chunk$set(message = FALSE, warning = FALSE, error = FALSE)
 library(tidyverse)
 library(here)
@@ -23,25 +23,30 @@ library(Metrics)
 library(cdssr)
 
 source(here("src/collation/load_grab_sample_data.R"))
+```
 
+```{r}
 metrics <- function(df, set_name) {
   data.frame(
     dataset = set_name,
     rmse = sqrt(mean((df$toc_doc - df$pred)^2)),
-    r2   = cor(df$toc_doc, df$pred)^2
+    r2 = cor(df$toc_doc, df$pred)^2
   )
 }
 
 # grab chemistry data
-chem <- load_grab_sample_data()
-# and location info
-locations <- read_csv(here("data/raw/spatial/metadata/water_sampling_sites.csv"))
-
-chem <- left_join(chem, locations)
+chem <- load_grab_sample_data() %>% 
+  # remove intake for now
+  filter(site_code != "prw" & !is.na(Campaign))
 
 mainstem <- chem %>% 
   filter(Campaign %in% c("Mainstem - Upper", "South Fork") & 
-           location_type %in% c("Mainstem", "Stream", "Inflow")) %>% 
+           location_type %in% c("Mainstem", "Stream", "Inflow") &
+           # remove inflows
+           !(site_name %in% c("Poudre Above Joe Wright",
+                              "Beaver",
+                              "Comanche Inflow",
+                              "Hourglass Inflow"))) %>% 
   mutate(DOY = yday(Date),
          year = year(Date), 
          toc_doc = if_else(!is.na(TOC), TOC, DOC),
@@ -49,8 +54,24 @@ mainstem <- chem %>%
          identity = if_else(Campaign == "South Fork", 1, 0),
          fire_signal = if_else(year %in% c(2021, 2022), 1, 0)) %>% 
   # limit time, remove fire signal, remove flier
-  filter(!is.na(toc_doc), between(DOY, 100, 320), fire_signal == 0, toc_doc < 9) %>% 
-  rename(date = Date)
+  filter(!is.na(toc_doc), between(DOY, 100, 320), 
+         fire_signal == 0) %>% 
+  # remove data after the 2013 flood (Sept 9, 2013)
+  filter(!(Date >= "2013-09-2013" & year == 2013)) %>% 
+  rename(date = Date) 
+
+ggplot(mainstem, aes(x = DOY, y = toc_doc)) + 
+  geom_point() + 
+  facet_wrap(site_name ~ .)
+
+# also recode the flier in south fork and manners bridge
+mainstem <- mainstem %>% 
+  filter(!(site_name == "Poudre South Fork" & DOY > 200 & toc_doc > 9)) %>% 
+  filter(!(site_name == "Poudre at Manner's Bridge" & DOY > 200 & toc_doc >5))
+
+ggplot(mainstem, aes(x = DOY, y = toc_doc)) + 
+  geom_point() + 
+  facet_wrap(site_name ~ .)
 
 # grab canyon flow
 flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
@@ -67,32 +88,31 @@ ggplot(flow_data, aes(x = date, y = canyon_mouth_cfs)) +
 mainstem_plus <- left_join(mainstem, flow_data) %>%
   filter(!is.na(canyon_mouth_cfs))
 
-TOC_GAM_more_q <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs), 
+TOC_GAM_more_q <- gam(toc_doc ~ te(DOY, 
+                                   distance_upstream_km, 
+                                   canyon_mouth_cfs,
+                                   bs = c("cc", "tp", "tp")),
+                      method = "REML", 
                       data = mainstem_plus)
 gam.check(TOC_GAM_more_q)
-
-plot(TOC_GAM_more_q, scheme = 2, too.far = 0.1, shade = TRUE)
-
-vis.gam(TOC_GAM_more_q, view = c("DOY", "distance_upstream_km"),
-        plot.type = "persp", theta = 30, phi = 30,
-        ticktype = "detailed")
-
-vis.gam(TOC_GAM_more_q, view = c("distance_upstream_km", "canyon_mouth_cfs"),
-        plot.type = "persp", theta = 30, phi = 30,
-        ticktype = "detailed")
-
-vis.gam(TOC_GAM_more_q, view = c("DOY", "canyon_mouth_cfs"),
-        plot.type = "persp", theta = 30, phi = 30,
-        ticktype = "detailed")
 ```
 
 Okay, there seems to bee some good convergence here. Let's do the same method for
 split as the baseline GAM for DOY and distance up stream:
 
-- Test: 2025
-- Fold 1: 2015 (both campaigns together)
-- Folds 2/3: 2023 Mainstem, 2023 South Fork
-- Folds 4/5: 2024 Mainstem, 2024 South Fork
+- Test: 2010, 2017, 2025
+- CV 1: 2008, 2013, 2018
+- CV 2: 2009, 2014, 2019
+- CV 3: 2011, 2015, 2023
+- CV 4: 2012, 2016, 2024
+
+```{r}
+test_years <- c(2010, 2017, 2025)
+cv_1_years <- c(2008, 2013, 2018)
+cv_2_years <- c(2009, 2014, 2019)
+cv_3_years <- c(2011, 2015, 2023)
+cv_4_years <- c(2012, 2016, 2024)
+```
 
 GAM diagnostics are interpreted using the gam.check() function. We want to make
 sure that:
@@ -122,12 +142,15 @@ a smaller parameterization space.
 ## CV Model 1
 
 ```{r}
-valid_1 <- mainstem_plus %>% filter(year == 2015)
+valid_1 <- mainstem_plus %>% filter(year %in% cv_1_years)
 train_1 <- anti_join(mainstem_plus, valid_1) %>% 
-  filter(year != 2025)
+  filter(!(year %in% test_years))
 
 # fit GAM
-fit_1 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs), data = train_1, method = "GCV.Cp")
+fit_1 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs,
+                          bs = c("cc", "tp", "tp")), 
+             data = train_1, 
+             method = "REML")
 
 # check GAM diagnostics
 gam.check(fit_1)  
@@ -154,18 +177,29 @@ vis.gam(fit_1,
 # generate predictions
 valid_1$pred <- predict(fit_1, newdata = valid_1)
 
+ggplot(valid_1, aes(x = toc_doc, y = pred)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  theme_bw() +
+  facet_grid(year ~ site_name)
+
 metrics(valid_1, "validation")
 ```
+
+2008 and 2013 performance aren't great, but the model looks pretty good otherwise.
 
 ## CV Model 2
 
 ```{r}
-valid_2 <- mainstem_plus %>% filter(year == 2023 & Campaign == "Mainstem - Upper")
+valid_2 <- mainstem_plus %>% filter(year %in% cv_2_years)
 train_2 <- anti_join(mainstem_plus, valid_2) %>% 
-  filter(year != 2025)
+  filter(!(year %in% test_years))
 
 # fit GAM
-fit_2 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs), data = train_2, method = "GCV.Cp")
+fit_2 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs,
+                          bs = c("cc", "tp", "tp")), 
+             data = train_2, 
+             method = "REML")
 
 # check GAM diagnostics
 gam.check(fit_2)  
@@ -192,18 +226,30 @@ vis.gam(fit_2,
 # generate predictions
 valid_2$pred <- predict(fit_2, newdata = valid_2)
 
+ggplot(valid_2, aes(x = toc_doc, y = pred)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  theme_bw()+
+  facet_grid(year ~ site_name)
+
 metrics(valid_2, "validation")
 ```
+
+2009/2019 aren't great here, either - mostly on the upper end. Graned, performance
+is similar to the previous CV, so we'll keep going
 
 ## CV Model 3
 
 ```{r}
-valid_3 <- mainstem_plus %>% filter(year == 2023 & Campaign == "South Fork")
+valid_3 <- mainstem_plus %>% filter(year %in% cv_3_years)
 train_3 <- anti_join(mainstem_plus, valid_3) %>% 
-  filter(year != 2025)
+  filter(!(year %in% test_years))
 
 # fit GAM
-fit_3 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs), data = train_3, method = "GCV.Cp")
+fit_3 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs,
+                          bs = c("cc", "tp", "tp")),
+             data = train_3, 
+             method = "REML")
 
 # check GAM diagnostics
 gam.check(fit_3)  
@@ -230,18 +276,29 @@ vis.gam(fit_3,
 # generate predictions
 valid_3$pred <- predict(fit_3, newdata = valid_3)
 
+ggplot(valid_3, aes(x = toc_doc, y = pred)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  theme_bw() +
+  facet_grid(year ~ site_name)
+
 metrics(valid_3, "validation")
 ```
+
+This looks pretty good across years
 
 ## CV Model 4
 
 ```{r}
-valid_4 <- mainstem_plus %>% filter(year == 2024 & Campaign == "Mainstem - Upper")
+valid_4 <- mainstem_plus %>% filter(year %in% cv_4_years)
 train_4 <- anti_join(mainstem_plus, valid_4) %>% 
-  filter(year != 2025)
+  filter(!(year %in% test_years))
 
 # fit GAM
-fit_4 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs), data = train_4, method = "GCV.Cp")
+fit_4 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs,
+                          bs = c("cc", "tp", "tp")), 
+             data = train_4, 
+             method = "REML")
 
 # check GAM diagnostics
 gam.check(fit_4)  
@@ -268,51 +325,22 @@ vis.gam(fit_4,
 # generate predictions
 valid_4$pred <- predict(fit_4, newdata = valid_4)
 
+ggplot(valid_4, aes(x = toc_doc, y = pred)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  theme_bw()+
+  facet_grid(year ~ site_name)
+
 metrics(valid_4, "validation")
 ```
 
-## CV Model 5
-
-```{r}
-valid_5 <- mainstem_plus %>% filter(year == 2024 & Campaign == "South Fork")
-train_5 <- anti_join(mainstem_plus, valid_5) %>% 
-  filter(year != 2025)
-
-# fit GAM
-fit_5 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs), data = train_5, method = "GCV.Cp")
-
-# check GAM diagnostics
-gam.check(fit_5)  
-
-# 3D perspective
-vis.gam(fit_5,
-        view = c("DOY", "distance_upstream_km"),
-        plot.type = "persp",
-        theta = 30, phi = 30,
-        ticktype = "detailed")
-
-vis.gam(fit_5,
-        view = c("DOY", "canyon_mouth_cfs"),
-        plot.type = "persp",
-        theta = 30, phi = 30,
-        ticktype = "detailed")
-
-vis.gam(fit_5,
-        view = c("canyon_mouth_cfs", "distance_upstream_km"),
-        plot.type = "persp",
-        theta = 30, phi = 30,
-        ticktype = "detailed")
-
-# generate predictions
-valid_5$pred <- predict(fit_5, newdata = valid_5)
-
-metrics(valid_5, "validation")
-```
+2012 isn't great and 2024 is a little over-predicted. Again, performance is pretty
+similar across CV's
 
 ## Apply to test set
 
 ```{r}
-test_2025 <- mainstem_plus %>% filter(year == 2025)
+test_2025 <- mainstem_plus %>% filter(year %in% test_years)
 
 # apply ensemble
 test_2025 <- test_2025 %>%
@@ -321,8 +349,7 @@ test_2025 <- test_2025 %>%
     pred2 = predict(fit_2, newdata = test_2025),
     pred3 = predict(fit_3, newdata = test_2025),
     pred4 = predict(fit_4, newdata = test_2025),
-    pred5 = predict(fit_5, newdata = test_2025),
-    pred_avg = (pred1 + pred2 + pred3 + pred4 + pred5) / 5
+    pred_avg = (pred1 + pred2 + pred3 + pred4) / 4
   )
 
 # calculate performance metrics
@@ -354,8 +381,14 @@ ggplot(test_2025, aes(y = pred_avg, x = toc_doc)) +
            hjust = 0, vjust = 1, 
            label = metrics_text, size = 4) +
   theme_bw(base_size = 14) +
-  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10))
+  coord_cartesian(xlim = c(1, 12), ylim = c(1, 12))
 
+```
+
+Okay, this is okay, but not great. Let's see if we can figure out where we're
+not doing very well.
+
+```{r}
 # for kicks, look at performance by site
 ggplot(test_2025, aes(y = pred_avg, x = toc_doc)) +
   geom_point(color = "blue", alpha = 0.6, size = 2) +
@@ -365,13 +398,55 @@ ggplot(test_2025, aes(y = pred_avg, x = toc_doc)) +
        title = "GAM Ensemble Predictions vs Observed (2025)",
        subtitle = "TOC ~ DOY + distance upstream + canyon mouth flow") +
   theme_bw(base_size = 14) +
-  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10)) +
+  coord_cartesian(xlim = c(1, 12), ylim = c(1, 12)) +
   facet_wrap(site_name ~ .)
+```
+
+Looks like worst performance is at Poudre Below Rustic and Poudre Below S Fork -
+let's see if there are performance differences by year.
+
+```{r}
+# and by year
+ggplot(test_2025, aes(y = pred_avg, x = toc_doc)) +
+  geom_point(color = "blue", alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (2025)",
+       subtitle = "TOC ~ DOY + distance upstream + canyon mouth flow") +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10)) +
+  facet_wrap(year ~ .)
+```
+
+Ooof. 2017 is pretty bad here. Let's facet by year and site.
+
+```{r}
+ggplot(test_2025, aes(y = pred_avg, x = toc_doc)) +
+  geom_point(color = "blue", alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (2025)",
+       subtitle = "TOC ~ DOY + distance upstream + canyon mouth flow") +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10)) +
+  facet_wrap(year ~ site_name)
 
 ```
 
-This looks pretty good, but it honestly performs about the same as the simple
-model of DOY + distance upstream. 
+2017 seems to be the problem child here, maybe SS or someone at the city
+knows why.
+
+```{r}
+test_2025 %>% 
+  filter(year == 2017) %>% 
+  ggplot(., aes(x = toc_doc, y = pred_avg, color = distance_upstream_km)) +
+  geom_point() +
+  theme_bw()
+```
+
+
 
 # Do a quick sensitivity check
 
@@ -390,8 +465,7 @@ test_2025_sens <- test_2025_sens %>%
     pred2 = predict(fit_2, newdata = test_2025_sens),
     pred3 = predict(fit_3, newdata = test_2025_sens),
     pred4 = predict(fit_4, newdata = test_2025_sens),
-    pred5 = predict(fit_5, newdata = test_2025_sens),
-    pred_avg = (pred1 + pred2 + pred3 + pred4 + pred5) / 5
+    pred_avg = (pred1 + pred2 + pred3 + pred4) / 4
   )
 
 # bias should change
@@ -444,9 +518,8 @@ test_2015 <- test_2015 %>%
     pred2 = predict(fit_2, newdata = test_2015),
     pred3 = predict(fit_3, newdata = test_2015),
     pred4 = predict(fit_4, newdata = test_2015),
-    pred5 = predict(fit_5, newdata = test_2015),
-    pred_avg = (pred1 + pred2 + pred3 + pred4 + pred5) / 5
-  )
+    pred_avg = (pred1 + pred2 + pred3 + pred4) / 4
+    )
 
 # bias should change
 bias_val_2015 <- bias(test_2015$toc_doc, test_2015$pred_avg)
@@ -457,8 +530,8 @@ ggplot(test_2015, aes(y = pred_avg, x = toc_doc)) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(x = "Observed TOC (mg/L)",
        y = "Predicted TOC (ensemble, mg/L)",
-       title = "GAM Ensemble Predictions vs Observed (2025)",
-       subtitle = "TOC ~ DOY + distance upstream + 1.25 * canyon mouth flow") +
+       title = "GAM Ensemble Predictions vs Observed (2015)",
+       subtitle = "TOC ~ DOY + distance upstream + canyon mouth flow") +
   theme_bw(base_size = 14) +
   coord_cartesian(xlim = c(1, 10), ylim = c(1, 10))
 

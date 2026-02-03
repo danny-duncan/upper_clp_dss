@@ -23,10 +23,6 @@ source(here("src/collation/load_grab_sample_data.R"))
 # grab chemistry data
 chem <- load_grab_sample_data() %>% 
   filter(site_code != "prw")
-# and location info
-locations <- read_csv(here("data/raw/spatial/metadata/water_sampling_sites.csv"))
-
-chem <- left_join(chem, locations)
 ```
 
 # Exploring DOC/TOC interoperability
@@ -162,19 +158,37 @@ don't add much value here, so leaving out.
 ```{r}
 mainstem <- chem %>% 
   filter(Campaign %in% c("Mainstem - Upper", "South Fork") & 
-           location_type %in% c("Mainstem", "Stream", "Inflow")) %>% 
+           location_type %in% c("Mainstem", "Stream", "Inflow") &
+           # remove inflows
+           !(site_name %in% c("Poudre Above Joe Wright",
+                              "Beaver",
+                              "Comanche Inflow",
+                              "Hourglass Inflow"))) %>% 
   mutate(DOY = yday(Date),
          year = year(Date), 
          toc_doc = if_else(!is.na(TOC), TOC, DOC),
          # to play with categorical variables, they failed.
          identity = if_else(Campaign == "South Fork", 1, 0),
-         fire_signal = if_else(year %in% c(2021, 2022), 1, 0),
-         # recode the flier in south fork
-         toc_doc = if_else(toc_doc > 9 & site_name == "Poudre South Fork", 
-                           NA, 
-                           toc_doc)) %>% 
+         fire_signal = if_else(year %in% c(2021, 2022), 1, 0)) %>% 
   # limit time, remove fire signal, remove flier
-  filter(!is.na(toc_doc), between(DOY, 100, 320), fire_signal == 0 )
+  filter(!is.na(toc_doc), between(DOY, 100, 320), 
+         fire_signal == 0) %>% 
+  # remove data after the 2013 flood (Sept 9, 2013)
+  filter(!(Date >= "2013-09-2013" & year == 2013)) %>% 
+  rename(date = Date) 
+
+ggplot(mainstem, aes(x = DOY, y = toc_doc)) + 
+  geom_point() + 
+  facet_wrap(site_name ~ .)
+
+# also recode the flier in south fork and manners bridge
+mainstem <- mainstem %>% 
+  filter(!(site_name == "Poudre South Fork" & DOY > 200 & toc_doc > 9)) %>% 
+  filter(!(site_name == "Poudre at Manner's Bridge" & DOY > 200 & toc_doc >5))
+
+ggplot(mainstem, aes(x = DOY, y = toc_doc)) + 
+  geom_point() + 
+  facet_wrap(site_name ~ .)
 
 # see what this looks like
 TOC_GAM <- gam(toc_doc ~ te(DOY, distance_upstream_km, 
@@ -191,26 +205,17 @@ vis.gam(TOC_GAM, view = c("DOY", "distance_upstream_km"),
 
 ```
 
-Okay, this seems to work pretty well. We do, however, want to do some thoughtful
-TVT here to keep our error estimates honest. First let's look at annual distribution
-since we want to test in 2025.
+Okay, this seems to work pretty well, even if the p value is low. We do, 
+however, want to do some thoughtful TVT here to keep our error estimates
+honest. First let's look at annual distribution of data.
 
 ```{r}
 mainstem %>% 
-summarize(n = n(), 
-.by = year)
-```
-
-Maybe we actually need to split by S Fork and Mainstem so we don't mess with the
-huge contributions of 2024 data or super minimal years like... all others.
-
-```{r}
-counts <- mainstem %>% 
-  summarise(n = n(),
-            .by = c(year, Campaign)) %>% 
+  summarize(n = n(), 
+            .by = year) %>% 
   arrange(year)
-counts
 ```
+
 
 We'll do some kinda random, but not really random splits here:
 
@@ -289,11 +294,19 @@ vis.gam(fit_1,
 # apply to validation
 valid_1$pred <- predict(fit_1, newdata = valid_1)
 
+ggplot(valid_1, aes(x = toc_doc, y = pred)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  theme_bw() +
+  facet_grid(year ~ site_name)
+
 # and report performance
 mae(valid_1$toc_doc, valid_1$pred)
 rmse(valid_1$toc_doc, valid_1$pred)
 bias(valid_1$toc_doc, valid_1$pred)
 ```
+
+2008 and 2013 aren't great.
 
 ## CV Model 2
 
@@ -327,9 +340,13 @@ vis.gam(fit_2,
 
 # apply to validation
 valid_2$pred <- predict(fit_2, newdata = valid_2)
+
 ggplot(valid_2, aes(x = toc_doc, y = pred)) +
-  geom_point( ) +
-  theme_bw()
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  theme_bw() +
+  facet_grid(year ~ site_name)
+
 
 # and report performance
 mae(valid_2$toc_doc, valid_2$pred)
@@ -337,6 +354,7 @@ rmse(valid_2$toc_doc, valid_2$pred)
 bias(valid_2$toc_doc, valid_2$pred)
 ```
 
+2014 and 2019 are generally under estimated across all sites.
 
 ## CV Model 3
 
@@ -373,19 +391,11 @@ vis.gam(fit_3,
 valid_3$pred <- predict(fit_3, newdata = valid_3)
 
 ggplot(valid_3, aes(x = toc_doc, y = pred)) +
-  geom_point( ) +
-  theme_bw()
-
-train_3 %>% 
-  mutate(pred = predict(fit_3, newdata = train_3)) %>% 
-ggplot(., aes(x = toc_doc, y = pred, color = factor(year))) +
-  geom_point( ) +
-  facet_grid(site_name ~ .) +
-  theme_bw() +
-  scale_color_viridis_d()
-ggplot(train_3, aes(x = DOY, y = toc_doc, color = factor(year))) +
   geom_point() +
-  scale_color_viridis_d()
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  theme_bw() +
+  facet_grid(year ~ site_name)
+
 
 # and report performance
 mae(valid_3$toc_doc, valid_3$pred)
@@ -393,6 +403,7 @@ rmse(valid_3$toc_doc, valid_3$pred)
 bias(valid_3$toc_doc, valid_3$pred)
 ```
 
+Super not great performance in 2011.
 
 ## CV Model 4
 
@@ -425,12 +436,19 @@ vis.gam(fit_4,
 # apply to validation
 valid_4$pred <- predict(fit_4, newdata = valid_4)
 
+ggplot(valid_4, aes(x = toc_doc, y = pred)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  theme_bw() +
+  facet_grid(year ~ site_name)
+
 # and report performance
 mae(valid_4$toc_doc, valid_4$pred)
 rmse(valid_4$toc_doc, valid_4$pred)
 bias(valid_4$toc_doc, valid_4$pred)
 ```
 
+Some over prediction in 2024, some under prediction in 2016
 
 # Apply ensemble to test set
 
@@ -472,30 +490,36 @@ ggplot(test, aes(y = pred_avg, x = toc_doc)) +
        y = "Predicted TOC (ensemble, mg/L)",
        title = "GAM Ensemble Predictions vs Observed (holdout)",
        subtitle = "TOC ~ DOY + distance upstream") +
-  annotate("text", x = 1, y = 10, 
+  annotate("text", x = 1, y = 12, 
            hjust = 0, vjust = 1, 
            label = metrics_text, size = 4) +
   theme_bw(base_size = 14) +
   scale_color_viridis_c() +
   coord_cartesian(xlim = c(1, 12), ylim = c(1, 12))
+```
 
-# with DOY
-ggplot(test, aes(y = pred_avg, x = toc_doc, color = DOY)) +
+Let's dig into that with year
+```{r}
+ggplot(test, aes(y = pred_avg, x = toc_doc, color = factor(year))) +
   geom_point(alpha = 0.6, size = 2) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(x = "Observed TOC (mg/L)",
        y = "Predicted TOC (ensemble, mg/L)",
        title = "GAM Ensemble Predictions vs Observed (holdout)",
-       subtitle = "TOC ~ DOY + distance upstream") +
-  annotate("text", x = 1, y = 10, 
+       subtitle = "TOC ~ DOY + distance upstream",
+       color = "year") +
+  annotate("text", x = 1, y = 12, 
            hjust = 0, vjust = 1, 
            label = metrics_text, size = 4) +
   theme_bw(base_size = 14) +
-  scale_color_viridis_c() +
+  scale_color_viridis_d() +
   coord_cartesian(xlim = c(1, 12), ylim = c(1, 12))
+```
 
+And also look at site / year
+```{r, fig.dim=c(12, 8)}
 # for kicks, look at performance by site and DOY
-ggplot(test, aes(y = pred_avg, x = toc_doc, color = DOY)) +
+ggplot(test, aes(y = pred_avg, x = toc_doc)) +
   geom_point(alpha = 0.6, size = 2) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(x = "Observed TOC (mg/L)",
@@ -505,8 +529,25 @@ ggplot(test, aes(y = pred_avg, x = toc_doc, color = DOY)) +
   theme_bw(base_size = 14) +
   scale_color_viridis_c() +
   coord_cartesian(xlim = c(1, 12), ylim = c(1, 12)) +
-  facet_wrap(site_name ~ .)
+  facet_wrap(year ~ site_name)
 
+```
+
+And let's look at DOY
+
+```{r, fig.dim=c(12, 8)}
+ggplot(test, aes(y = pred_avg, x = toc_doc, color = DOY)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (holdout)",
+       subtitle = "TOC ~ DOY + distance upstream",
+       color = "day of year") +
+  theme_bw(base_size = 14) +
+  scale_color_viridis_c() +
+  coord_cartesian(xlim = c(1, 12), ylim = c(1, 12)) +
+  facet_wrap(year ~ site_name)
 ```
 
 There's clearly some variation at start/end of season that isn't being captured 
@@ -555,10 +596,10 @@ And let's save these models as the baseline:
 
 ```{r}
 
-write_rds(fit_1, here("data/derived/models/TOC_distributed/TOC_GAM_fit1_v2026-01-28.rds"))
-write_rds(fit_2, here("data/derived/models/TOC_distributed/TOC_GAM_fit2_v2026-01-28.rds"))
-write_rds(fit_3, here("data/derived/models/TOC_distributed/TOC_GAM_fit3_v2026-01-28.rds"))
-write_rds(fit_4, here("data/derived/models/TOC_distributed/TOC_GAM_fit4_v2026-01-28.rds"))
+# write_rds(fit_1, here("data/derived/models/TOC_distributed/TOC_GAM_fit1_v2026-02-03.rds"))
+# write_rds(fit_2, here("data/derived/models/TOC_distributed/TOC_GAM_fit2_v2026-02-03.rds"))
+# write_rds(fit_3, here("data/derived/models/TOC_distributed/TOC_GAM_fit3_v2026-02-03.rds"))
+# write_rds(fit_4, here("data/derived/models/TOC_distributed/TOC_GAM_fit4_v2026-02-03.rds"))
 
 ```
 
