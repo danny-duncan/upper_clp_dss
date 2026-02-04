@@ -1,6 +1,6 @@
 ---
 title: "Baseline TOC model development in CLP"
-date: "2026-01-28"
+date: "2026-02-04"
 output: html_document
 ---
 
@@ -221,14 +221,16 @@ gam_linear <- gam(toc_doc ~ DOY + distance_upstream_km,
                   data = mainstem,
                   family = Gamma(link = "log"),
                   method = "REML")
-summary(gam_linear, 0)
+summary(gam_linear)
+gam.check(gam_linear, 0)
 
 gam_add <- gam(toc_doc ~ s(DOY, bs = "cc", k = 10) + 
                  s(distance_upstream_km, bs = "tp", k = 5),
                data = mainstem,
                family = Gamma(link = "log"),
                method = "REML")
-summary(gam_add, 0)
+summary(gam_add)
+gam.check(gam_add, 0)
 
 gam_add_int <- gam(toc_doc ~ s(DOY, bs = "cc", k = 10) + 
                      s(distance_upstream_km, bs = "tp", k = 5) +
@@ -236,14 +238,16 @@ gam_add_int <- gam(toc_doc ~ s(DOY, bs = "cc", k = 10) +
                    data = mainstem,
                    family = Gamma(link = "log"),
                    method = "REML")
-summary(gam_add_int, 0)
+summary(gam_add_int)
+gam.check(gam_add_int, 0)
 
 gam_tensor <- gam(toc_doc ~ te(DOY, distance_upstream_km, 
                                bs = c("cc", "tp"), k = c(10, 5)),
                data = mainstem,
                family = Gamma(link = "log"),
                method = "REML")
-summary(gam_tensor, 0)
+summary(gam_tensor)
+gam.check(gam_tensor, 0)
 
 AIC(gam_linear, gam_add, gam_add_int, gam_tensor)
 
@@ -737,10 +741,10 @@ And let's save these models as the baseline:
 
 ```{r}
 
-# write_rds(gam_add_int_1, here("data/derived/models/TOC_distributed/TOC_GAM_s_ti_fit1_v2026-02-04.rds"))
-# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/TOC_GAM_s_ti_fit2_v2026-02-04.rds"))
-# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/TOC_GAM_s_ti_fit3_v2026-02-04.rds"))
-# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/TOC_GAM_s_ti_fit4_v2026-02-04.rds"))
+# write_rds(gam_add_int_1, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit1_v2026-02-04.rds"))
+# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit2_v2026-02-04.rds"))
+# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit3_v2026-02-04.rds"))
+# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit4_v2026-02-04.rds"))
 
 ```
 

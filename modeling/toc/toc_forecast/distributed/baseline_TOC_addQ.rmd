@@ -1,7 +1,7 @@
 ---
 title: "Baseline TOC + Q"
 author: "ROSSyndicate"
-date: "2026-01-28"
+date: "2026-02-04"
 output: html_document
 ---
 
@@ -26,18 +26,17 @@ source(here("src/collation/load_grab_sample_data.R"))
 ```
 
 ```{r}
-metrics <- function(df, set_name) {
-  data.frame(
-    dataset = set_name,
-    rmse = sqrt(mean((df$toc_doc - df$pred)^2)),
-    r2 = cor(df$toc_doc, df$pred)^2
-  )
-}
-
 # grab chemistry data
 chem <- load_grab_sample_data() %>% 
   # remove intake for now
-  filter(site_code != "prw" & !is.na(Campaign))
+  filter(site_code != "prw" & !is.na(Campaign)) %>% 
+  # check for DOC/TOC data
+  filter(!is.na(TOC) | !is.na(DOC)) %>% 
+  # only grab columns we need right now
+  select(Date, site_name, site_code, collector, TOC, DOC, flag,
+         Campaign, location_type, watershed, distance_upstream_km) %>% 
+  # drop any duplicates here
+  unique()
 
 mainstem <- chem %>% 
   filter(Campaign %in% c("Mainstem - Upper", "South Fork") & 
@@ -59,6 +58,11 @@ mainstem <- chem %>%
   # remove data after the 2013 flood (Sept 9, 2013)
   filter(!(Date >= "2013-09-2013" & year == 2013)) %>% 
   rename(date = Date) 
+
+# let's also make sure we only have one sample per day per site
+mainstem <- mainstem %>% 
+  summarize(toc_doc = mean(toc_doc),
+            .by = c(date, site_name, DOY, year, distance_upstream_km))
 
 ggplot(mainstem, aes(x = DOY, y = toc_doc)) + 
   geom_point() + 
@@ -83,21 +87,94 @@ flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
   filter(date >= min(mainstem$date) - days(7))
 
 ggplot(flow_data, aes(x = date, y = canyon_mouth_cfs)) +
-  geom_point() 
+  geom_point() +
+  theme_bw()
 
 mainstem_plus <- left_join(mainstem, flow_data) %>%
-  filter(!is.na(canyon_mouth_cfs))
-
-TOC_GAM_more_q <- gam(toc_doc ~ te(DOY, 
-                                   distance_upstream_km, 
-                                   canyon_mouth_cfs,
-                                   bs = c("cc", "tp", "tp")),
-                      method = "REML", 
-                      data = mainstem_plus)
-gam.check(TOC_GAM_more_q)
+  filter(!is.na(canyon_mouth_cfs)) %>% 
+  select(date, year, DOY, distance_upstream_km, canyon_mouth_cfs, site_name, toc_doc) 
 ```
 
-Okay, there seems to bee some good convergence here. Let's do the same method for
+And now let's walk through some simple GAM architectures here.
+
+```{r}
+gam_linear <- gam(toc_doc ~ DOY + distance_upstream_km + canyon_mouth_cfs,
+                  bs = c("cc", "tp", "tp"),
+                  method = "REML", 
+                  family = Gamma(link = "log"),
+                  data = mainstem_plus)
+gam.check(gam_linear, 0)
+summary(gam_linear)
+
+gam_add <- gam(toc_doc ~ s(DOY, bs = "cc") + 
+                 s(canyon_mouth_cfs, bs = "tp") +
+                 s(distance_upstream_km, bs = "tp", k = 5),
+               method = "REML", 
+               family = Gamma(link = "log"),
+               data = mainstem_plus)
+gam.check(gam_add, 0)
+# make this a little more aggressive to try to get a gap between k' and
+gam_add <- gam(toc_doc ~ s(DOY, bs = "cc", k = 15) + 
+                 s(canyon_mouth_cfs, bs = "tp", k = 15) +
+                 s(distance_upstream_km, bs = "tp", k = 5),
+               method = "REML", 
+               family = Gamma(link = "log"),
+               data = mainstem_plus)
+gam.check(gam_add, 0)
+summary(gam_add)
+
+gam_add_by <- gam(toc_doc ~ s(DOY, k = 15, bs = "cc", by = distance_upstream_km) + 
+                    s(canyon_mouth_cfs, k = 15, by = distance_upstream_km, bs = "tp"),
+                  method = "REML", 
+                  family = Gamma(link = "log"),
+                  data = mainstem_plus)
+gam.check(gam_add_by, 0)
+summary(gam_add_by)
+
+
+gam_add_int <- gam(toc_doc ~ s(DOY, bs = "cc", k = 15) + 
+                     s(canyon_mouth_cfs, bs = "tp", k = 15) +
+                     s(distance_upstream_km, bs = "tp", k = 5) +
+                     ti(DOY, canyon_mouth_cfs, distance_upstream_km, 
+                        bs = c("cc", "tp", "tp")),
+                   data = mainstem_plus,
+                   family = Gamma(link = "log"),
+                   method = "REML")
+gam.check(gam_add_int, 0)
+summary(gam_add_int)
+
+gam_add_int_by <- gam(toc_doc ~ s(DOY, bs = "cc", k = 15) + 
+                        s(canyon_mouth_cfs, bs = "tp", k = 15) +
+                        ti(DOY, canyon_mouth_cfs, 
+                           bs = c("cc", "tp"),
+                           by = distance_upstream_km),
+                      data = mainstem_plus,
+                      family = Gamma(link = "log"),
+                      method = "REML")
+gam.check(gam_add_int_by, 0)
+summary(gam_add_int_by)
+
+gam_tensor <- gam(toc_doc ~ te(DOY, 
+                               canyon_mouth_cfs,
+                               distance_upstream_km, 
+                               bs = c("cc", "tp", "tp")),
+                  method = "REML", 
+                  family = Gamma(link = "log"),
+                  data = mainstem_plus)
+gam.check(gam_tensor, 0)
+summary(gam_tensor)
+
+AIC(gam_linear, gam_add, gam_add_by, 
+    gam_add_int, gam_add_int_by, gam_tensor) %>% 
+  arrange(AIC)
+
+```
+
+I think the two to compare here are the additive method and the
+additive/interaction with a varying coefficient for the distance upstream. They
+have a nice balance of performance and model diagnostics.
+
+Let's do the same method for
 split as the baseline GAM for DOY and distance up stream:
 
 - Test: 2010, 2017, 2025
@@ -146,47 +223,74 @@ valid_1 <- mainstem_plus %>% filter(year %in% cv_1_years)
 train_1 <- anti_join(mainstem_plus, valid_1) %>% 
   filter(!(year %in% test_years))
 
-# fit GAM
-fit_1 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs,
-                          bs = c("cc", "tp", "tp")), 
-             data = train_1, 
-             method = "REML")
+gam_add_1 <- gam(toc_doc ~ s(DOY, bs = "cc", k = 15) + 
+                   s(canyon_mouth_cfs, bs = "tp", k = 15) +
+                   s(distance_upstream_km, bs = "tp", k = 5),
+                 data = train_1,
+                 family = Gamma(link = "log"),
+                 method = "REML")
+summary(gam_add_1)
 
-# check GAM diagnostics
-gam.check(fit_1)  
+gam_ai_by_1 <- gam(toc_doc ~ s(DOY, bs = "cc", k = 15) + 
+                   s(canyon_mouth_cfs, bs = "tp", k = 15) +
+                   ti(DOY, canyon_mouth_cfs, 
+                      by = distance_upstream_km,
+                      bs = c("cc", "tp"), k = c(10, 5)),
+                 data = train_1,
+                 family = Gamma(link = "log"),
+                 method = "REML")
+summary(gam_ai_by_1)
 
-# 3D perspective
-vis.gam(fit_1,
+AIC(gam_add_1, gam_ai_by_1)
+
+gam.check(gam_add_1)
+gam.check(gam_ai_by_1)
+
+# visualize 2d/3d
+vis.gam(gam_add_1,
         view = c("DOY", "distance_upstream_km"),
         plot.type = "persp",
         theta = 30, phi = 30,
         ticktype = "detailed")
-
-vis.gam(fit_1,
-        view = c("DOY", "canyon_mouth_cfs"),
+vis.gam(gam_add_1,
+        view = c("canyon_mouth_cfs", "distance_upstream_km"),
         plot.type = "persp",
         theta = 30, phi = 30,
         ticktype = "detailed")
-
-vis.gam(fit_1,
+vis.gam(gam_ai_by_1,
+        view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+vis.gam(gam_ai_by_1,
         view = c("canyon_mouth_cfs", "distance_upstream_km"),
         plot.type = "persp",
         theta = 30, phi = 30,
         ticktype = "detailed")
 
-# generate predictions
-valid_1$pred <- predict(fit_1, newdata = valid_1)
-
-ggplot(valid_1, aes(x = toc_doc, y = pred)) +
-  geom_point() +
+# apply to validation
+valid_1$pred_a <- exp(predict(gam_add_1, newdata = valid_1))
+valid_1$pred_b <- exp(predict(gam_ai_by_1, newdata = valid_1))
+ggplot(valid_1) +
+  geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
+  geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  theme_bw() 
+ggplot(valid_1) +
+  geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
+  geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
   theme_bw() +
   facet_grid(year ~ site_name)
 
-metrics(valid_1, "validation")
+# print unadjusted R2, which should be close to deviance explained from gam
+summary(gam_add_1)$dev.expl
+summary(lm(valid_1$pred_a ~ valid_1$toc_doc))$r.squared
+summary(gam_ai_by_1)$dev.expl
+summary(lm(valid_1$pred_b ~ valid_1$toc_doc))$r.squared
 ```
 
-2008 and 2013 performance aren't great, but the model looks pretty good otherwise.
+These have a pretty clear shelf at ~ 7mg/L, but we'll keep going. 
 
 ## CV Model 2
 
@@ -195,47 +299,74 @@ valid_2 <- mainstem_plus %>% filter(year %in% cv_2_years)
 train_2 <- anti_join(mainstem_plus, valid_2) %>% 
   filter(!(year %in% test_years))
 
-# fit GAM
-fit_2 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs,
-                          bs = c("cc", "tp", "tp")), 
-             data = train_2, 
-             method = "REML")
+gam_add_2 <- gam(toc_doc ~ s(DOY, bs = "cc", k = 15) + 
+                   s(canyon_mouth_cfs, bs = "tp", k = 15) +
+                   s(distance_upstream_km, bs = "tp", k = 5),
+                 data = train_2,
+                 family = Gamma(link = "log"),
+                 method = "REML")
+summary(gam_add_2)
 
-# check GAM diagnostics
-gam.check(fit_2)  
+gam_ai_by_2 <- gam(toc_doc ~ s(DOY, bs = "cc", k = 15) + 
+                   s(canyon_mouth_cfs, bs = "tp", k = 15) +
+                   ti(DOY, canyon_mouth_cfs, 
+                      by = distance_upstream_km,
+                      bs = c("cc", "tp"), k = c(10, 5)),
+                 data = train_2,
+                 family = Gamma(link = "log"),
+                 method = "REML")
+summary(gam_ai_by_2)
 
-# 3D perspective
-vis.gam(fit_2,
+AIC(gam_add_2, gam_ai_by_2)
+
+gam.check(gam_add_2)
+gam.check(gam_ai_by_2)
+
+# visualize 2d/3d
+vis.gam(gam_add_2,
         view = c("DOY", "distance_upstream_km"),
         plot.type = "persp",
         theta = 30, phi = 30,
         ticktype = "detailed")
-
-vis.gam(fit_2,
-        view = c("DOY", "canyon_mouth_cfs"),
+vis.gam(gam_add_2,
+        view = c("canyon_mouth_cfs", "distance_upstream_km"),
         plot.type = "persp",
         theta = 30, phi = 30,
         ticktype = "detailed")
-
-vis.gam(fit_2,
+vis.gam(gam_ai_by_2,
+        view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+vis.gam(gam_ai_by_2,
         view = c("canyon_mouth_cfs", "distance_upstream_km"),
         plot.type = "persp",
         theta = 30, phi = 30,
         ticktype = "detailed")
 
-# generate predictions
-valid_2$pred <- predict(fit_2, newdata = valid_2)
-
-ggplot(valid_2, aes(x = toc_doc, y = pred)) +
-  geom_point() +
+# apply to validation
+valid_2$pred_a <- exp(predict(gam_add_2, newdata = valid_2))
+valid_2$pred_b <- exp(predict(gam_ai_by_2, newdata = valid_2))
+ggplot(valid_2) +
+  geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
+  geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
-  theme_bw()+
+  theme_bw() 
+ggplot(valid_2) +
+  geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
+  geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  theme_bw() +
   facet_grid(year ~ site_name)
 
-metrics(valid_2, "validation")
+# print unadjusted R2, which should be close to deviance explained from gam
+summary(gam_add_2)$dev.expl
+summary(lm(valid_2$pred_a ~ valid_2$toc_doc))$r.squared
+summary(gam_ai_by_2)$dev.expl
+summary(lm(valid_2$pred_b ~ valid_2$toc_doc))$r.squared
 ```
 
-2009/2019 aren't great here, either - mostly on the upper end. Graned, performance
+2009/2019 aren't great here, either - mostly on the upper end. Granted, performance
 is similar to the previous CV, so we'll keep going
 
 ## CV Model 3
@@ -245,44 +376,71 @@ valid_3 <- mainstem_plus %>% filter(year %in% cv_3_years)
 train_3 <- anti_join(mainstem_plus, valid_3) %>% 
   filter(!(year %in% test_years))
 
-# fit GAM
-fit_3 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs,
-                          bs = c("cc", "tp", "tp")),
-             data = train_3, 
-             method = "REML")
+gam_add_3 <- gam(toc_doc ~ s(DOY, bs = "cc", k = 15) + 
+                   s(canyon_mouth_cfs, bs = "tp", k = 15) +
+                   s(distance_upstream_km, bs = "tp", k = 5),
+                 data = train_3,
+                 family = Gamma(link = "log"),
+                 method = "REML")
+summary(gam_add_3)
 
-# check GAM diagnostics
-gam.check(fit_3)  
+gam_ai_by_3 <- gam(toc_doc ~ s(DOY, bs = "cc", k = 15) + 
+                   s(canyon_mouth_cfs, bs = "tp", k = 15) +
+                   ti(DOY, canyon_mouth_cfs, 
+                      by = distance_upstream_km,
+                      bs = c("cc", "tp"), k = c(10, 5)),
+                 data = train_3,
+                 family = Gamma(link = "log"),
+                 method = "REML")
+summary(gam_ai_by_3)
 
-# 3D perspective
-vis.gam(fit_3,
+AIC(gam_add_3, gam_ai_by_3)
+
+gam.check(gam_add_3)
+gam.check(gam_ai_by_3)
+
+# visualize 2d/3d
+vis.gam(gam_add_3,
         view = c("DOY", "distance_upstream_km"),
         plot.type = "persp",
         theta = 30, phi = 30,
         ticktype = "detailed")
-
-vis.gam(fit_3,
-        view = c("DOY", "canyon_mouth_cfs"),
+vis.gam(gam_add_3,
+        view = c("canyon_mouth_cfs", "distance_upstream_km"),
         plot.type = "persp",
         theta = 30, phi = 30,
         ticktype = "detailed")
-
-vis.gam(fit_3,
+vis.gam(gam_ai_by_3,
+        view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+vis.gam(gam_ai_by_3,
         view = c("canyon_mouth_cfs", "distance_upstream_km"),
         plot.type = "persp",
         theta = 30, phi = 30,
         ticktype = "detailed")
 
-# generate predictions
-valid_3$pred <- predict(fit_3, newdata = valid_3)
-
-ggplot(valid_3, aes(x = toc_doc, y = pred)) +
-  geom_point() +
+# apply to validation
+valid_3$pred_a <- exp(predict(gam_add_3, newdata = valid_3))
+valid_3$pred_b <- exp(predict(gam_ai_by_3, newdata = valid_3))
+ggplot(valid_3) +
+  geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
+  geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  theme_bw() 
+ggplot(valid_3) +
+  geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
+  geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
   theme_bw() +
   facet_grid(year ~ site_name)
 
-metrics(valid_3, "validation")
+# print unadjusted R2, which should be close to deviance explained from gam
+summary(gam_add_3)$dev.expl
+summary(lm(valid_3$pred_a ~ valid_3$toc_doc))$r.squared
+summary(gam_ai_by_3)$dev.expl
+summary(lm(valid_3$pred_b ~ valid_3$toc_doc))$r.squared
 ```
 
 This looks pretty good across years
@@ -294,108 +452,184 @@ valid_4 <- mainstem_plus %>% filter(year %in% cv_4_years)
 train_4 <- anti_join(mainstem_plus, valid_4) %>% 
   filter(!(year %in% test_years))
 
-# fit GAM
-fit_4 <- gam(toc_doc ~ te(DOY, distance_upstream_km, canyon_mouth_cfs,
-                          bs = c("cc", "tp", "tp")), 
-             data = train_4, 
-             method = "REML")
+gam_add_4 <- gam(toc_doc ~ s(DOY, bs = "cc", k = 15) + 
+                   s(canyon_mouth_cfs, bs = "tp", k = 15) +
+                   s(distance_upstream_km, bs = "tp", k = 5),
+                 data = train_4,
+                 family = Gamma(link = "log"),
+                 method = "REML")
+summary(gam_add_4)
 
-# check GAM diagnostics
-gam.check(fit_4)  
+gam_ai_by_4 <- gam(toc_doc ~ s(DOY, bs = "cc", k = 15) + 
+                   s(canyon_mouth_cfs, bs = "tp", k = 15) +
+                   ti(DOY, canyon_mouth_cfs, 
+                      by = distance_upstream_km,
+                      bs = c("cc", "tp"), k = c(10, 5)),
+                 data = train_4,
+                 family = Gamma(link = "log"),
+                 method = "REML")
+summary(gam_ai_by_4)
 
-# 3D perspective
-vis.gam(fit_4,
+AIC(gam_add_4, gam_ai_by_4)
+
+gam.check(gam_add_4)
+gam.check(gam_ai_by_4)
+
+# visualize 2d/3d
+vis.gam(gam_add_4,
         view = c("DOY", "distance_upstream_km"),
         plot.type = "persp",
         theta = 30, phi = 30,
         ticktype = "detailed")
-
-vis.gam(fit_4,
-        view = c("DOY", "canyon_mouth_cfs"),
+vis.gam(gam_add_4,
+        view = c("canyon_mouth_cfs", "distance_upstream_km"),
         plot.type = "persp",
         theta = 30, phi = 30,
         ticktype = "detailed")
-
-vis.gam(fit_4,
+vis.gam(gam_ai_by_4,
+        view = c("DOY", "distance_upstream_km"),
+        plot.type = "persp",
+        theta = 30, phi = 30,
+        ticktype = "detailed")
+vis.gam(gam_ai_by_4,
         view = c("canyon_mouth_cfs", "distance_upstream_km"),
         plot.type = "persp",
         theta = 30, phi = 30,
         ticktype = "detailed")
 
-# generate predictions
-valid_4$pred <- predict(fit_4, newdata = valid_4)
-
-ggplot(valid_4, aes(x = toc_doc, y = pred)) +
-  geom_point() +
+# apply to validation
+valid_4$pred_a <- exp(predict(gam_add_4, newdata = valid_4))
+valid_4$pred_b <- exp(predict(gam_ai_by_4, newdata = valid_4))
+ggplot(valid_4) +
+  geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
+  geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
-  theme_bw()+
+  theme_bw() 
+ggplot(valid_4) +
+  geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
+  geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
+  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  theme_bw() +
   facet_grid(year ~ site_name)
 
-metrics(valid_4, "validation")
+# print unadjusted R2, which should be close to deviance explained from gam
+summary(gam_add_4)$dev.expl
+summary(lm(valid_4$pred_a ~ valid_4$toc_doc))$r.squared
+summary(gam_ai_by_4)$dev.expl
+summary(lm(valid_4$pred_b ~ valid_4$toc_doc))$r.squared
 ```
 
-2012 isn't great and 2024 is a little over-predicted. Again, performance is pretty
-similar across CV's
+There's some strange nearly vertical predictions here, especially visible in 2024, but the other CV's might balance this.
 
 ## Apply to test set
 
+Since performance across each of the CV sets is similar (albeit with wonky-ness 
+in some years), we'll calculate for the test set.
+
 ```{r}
-test_2025 <- mainstem_plus %>% filter(year %in% test_years)
+test <- mainstem_plus %>% filter(year %in% test_years)
 
 # apply ensemble
-test_2025 <- test_2025 %>%
+test <- test %>%
   mutate(
-    pred1 = predict(fit_1,newdata = test_2025),
-    pred2 = predict(fit_2, newdata = test_2025),
-    pred3 = predict(fit_3, newdata = test_2025),
-    pred4 = predict(fit_4, newdata = test_2025),
-    pred_avg = (pred1 + pred2 + pred3 + pred4) / 4
+    pred1_a = exp(predict(gam_add_1,newdata = test)),
+    pred2_a = exp(predict(gam_add_2, newdata = test)),
+    pred3_a = exp(predict(gam_add_3, newdata = test)),
+    pred4_a = exp(predict(gam_add_4, newdata = test)),
+    pred_avg_a = (pred1_a + pred2_a + pred3_a + pred4_a) / 4,
+    pred1_b = exp(predict(gam_ai_by_1, newdata = test)),
+    pred2_b = exp(predict(gam_ai_by_2, newdata = test)),
+    pred3_b = exp(predict(gam_ai_by_3, newdata = test)),
+    pred4_b = exp(predict(gam_ai_by_4, newdata = test)),
+    pred_avg_b = (pred1_b + pred2_b + pred3_b + pred4_b) / 4
   )
 
-# calculate performance metrics
-mae_val  <- mae(test_2025$toc_doc, test_2025$pred_avg)
-rmse_val <- rmse(test_2025$toc_doc, test_2025$pred_avg)
-bias_val <- bias(test_2025$toc_doc, test_2025$pred_avg)
-
-# r2 from linear regression
-r2_val <- summary(lm(test_2025$toc_doc ~test_2025$pred_avg))$r.squared
-
 # format annotation text for plot
-metrics_text <- paste0(
-  "MAE = ", round(mae_val, 2),
-  "\nRMSE = ", round(rmse_val, 2),
-  "\nBias = ", round(bias_val, 2),
-  "\nR² = ", round(r2_val, 2)
+metrics_text_a <- paste0(
+  "MAE = ", round(mae(test$toc_doc, test$pred_avg_a), 2),
+  "\nRMSE = ", round(rmse(test$toc_doc, test$pred_avg_a), 2),
+  "\nBias = ", round(bias(test$toc_doc, test$pred_avg_a), 2),
+  "\nR² = ", round(summary(lm(test$pred_avg_a ~ test$toc_doc))$r.squared, 2)
 )
 
+# format annotation text for plot
+metrics_text_b <- paste0(
+  "MAE = ", round(mae(test$toc_doc, test$pred_avg_b), 2),
+  "\nRMSE = ", round(rmse(test$toc_doc, test$pred_avg_b), 2),
+  "\nBias = ", round(bias(test$toc_doc, test$pred_avg_b), 2),
+  "\nR² = ", round(summary(lm(test$pred_avg_b ~ test$toc_doc))$r.squared, 2)
+)
 
 # pred - obs scatter plot!
-ggplot(test_2025, aes(y = pred_avg, x = toc_doc)) +
+ggplot(test, aes(y = pred_avg_a, x = toc_doc)) +
   geom_point(color = "blue", alpha = 0.6, size = 2) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(x = "Observed TOC (mg/L)",
        y = "Predicted TOC (ensemble, mg/L)",
-       title = "GAM Ensemble Predictions vs Observed (2025)",
-       subtitle = "TOC ~ DOY + distance upstream + canyon mouth flow") +
-  annotate("text", x = 1, y = 10, 
+       title = "GAM Ensemble Predictions vs Observed (hold out)",
+       subtitle = "GAM addtive: TOC ~ DOY + distance upstream + canyon mouth flow") +
+  annotate("text", x = 1, y = 12, 
            hjust = 0, vjust = 1, 
-           label = metrics_text, size = 4) +
+           label = metrics_text_a, size = 4) +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim = c(1, 12), ylim = c(1, 12))
+
+ggplot(test, aes(y = pred_avg_b, x = toc_doc)) +
+  geom_point(color = "blue", alpha = 0.6, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM Ensemble Predictions vs Observed (hold out)",
+       subtitle = "GAM addtive/interaction by distance: TOC ~ DOY + canyon mouth flow") +
+  annotate("text", x = 1, y = 12, 
+           hjust = 0, vjust = 1, 
+           label = metrics_text_b, size = 4) +
   theme_bw(base_size = 14) +
   coord_cartesian(xlim = c(1, 12), ylim = c(1, 12))
 
 ```
 
-Okay, this is okay, but not great. Let's see if we can figure out where we're
-not doing very well.
+Okay, this is better than just DOY/distance upstream,
+which had the following metrics:
+
+MAE: 1.0
+RMSE: 1.35
+Bias: 0.04
+R2: 0.66
+
+Let's roll with some performance diagnostics with the additive model.
+
+First, a quick plot with each of the members of the ensemble:
 
 ```{r}
+test %>% 
+  select(pred1_a, pred2_a, pred3_a, pred4_a, toc_doc) %>% 
+  pivot_longer(cols = c(pred1_a, pred2_a, pred3_a, pred4_a),
+               names_to = "cv_model",
+               values_to = "pred") %>% 
+ggplot(., aes(y = pred, x = toc_doc, shape = cv_model, color = cv_model)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Observed TOC (mg/L)",
+       y = "Predicted TOC (ensemble, mg/L)",
+       title = "GAM CV Member Predictions vs Observed (hold out)",
+       subtitle = "GAM additive: TOC ~ DOY + distance upstream + canyon mouth flow") +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim = c(1, 12), ylim = c(1, 12))
+
+```
+
+No big outliers here across models, the line around 4 and 3 are from something else!
+
+```{r, fig.dim=c(8, 8)}
 # for kicks, look at performance by site
-ggplot(test_2025, aes(y = pred_avg, x = toc_doc)) +
+ggplot(test, aes(y = pred_avg_a, x = toc_doc)) +
   geom_point(color = "blue", alpha = 0.6, size = 2) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(x = "Observed TOC (mg/L)",
        y = "Predicted TOC (ensemble, mg/L)",
-       title = "GAM Ensemble Predictions vs Observed (2025)",
+       title = "GAM Ensemble Predictions vs Observed (hold out)",
        subtitle = "TOC ~ DOY + distance upstream + canyon mouth flow") +
   theme_bw(base_size = 14) +
   coord_cartesian(xlim = c(1, 12), ylim = c(1, 12)) +
@@ -407,45 +641,37 @@ let's see if there are performance differences by year.
 
 ```{r}
 # and by year
-ggplot(test_2025, aes(y = pred_avg, x = toc_doc)) +
+ggplot(test, aes(y = pred_avg_a, x = toc_doc)) +
   geom_point(color = "blue", alpha = 0.6, size = 2) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(x = "Observed TOC (mg/L)",
        y = "Predicted TOC (ensemble, mg/L)",
-       title = "GAM Ensemble Predictions vs Observed (2025)",
+       title = "GAM Ensemble Predictions vs Observed (hold out)",
        subtitle = "TOC ~ DOY + distance upstream + canyon mouth flow") +
   theme_bw(base_size = 14) +
-  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10)) +
+  coord_cartesian(xlim = c(1, 12), ylim = c(1, 12)) +
   facet_wrap(year ~ .)
 ```
 
 Ooof. 2017 is pretty bad here. Let's facet by year and site.
 
-```{r}
-ggplot(test_2025, aes(y = pred_avg, x = toc_doc)) +
+```{r, fig.dim=c(12, 8)}
+ggplot(test, aes(y = pred_avg_a, x = toc_doc)) +
   geom_point(color = "blue", alpha = 0.6, size = 2) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(x = "Observed TOC (mg/L)",
        y = "Predicted TOC (ensemble, mg/L)",
-       title = "GAM Ensemble Predictions vs Observed (2025)",
+       title = "GAM Ensemble Predictions vs Observed (hold out)",
        subtitle = "TOC ~ DOY + distance upstream + canyon mouth flow") +
   theme_bw(base_size = 14) +
-  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10)) +
+  coord_cartesian(xlim = c(1, 12), ylim = c(1, 12)) +
   facet_wrap(year ~ site_name)
-
 ```
 
 2017 seems to be the problem child here, maybe SS or someone at the city
-knows why.
-
-```{r}
-test_2025 %>% 
-  filter(year == 2017) %>% 
-  ggplot(., aes(x = toc_doc, y = pred_avg, color = distance_upstream_km)) +
-  geom_point() +
-  theme_bw()
-```
-
+knows why. It's also possible some of the performance oddities across the data 
+might have something to do with snow melt rate, or maybe with total SWE, or 
+some other climatalogical thing not included in this model.
 
 
 # Do a quick sensitivity check
@@ -455,92 +681,60 @@ will give us a better idea of whether or not adding flow actually might be bette
 in an operational scenario.
 
 ```{r}
-test_2025_sens <- test_2025 %>% 
+test_sens <- test %>% 
   mutate(canyon_mouth_cfs = canyon_mouth_cfs*1.25)
 
 # apply ensemble for test set
-test_2025_sens <- test_2025_sens %>%
+test_sens <- test_sens %>%
   mutate(
-    pred1 = predict(fit_1, newdata = test_2025_sens),
-    pred2 = predict(fit_2, newdata = test_2025_sens),
-    pred3 = predict(fit_3, newdata = test_2025_sens),
-    pred4 = predict(fit_4, newdata = test_2025_sens),
-    pred_avg = (pred1 + pred2 + pred3 + pred4) / 4
-  )
+    pred1_25 = exp(predict(gam_add_1, newdata = test_sens)),
+    pred2_25 = exp(predict(gam_add_2, newdata = test_sens)),
+    pred3_25 = exp(predict(gam_add_3, newdata = test_sens)),
+    pred4_25 = exp(predict(gam_add_4, newdata = test_sens)),
+    pred_avg_25 = (pred1_25 + pred2_25 + pred3_25 + pred4_25) / 4
+  ) %>%
+  select(date, DOY, year, site_name, pred_avg_25)
+
+# and join with original file
+test_sens <- test %>% 
+  left_join(., test_sens)
 
 # bias should change
-bias_val_sens <- bias(test_2025_sens$toc_doc, test_2025_sens$pred_avg)
+bias(test_sens$toc_doc, test_sens$pred_avg_a)
+bias(test_sens$toc_doc, test_sens$pred_avg_25)
 
-# pred - obs scatter plot!
-ggplot(test_2025_sens, aes(y = pred_avg, x = toc_doc)) +
-  geom_point(color = "blue", alpha = 0.6, size = 2) +
+# plot the two pred/obs to see the difference
+test_sens %>% 
+    select(pred_avg_a, pred_avg_25, toc_doc) %>% 
+  pivot_longer(cols = c(pred_avg_a, pred_avg_25),
+               names_to = "data",
+               values_to = "pred") %>% 
+ggplot(., aes(y = pred, x = toc_doc, color = data)) +
+  geom_point(alpha = 0.6, size = 2) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(x = "Observed TOC (mg/L)",
        y = "Predicted TOC (ensemble, mg/L)",
        title = "GAM Ensemble Predictions vs Observed (2025)",
        subtitle = "TOC ~ DOY + distance upstream + 1.25 * canyon mouth flow") +
   theme_bw(base_size = 14) +
-  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10))
+  scale_color_viridis_d() +
+  coord_cartesian(xlim = c(1, 12), ylim = c(1, 12))
 
-test_2025_sens <- test_2025_sens %>% 
-  select(date, site_name, toc_doc, pred_sens = pred_avg)
-
-sensitivity <- test_2025 %>% 
-  select(date, site_name, toc_doc, pred_avg) %>% 
-  left_join(., test_2025_sens) %>% 
-  unique()
-
-ggplot(sensitivity, aes(x = pred_avg, y = pred_sens)) +
+# and against one another 
+ggplot(test_sens, aes(x = pred_avg_a, y = pred_avg_25, color = factor(year))) +
   geom_point() +
   geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
   theme_bw() +
   labs(x = "GAM predicted",
-       y = "GAM predicted 25% increase in flow")
-
-
-```
-
-Okay, there's some sensitivity here, let's try this model on 2015 data and see
-what it looks like - 2015 had 2x max flow than 2025, and we want to know if we 
-under predict or overpredict at all that year. Keep in mind that these data have
-already been "seen" by the GAM, so it's kind of cheating, but since we're using
-a 5-fold CV, this should give us a bit of an idea about performance in a scenario
-with really high Q.
-
-```{r}
-test_2015 <- mainstem_plus %>% 
-  filter(year(date) == 2015)
-
-# apply ensemble for test set
-test_2015 <- test_2015 %>%
-  mutate(
-    pred1 = predict(fit_1, newdata = test_2015),
-    pred2 = predict(fit_2, newdata = test_2015),
-    pred3 = predict(fit_3, newdata = test_2015),
-    pred4 = predict(fit_4, newdata = test_2015),
-    pred_avg = (pred1 + pred2 + pred3 + pred4) / 4
-    )
-
-# bias should change
-bias_val_2015 <- bias(test_2015$toc_doc, test_2015$pred_avg)
-
-# pred - obs scatter plot!
-ggplot(test_2015, aes(y = pred_avg, x = toc_doc)) +
-  geom_point(color = "blue", alpha = 0.6, size = 2) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
-  labs(x = "Observed TOC (mg/L)",
-       y = "Predicted TOC (ensemble, mg/L)",
-       title = "GAM Ensemble Predictions vs Observed (2015)",
-       subtitle = "TOC ~ DOY + distance upstream + canyon mouth flow") +
-  theme_bw(base_size = 14) +
-  coord_cartesian(xlim = c(1, 10), ylim = c(1, 10))
+       y = "GAM predicted 25% increase in flow",
+       color = "year") +
+  scale_color_viridis_d()
 
 ```
 
-Well, it's right on. Interesting that even though Q was 2x, the max TOC was
-very similar to 2025. There were also many fewer samples in 2015, and it doesn't
-look like there were samples during the peak runoff, so interpret with a grain
-of salt.
+Okay, there's some sensitivity here - but there's also some interesting patterns
+where an increase in Q actually results in a decrease in TOC, but I can't quite
+pin down why... some random combination of values, I guess. 
 
 # Visualize the decision space for interpretability
 
@@ -562,15 +756,14 @@ newdata <- expand.grid(
 )
 
 # Get predictions from your GAMs for the grid
-newdata$fit1 <- predict(fit_1, newdata = newdata)
-newdata$fit2 <- predict(fit_2, newdata = newdata)
-newdata$fit3 <- predict(fit_3, newdata = newdata)
-newdata$fit4 <- predict(fit_4, newdata = newdata)
-newdata$fit5 <- predict(fit_5, newdata = newdata)
+newdata$fit1 <- exp(predict(gam_add_1, newdata = newdata))
+newdata$fit2 <- exp(predict(gam_add_2, newdata = newdata))
+newdata$fit3 <- exp(predict(gam_add_3, newdata = newdata))
+newdata$fit4 <- exp(predict(gam_add_4, newdata = newdata))
 
 # create ensemble prediction
 newdata <- newdata %>% 
-  mutate(ave_fit = (fit1 + fit2 + fit3 + fit4 + fit5) / 5)
+  mutate(ave_fit = (fit1 + fit2 + fit3 + fit4) / 4)
 
 # heatmap + contour plot
 ggplot(newdata, aes(x = DOY, y = distance_upstream_km, fill = ave_fit)) +
@@ -608,16 +801,15 @@ ggplot(newdata, aes(x = DOY, y = canyon_mouth_cfs, fill = ave_fit)) +
 
 ```
 
+This might actually explain that decrease in TOC with an increase in Q!
+
 
 Save models
 
 ```{r}
-range(mainstem_plus$DOY)
-
-# write_rds(fit_1, here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit1_v2026-01-23.rds"))
-# write_rds(fit_2, here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit2_v2026-01-23.rds"))
-# write_rds(fit_3, here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit3_v2026-01-23.rds"))
-# write_rds(fit_4, here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit4_v2026-01-23.rds"))
-# write_rds(fit_5, here("data/derived/models/TOC_baseline/working/TOC_GAM_addQ_fit5_v2026-01-23.rds"))
+# write_rds(gam_add_1, here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit1_v2026-02-04.rds"))
+# write_rds(gam_add_2, here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit2_v2026-02-04.rds"))
+# write_rds(gam_add_3, here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit3_v2026-02-04.rds"))
+# write_rds(gam_add_4, here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit4_v2026-02-04.rds"))
 
 ```
