@@ -185,27 +185,15 @@ split as the baseline GAM for DOY and distance up stream:
 
 ```{r}
 test_years <- c(2010, 2017, 2025)
-cv_1_years <- c(2008, 2013, 2018)
+cv_1_years <- c(2008, 2013, 2018, 2020)
 cv_2_years <- c(2009, 2014, 2019)
 cv_3_years <- c(2011, 2015, 2023)
 cv_4_years <- c(2012, 2016, 2024)
 ```
+
 ## Plot of Q for years
 
-```{r}
-mainstem_plus %>%
-  distinct(year, DOY, canyon_mouth_cfs) %>%
-  mutate(group = case_when(year %in% test_years ~ "test",
-                           year %in% cv_1_years ~ "cv_1",
-                           year %in% cv_2_years ~ "cv_2",
-                           year %in% cv_3_years ~ "cv_3",
-                           year %in% cv_4_years ~ "cv_4",
-                           TRUE ~ "other")) %>%
-ggplot( aes(x = DOY, y = canyon_mouth_cfs, color = year)) +
-  geom_point() +
-  theme_bw()+
-  facet_wrap(~group)
-
+Check to see if any of the years have outstanding Q.
 
 ```{r}
 mainstem_plus %>%
@@ -216,25 +204,18 @@ mainstem_plus %>%
                            year %in% cv_3_years ~ "cv_3",
                            year %in% cv_4_years ~ "cv_4",
                            TRUE ~ "other")) %>%
-ggplot( aes(x = DOY, y = canyon_mouth_cfs, color = year)) +
+ggplot(., aes(x = DOY, y = canyon_mouth_cfs, color = group)) +
   geom_point() +
-  theme_bw()+
-  facet_wrap(~group)
-## Plot of Q for years
+  theme_bw() +
+  scale_color_viridis_d() +
+  labs(x = "day of year",
+       y = "flow at canyon mouth (cfs)")
 
-```{r}
-mainstem_plus %>%
-  distinct(year, DOY, canyon_mouth_cfs) %>%
-  mutate(group = case_when(year %in% test_years ~ "test",
-                           year %in% cv_1_years ~ "cv_1",
-                           year %in% cv_2_years ~ "cv_2",
-                           year %in% cv_3_years ~ "cv_3",
-                           year %in% cv_4_years ~ "cv_4",
-                           TRUE ~ "other")) %>%
-ggplot( aes(x = DOY, y = canyon_mouth_cfs, color = year)) +
-  geom_point() +
-  theme_bw()+
-  facet_wrap(~group)
+```
+
+All pretty similar, one outlier in test set that we're unlikely to perform well on. 
+
+## GAM Diagnostics
 
 GAM diagnostics are interpreted using the gam.check() function. We want to make
 sure that:
@@ -320,13 +301,17 @@ ggplot(valid_1) +
   geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
-  theme_bw() 
+  theme_bw() +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive (blue)\nGAM additive by distance (purple)")
 ggplot(valid_1) +
   geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
   theme_bw() +
-  facet_grid(year ~ site_name)
+  facet_grid(year ~ site_name)+
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive (blue)\nGAM additive by distance (purple)")
 
 # print unadjusted R2, which should be close to deviance explained from gam
 summary(gam_add_1)$dev.expl
@@ -335,7 +320,7 @@ summary(gam_ai_by_1)$dev.expl
 summary(lm(valid_1$pred_b ~ valid_1$toc_doc))$r.squared
 ```
 
-These have a pretty clear shelf at ~ 7mg/L, but we'll keep going. 
+These have a pretty clear shelf at ~ 7.5-8mg/L, but we'll keep going. 
 
 ## CV Model 2
 
@@ -396,13 +381,17 @@ ggplot(valid_2) +
   geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
-  theme_bw() 
+  theme_bw() +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive (blue)\nGAM additive by distance (purple)")
 ggplot(valid_2) +
   geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
   theme_bw() +
-  facet_grid(year ~ site_name)
+  facet_grid(year ~ site_name) +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive (blue)\nGAM additive by distance (purple)")
 
 # print unadjusted R2, which should be close to deviance explained from gam
 summary(gam_add_2)$dev.expl
@@ -412,7 +401,8 @@ summary(lm(valid_2$pred_b ~ valid_2$toc_doc))$r.squared
 ```
 
 2009/2019 aren't great here, either - mostly on the upper end. Granted, performance
-is similar to the previous CV, so we'll keep going
+is similar to the previous CV, so we'll keep going. 2019, snowmelt was slower than 
+other years (lasting into the summer)
 
 ## CV Model 3
 
@@ -473,13 +463,17 @@ ggplot(valid_3) +
   geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
-  theme_bw() 
+  theme_bw() +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive (blue)\nGAM additive by distance (purple)")
 ggplot(valid_3) +
   geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
   theme_bw() +
-  facet_grid(year ~ site_name)
+  facet_grid(year ~ site_name) +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive (blue)\nGAM additive by distance (purple)")
 
 # print unadjusted R2, which should be close to deviance explained from gam
 summary(gam_add_3)$dev.expl
@@ -488,7 +482,7 @@ summary(gam_ai_by_3)$dev.expl
 summary(lm(valid_3$pred_b ~ valid_3$toc_doc))$r.squared
 ```
 
-This looks pretty good across years
+This looks pretty good across years. Clusters at the top are specific days.
 
 ## CV Model 4
 
@@ -549,13 +543,17 @@ ggplot(valid_4) +
   geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
-  theme_bw() 
+  theme_bw() +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive (blue)\nGAM additive by distance (purple)")
 ggplot(valid_4) +
   geom_point(aes(x = toc_doc, y = pred_a), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_b), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
   theme_bw() +
-  facet_grid(year ~ site_name)
+  facet_grid(year ~ site_name) +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive (blue)\nGAM additive by distance (purple)")
 
 # print unadjusted R2, which should be close to deviance explained from gam
 summary(gam_add_4)$dev.expl
@@ -564,7 +562,7 @@ summary(gam_ai_by_4)$dev.expl
 summary(lm(valid_4$pred_b ~ valid_4$toc_doc))$r.squared
 ```
 
-There's some strange nearly vertical predictions here, especially visible in 2024, but the other CV's might balance this.
+There's some strange nearly vertical predictions here, especially visible in 2024, but the other CV's might balance this. These look to be specific days of year as well.
 
 ## Apply to test set
 
@@ -718,6 +716,10 @@ knows why. It's also possible some of the performance oddities across the data
 might have something to do with snow melt rate, or maybe with total SWE, or 
 some other climatalogical thing not included in this model.
 
+Sam suspects this might be from some late-season accumulation, which would cause
+some irregular signals in the flow/TOC data. The outliers seem to be in April,
+which would substantiate this hypothesis.
+
 
 # Do a quick sensitivity check
 
@@ -852,9 +854,9 @@ This might actually explain that decrease in TOC with an increase in Q!
 Save models
 
 ```{r}
-# write_rds(gam_add_1, here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit1_v2026-02-04.rds"))
-# write_rds(gam_add_2, here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit2_v2026-02-04.rds"))
-# write_rds(gam_add_3, here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit3_v2026-02-04.rds"))
-# write_rds(gam_add_4, here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit4_v2026-02-04.rds"))
+# write_rds(gam_add_1, here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit1_v2026-02-09.rds"))
+# write_rds(gam_add_2, here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit2_v2026-02-09.rds"))
+# write_rds(gam_add_3, here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit3_v2026-02-09.rds"))
+# write_rds(gam_add_4, here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit4_v2026-02-09.rds"))
 
 ```
