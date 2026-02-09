@@ -243,9 +243,9 @@ gam.check(gam_add_int, 0)
 
 gam_tensor <- gam(toc_doc ~ te(DOY, distance_upstream_km, 
                                bs = c("cc", "tp"), k = c(10, 5)),
-               data = mainstem,
-               family = Gamma(link = "log"),
-               method = "REML")
+                  data = mainstem,
+                  family = Gamma(link = "log"),
+                  method = "REML")
 summary(gam_tensor)
 gam.check(gam_tensor, 0)
 
@@ -273,14 +273,14 @@ mainstem %>%
 We'll do some kinda random, but not really random splits here:
 
 - Test: 2010, 2017, 2025
-- CV 1: 2008, 2013, 2018
+- CV 1: 2008, 2013, 2018, 2020
 - CV 2: 2009, 2014, 2019
 - CV 3: 2011, 2015, 2023
 - CV 4: 2012, 2016, 2024
 
 ```{r}
 test_years <- c(2010, 2017, 2025)
-cv_1_years <- c(2008, 2013, 2018)
+cv_1_years <- c(2008, 2013, 2018, 2020)
 cv_2_years <- c(2009, 2014, 2019)
 cv_3_years <- c(2011, 2015, 2023)
 cv_4_years <- c(2012, 2016, 2024)
@@ -320,18 +320,18 @@ train_1 <- anti_join(mainstem, valid_1) %>%
   filter(!(year %in% test_years))
 
 gam_add_int_1 <- gam(toc_doc ~ s(DOY, bs = "cc", k = 10) + 
-                     s(distance_upstream_km, bs = "tp", k = 5) +
-                     ti(DOY, distance_upstream_km, bs = c("cc", "tp")),
-                   data = train_1,
-                   family = Gamma(link = "log"),
-                   method = "REML")
+                       s(distance_upstream_km, bs = "tp", k = 5) +
+                       ti(DOY, distance_upstream_km, bs = c("cc", "tp")),
+                     data = train_1,
+                     family = Gamma(link = "log"),
+                     method = "REML")
 summary(gam_add_int_1)
 
 gam_tensor_1 <- gam(toc_doc ~ te(DOY, distance_upstream_km, 
-                               bs = c("cc", "tp"), k = c(10, 5)),
-               data = train_1,
-               family = Gamma(link = "log"),
-               method = "REML")
+                                 bs = c("cc", "tp"), k = c(10, 5)),
+                    data = train_1,
+                    family = Gamma(link = "log"),
+                    method = "REML")
 summary(gam_tensor_1)
 
 AIC(gam_add_int_1, gam_tensor_1)
@@ -358,11 +358,15 @@ ggplot(valid_1) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   theme_bw() 
 ggplot(valid_1) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   theme_bw() +
   facet_grid(year ~ site_name)
 
@@ -386,18 +390,18 @@ train_2 <- anti_join(mainstem, valid_2) %>%
   filter(!(year %in% test_years))
 
 gam_add_int_2 <- gam(toc_doc ~ s(DOY, bs = "cc", k = 10) + 
-                     s(distance_upstream_km, bs = "tp", k = 5) +
-                     ti(DOY, distance_upstream_km, bs = c("cc", "tp")),
-                   data = train_2,
-                   family = Gamma(link = "log"),
-                   method = "REML")
+                       s(distance_upstream_km, bs = "tp", k = 5) +
+                       ti(DOY, distance_upstream_km, bs = c("cc", "tp")),
+                     data = train_2,
+                     family = Gamma(link = "log"),
+                     method = "REML")
 summary(gam_add_int_2)
 
 gam_tensor_2 <- gam(toc_doc ~ te(DOY, distance_upstream_km, 
-                               bs = c("cc", "tp"), k = c(10, 5)),
-               data = train_2,
-               family = Gamma(link = "log"),
-               method = "REML")
+                                 bs = c("cc", "tp"), k = c(10, 5)),
+                    data = train_2,
+                    family = Gamma(link = "log"),
+                    method = "REML")
 summary(gam_tensor_2)
 
 AIC(gam_add_int_2, gam_tensor_2)
@@ -424,11 +428,15 @@ ggplot(valid_2) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   theme_bw() 
 ggplot(valid_2) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   theme_bw() +
   facet_grid(year ~ site_name)
 
@@ -449,18 +457,18 @@ train_3 <- anti_join(mainstem, valid_3) %>%
   filter(!(year %in% test_years))
 
 gam_add_int_3 <- gam(toc_doc ~ s(DOY, bs = "cc", k = 10) + 
-                     s(distance_upstream_km, bs = "tp", k = 5) +
-                     ti(DOY, distance_upstream_km, bs = c("cc", "tp")),
-                   data = train_3,
-                   family = Gamma(link = "log"),
-                   method = "REML")
+                       s(distance_upstream_km, bs = "tp", k = 5) +
+                       ti(DOY, distance_upstream_km, bs = c("cc", "tp")),
+                     data = train_3,
+                     family = Gamma(link = "log"),
+                     method = "REML")
 summary(gam_add_int_3)
 
 gam_tensor_3 <- gam(toc_doc ~ te(DOY, distance_upstream_km, 
-                               bs = c("cc", "tp"), k = c(10, 5)),
-               data = train_3,
-               family = Gamma(link = "log"),
-               method = "REML")
+                                 bs = c("cc", "tp"), k = c(10, 5)),
+                    data = train_3,
+                    family = Gamma(link = "log"),
+                    method = "REML")
 summary(gam_tensor_3)
 
 AIC(gam_add_int_3, gam_tensor_3)
@@ -487,11 +495,15 @@ ggplot(valid_3) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   theme_bw() 
 ggplot(valid_3) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   theme_bw() +
   facet_grid(year ~ site_name)
 
@@ -502,7 +514,8 @@ summary(gam_tensor_3)$dev.expl
 summary(lm(valid_3$pred_t ~ valid_3$toc_doc))$r.squared
 ```
 
-Super not great performance in 2011.
+Super not great performance in 2011 - this was a very big snow year, which is 
+why it may not have generalized.
 
 ## CV Model 4
 
@@ -512,18 +525,18 @@ train_4 <- anti_join(mainstem, valid_4) %>%
   filter(!(year %in% test_years))
 
 gam_add_int_4 <- gam(toc_doc ~ s(DOY, bs = "cc", k = 10) + 
-                     s(distance_upstream_km, bs = "tp", k = 5) +
-                     ti(DOY, distance_upstream_km, bs = c("cc", "tp")),
-                   data = train_4,
-                   family = Gamma(link = "log"),
-                   method = "REML")
+                       s(distance_upstream_km, bs = "tp", k = 5) +
+                       ti(DOY, distance_upstream_km, bs = c("cc", "tp")),
+                     data = train_4,
+                     family = Gamma(link = "log"),
+                     method = "REML")
 summary(gam_add_int_4)
 
 gam_tensor_4 <- gam(toc_doc ~ te(DOY, distance_upstream_km, 
-                               bs = c("cc", "tp"), k = c(10, 5)),
-               data = train_4,
-               family = Gamma(link = "log"),
-               method = "REML")
+                                 bs = c("cc", "tp"), k = c(10, 5)),
+                    data = train_4,
+                    family = Gamma(link = "log"),
+                    method = "REML")
 summary(gam_tensor_4)
 
 AIC(gam_add_int_4, gam_tensor_4)
@@ -551,6 +564,8 @@ ggplot(valid_4) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   theme_bw() 
 
 ggplot(valid_4) +
@@ -558,6 +573,8 @@ ggplot(valid_4) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
   theme_bw() +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   facet_grid(year ~ site_name)
 
 # print unadjusted R2, which should be close to deviance explained from gam
@@ -568,7 +585,7 @@ summary(lm(valid_4$pred_t ~ valid_4$toc_doc))$r.squared
 ```
 
 Some over prediction in 2024, some under prediction in 2016, some 
-wacky data in 2012.
+wacky data in 2012. 2012 was a particularly dry year, so not generalizable.
 
 # Apply ensemble to test set
 
@@ -741,10 +758,10 @@ And let's save these models as the baseline:
 
 ```{r}
 
-# write_rds(gam_add_int_1, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit1_v2026-02-04.rds"))
-# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit2_v2026-02-04.rds"))
-# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit3_v2026-02-04.rds"))
-# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit4_v2026-02-04.rds"))
+# write_rds(gam_add_int_1, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit1_v2026-02-09.rds"))
+# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit2_v2026-02-09.rds"))
+# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit3_v2026-02-09.rds"))
+# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit4_v2026-02-09.rds"))
 
 ```
 
