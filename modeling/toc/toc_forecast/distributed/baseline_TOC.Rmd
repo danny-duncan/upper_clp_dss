@@ -280,7 +280,7 @@ We'll do some kinda random, but not really random splits here:
 
 ```{r}
 test_years <- c(2010, 2017, 2025)
-cv_1_years <- c(2008, 2013, 2018)
+cv_1_years <- c(2008, 2013, 2018, 2020)
 cv_2_years <- c(2009, 2014, 2019)
 cv_3_years <- c(2011, 2015, 2023)
 cv_4_years <- c(2012, 2016, 2024)
@@ -358,13 +358,17 @@ ggplot(valid_1) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   theme_bw() 
 ggplot(valid_1) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
   theme_bw() +
-  facet_grid(year ~ site_name)
+   labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
+ facet_grid(year ~ site_name)
 
 # print unadjusted R2, which should be close to deviance explained from gam
 summary(gam_add_int_1)$dev.expl
@@ -424,12 +428,16 @@ ggplot(valid_2) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   theme_bw() 
 ggplot(valid_2) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
   theme_bw() +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   facet_grid(year ~ site_name)
 
 # print unadjusted R2, which should be close to deviance explained from gam
@@ -487,12 +495,16 @@ ggplot(valid_3) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   theme_bw() 
 ggplot(valid_3) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
   theme_bw() +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   facet_grid(year ~ site_name)
 
 # print unadjusted R2, which should be close to deviance explained from gam
@@ -551,6 +563,8 @@ ggplot(valid_4) +
   geom_point(aes(x = toc_doc, y = pred_i), color = "blue", alpha = 0.8) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   theme_bw() 
 
 ggplot(valid_4) +
@@ -558,6 +572,8 @@ ggplot(valid_4) +
   geom_point(aes(x = toc_doc, y = pred_t), color = "purple", alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey80") +
   theme_bw() +
+  labs(x = "Measured TOC (or DOC) (mg/L)",
+       y = "Predicted TOC (mg/L)\nGAM additive + interaction (blue)\nGAM tensor (purple)") +
   facet_grid(year ~ site_name)
 
 # print unadjusted R2, which should be close to deviance explained from gam
@@ -741,10 +757,10 @@ And let's save these models as the baseline:
 
 ```{r}
 
-# write_rds(gam_add_int_1, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit1_v2026-02-04.rds"))
-# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit2_v2026-02-04.rds"))
-# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit3_v2026-02-04.rds"))
-# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit4_v2026-02-04.rds"))
+# write_rds(gam_add_int_1, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit1_v2026-02-09.rds"))
+# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit2_v2026-02-09.rds"))
+# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit3_v2026-02-09.rds"))
+# write_rds(gam_add_int_2, here("data/derived/models/TOC_distributed/baseline/TOC_GAM_s_ti_fit4_v2026-02-09.rds"))
 
 ```
 
