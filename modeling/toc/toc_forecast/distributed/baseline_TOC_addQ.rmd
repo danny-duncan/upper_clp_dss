@@ -206,6 +206,21 @@ ggplot( aes(x = DOY, y = canyon_mouth_cfs, color = year)) +
   theme_bw()+
   facet_wrap(~group)
 
+
+```{r}
+mainstem_plus %>%
+  distinct(year, DOY, canyon_mouth_cfs) %>%
+  mutate(group = case_when(year %in% test_years ~ "test",
+                           year %in% cv_1_years ~ "cv_1",
+                           year %in% cv_2_years ~ "cv_2",
+                           year %in% cv_3_years ~ "cv_3",
+                           year %in% cv_4_years ~ "cv_4",
+                           TRUE ~ "other")) %>%
+ggplot( aes(x = DOY, y = canyon_mouth_cfs, color = year)) +
+  geom_point() +
+  theme_bw()+
+  facet_wrap(~group)
+
 GAM diagnostics are interpreted using the gam.check() function. We want to make
 sure that:
 
