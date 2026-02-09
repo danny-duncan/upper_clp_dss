@@ -205,7 +205,7 @@ ggplot(mainstem, aes(x = DOY, y = toc_doc)) +
   facet_wrap(site_name ~ .) +
   theme_bw()
 
-# also recode the flier in south fork and manners bridge
+# also remove the outliers in south fork and manners bridge
 mainstem <- mainstem %>% 
   filter(!(site_name == "Poudre South Fork" & DOY > 200 & toc_doc > 9)) %>% 
   filter(!(site_name == "Poudre at Manner's Bridge" & DOY > 200 & toc_doc >5))
