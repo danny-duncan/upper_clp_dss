@@ -283,7 +283,7 @@ generate_ross_sensor_data <- function(data_dir = here("data","raw", "sensor","ma
               !is.na(flag) & verification_status == "PASS" ~ flag,
               !is.na(flag) & verification_status == "FAIL" ~ NA
             ))%>%
-          select(DT_round, DT_join, site, parameter, mean_cleaned, flag = clean_flag, last_site_visit)%>%
+          select(DT_round, DT_join, site, parameter,mean, mean_cleaned, flag = clean_flag, last_site_visit)%>%
           mutate(status = "in_progress_verified")
 
         #Applying cleaning filters to pre-verified data (it is essentially autoqa_qc data)
@@ -304,7 +304,7 @@ generate_ross_sensor_data <- function(data_dir = here("data","raw", "sensor","ma
                     DT_round <= as.POSIXct(paste0(year, "-12-31 23:59:59"), tz = "MST"))%>%
           mutate(last_site_visit = with_tz(last_site_visit, tzone = "MST")) %>%
           #apply interpolation, smoothing and hourly median
-          apply_interpolation_missing_data(df = ., value_col = "mean_cleaned", new_value_col = "mean_filled", max_gap = 4, method = "spline")%>%
+          apply_interpolation_missing_data(df = ., value_col = "mean_cleaned", new_value_col = "mean_filled", max_gap = 4, method = "linear")%>%
           apply_low_pass_binomial_filter(df = ., value_col = "mean_filled", new_value_col = "mean_smoothed")%>%
           apply_timestep_median(df = ., timestep  = "1 hour", value_col = "mean_smoothed", new_value_col = "hourly_median")
       }
