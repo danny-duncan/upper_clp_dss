@@ -123,7 +123,6 @@ Interaction Terms
 - FDOM X Turbidity (fdom_x_turb): A proxy for turbidity interference in FDOM signal, rather than correcting for turbidity. 
 - FDOM / Turbidity (fdom_turb): Another proxy measurement for FDOM and turbidity interactions
 - FDOM X Specific Conductivity (fdom_x_sc): Interaction between SC and FDOM to capture changes in FDOM signal due to changes in water source (ie agricultural vs forested) that are not fully captured FDOM alone
-- 
 
 Climate
 - Seasonality (sin(doy))
