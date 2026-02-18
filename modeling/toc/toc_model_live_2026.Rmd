@@ -24,7 +24,7 @@ library(glue)
 library(SHAPforxgboost)
 set.seed(123)
 #set version for saving (update when changes are significant)
-version = "20261010"
+version = "20260216"
 
 #### Data setup functions ####
 #load grab sample data function
@@ -741,7 +741,7 @@ feature_tv_plots <- map(1:3, ~plot_tv_fold_perf(fold_set = .x,
                                                 fold_model = best_models[[.x]], # a list where each element is a model for that fold
                                                 target_col = "TOC", units = "mg/L")
 )
-ft_tv_plot<- wrap_plots(feature_tv_plots, ncol = 1, guides = "collect")&
+ft_tv_plot<- wrap_plots(feature_tv_plots, ncol = 2, guides = "collect")&
   theme(legend.position = "bottom")
 ft_tv_plot
 
@@ -796,13 +796,13 @@ hyperp_results <- xgboost_hyperparameter_tuning(
 ### Fold 1
 
 ```{r}
-
 hyperp_results[[1]]$perf_dist
 hyperp_results[[1]]$eval_plot
 hyperp_results[[1]]$tv_plot
 
-best_fold_1_grid <- 145
+best_fold_1_grid <- 25
 ```
+Chose the grid `best_fold_1_grid` for fold 1 because it has the lowest validation RMSE, it's RMSE is most closely related to it's val RMSE in the eval plot and doesn't have a evident bench in comparison to other grids. Overall there was minimal difference between grids. 
 
 ### Fold 2
 
@@ -814,6 +814,7 @@ hyperp_results[[2]]$tv_plot
 best_fold_2_grid <- 71
 
 ```
+Chose the grid `best_fold_2_grid` for fold 2 because it has the lowest validation RMSE, and there was minimal difference between grids. This fold contains our lowest TOC values in Val which leads to poor performance on the validation set so a bench at both side of the the model is common across grids. 
 
 ### Fold 3
 
@@ -826,7 +827,7 @@ best_fold_3_grid <- 52
 
 ```
 
-## Extract best models for each fold
+Chose the grid `best_fold_3_grid` for fold 3 because it has the lowest validation RMSE, and the validation points hug the 1:1 line across TOC levels whereas other models appear to deviated to underpredict. 
 
 ```{r}
 
