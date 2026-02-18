@@ -1,0 +1,53 @@
+---
+title: "Apply TOC/Q GAM with forecasted Q"
+author: "ROSSyndicate"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+# Import libraries
+library(httr)
+library(jsonlite)
+library(sf)
+library(leafem)
+library(mapview)
+library(nhdplusTools)
+library(here)
+library(tidyverse)
+library(arrow)
+
+# Import functions
+source(here("src/hefs/get_hefs_ensembles_cbrfc.R"))
+```
+
+
+# walk through forecasts available for 2022-2025
+
+```{r}
+get_hefs_ensembles_cbrfc(ID = "FTDC2", date = "2023-05-01")
+
+dates_2024 <- seq.Date("2024-04-01", "2024-11-15")
+
+q_forecast <- map(c("2023", "2024", "2025"),
+                  ~ {
+                    dates <- seq.Date(paste0(.x, "-04-01"), paste0(.x, "-11-15"))
+                    map(dates,
+                        ~ tryCatch({
+                          get_hefs_ensembles_cbrfc(ID = "FTDC2", date = .x) %>%
+                            mutate(valid_date = .x) 
+                        }, error = function(e) {
+                          NULL
+                        })) %>% 
+                      bind_rows()
+                  }) %>% 
+  bind_rows()
+
+```
+
+# save file
+
+```{r}
+write_parquet(q_forecast, "data/raw/external_datasets/flow_forecast_HEFS/HEFS_2023_2025_forecast.parquet")
+```
+
