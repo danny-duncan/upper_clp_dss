@@ -86,25 +86,37 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
     summarise(across(everything(), mean, na.rm = TRUE), .groups = 'drop')
 
   if(method  %in% c("Ensemble", "ensemble")){
-
     summarized_data <- imap_dfc(model, ~{
-      #get model features
+      # Get model features
       features <- .x$feature_names
-      #make predictions
-      preds <- summarized_data %>%
+
+      feature_data <- summarized_data %>%
         select(all_of(features)) %>%
-        mutate(across(everything(), as.numeric)) %>%
+        mutate(across(everything(), as.numeric))
+      #Check for missing values in features
+      has_na <- rowSums(is.na(feature_data)) > 0
+
+      # Make preds
+      raw_preds <- feature_data %>%
         as.matrix() %>%
         predict(.x, ., iteration_range = c(1, .x$best_iteration)) %>%
         round(2)
-      #get predictions as tibble
-      tibble(!!glue("{target_col}_guess_fold{.y}") := preds)
+
+      # make preds NA where features had NA
+      final_preds <- if_else(has_na, NA_real_, raw_preds)
+
+      # Get predictions as tibble
+      tibble(!!glue("{target_col}_guess_fold{.y}") := final_preds)
+
     }) %>%
-      bind_cols(summarized_data, .) %>%
+      bind_cols(summarized_data, .)%>%
       # compute ensemble mean
       mutate(
-        !!glue("{target_col}_guess_ensemble") :=
-          round(rowMeans(across(matches(glue("{target_col}_guess_fold")))), 2)
+        !!glue("{target_col}_guess_ensemble") := if_else(
+          if_any(all_of(model[[1]]$feature_names), is.na),                # Check if ANY feature is NA
+          NA_real_,                                                        # If true, set ensemble to NA
+          round(rowMeans(across(matches(glue("{target_col}_guess_fold")))), 2) # Else, compute mean
+        )
       )
     # Columns with fold predictions
     fold_cols <- grep(glue("{target_col}_guess_fold"), colnames(summarized_data), value = TRUE)

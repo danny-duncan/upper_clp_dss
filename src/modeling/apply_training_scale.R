@@ -11,8 +11,8 @@
 #' @param scaling_params Optional. A named list or single-row tibble containing
 #'   min and max values for each feature (e.g., `feature_min`, `feature_max`).
 #' @param features A character vector of feature names to scale.
-#' @param scaling_param_out_dir Optional. Directory path where scaling parameters
-#'   will be saved as a parquet file if computed from `full_dataset`.
+#' @param scaling_param_out_path Optional. File name path where scaling parameters
+#'   will be saved as a `parquet` file if computed from `full_dataset`.
 #'
 #' @details
 #' The function ensures that all features are present in `new_data`, and that the
@@ -38,7 +38,7 @@
 #'   features = c("temp", "ph")
 #' )
 #'
-apply_training_scale <- function( new_data, full_dataset = NULL, scaling_params = NULL, features, scaling_param_out_dir = NULL){
+apply_training_scale <- function( new_data, full_dataset = NULL, scaling_params = NULL, features, scaling_param_out_path = NULL){
   `%nin%` <- Negate(`%in%`)
   #Check that new data  have all the features
   missing_in_new_data <- features[features %nin% colnames(new_data)]
@@ -78,14 +78,16 @@ apply_training_scale <- function( new_data, full_dataset = NULL, scaling_params 
   }
 
   #if scaling params output dir provided, save scaling params as parquet file
-  if(!is.null(scaling_param_out_dir)){
-    #check to see if dir exists
+  if(!is.null(scaling_param_out_path)){
+    # Get the directory
+    scaling_param_out_dir <- dirname(scaling_param_out_path)
+    #check to see if dir exists & create if not
     if(!dir.exists(scaling_param_out_dir)){
       dir.create(scaling_param_out_dir, recursive = TRUE)
     }
-    date = Sys.Date()
+
     scaling_params %>%
-      arrow::write_parquet(file.path(scaling_param_out_dir, paste0("scaling_params_",date, ".parquet")))
+      write_parquet(here(paste0(scaling_param_out_path, ".parquet")))
   }
 
   #apply new scaling to new data

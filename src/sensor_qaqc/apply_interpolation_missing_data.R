@@ -78,7 +78,7 @@ apply_interpolation_missing_data <- function(df, site_col = "site", parameter_co
       dt_diffs <- diff(dt_vals)              # differences
       unique_diffs <- unique(dt_diffs)
       if (length(unique_diffs) > 1) {
-        warn(
+        warning(
           paste0("Error: Datetime column is not equally spaced for site = ",
                  unique(.y[[site_col]]), ", parameter = ", unique(.y[[parameter_col]]),
                  ". Please pad with padr::pad() first.")
