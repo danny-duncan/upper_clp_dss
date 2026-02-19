@@ -16,6 +16,7 @@ library(cdssr)
 library(mgcv)
 library(Metrics)
 library(verification)
+library(snotelr)
 library(arrow)
 library(tidyverse)
 
@@ -96,7 +97,6 @@ mainstem_forecasted <- left_join(mainstem, forecasted_q_vert,
                                  relationship = "many-to-many") %>%
   filter(!is.na(canyon_mouth_cfs)) %>% 
   select(date, year, DOY, distance_upstream_km, canyon_mouth_cfs, site_name, date_24h) 
-
 ```
 
 # Model application

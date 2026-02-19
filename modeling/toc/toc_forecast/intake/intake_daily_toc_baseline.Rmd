@@ -6,13 +6,15 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 
-library(tidyverse)
+library(here)
 library(cdssr)
 library(snotelr)
 library(mgcv)
 library(Metrics)
+library(tidyverse)
+
 ```
 
 # Purpose
@@ -130,13 +132,21 @@ training <- anti_join(intake_flow_swe, test)
 
 # Play with training data
 
+Just using day of year.
+
 ```{r}
-gam_doy <- gam(mean_TOC ~ s(doy, bs = "cc"),
+gam_doy <- gam(mean_TOC ~ s(doy, bs = "cc", k = 20),
                data = training, 
                method = "REML")
 
 gam.check(gam_doy)
 ```
+
+If we increase k substantially (to 20 here), we start to see some meaningful 
+model diagnositcs (k' < edf, p value increasing indicating that the model is 
+capturing more variation), but there's a lot of variation at the high end.
+
+Using doy + canyon mouth as additive.
 
 ```{r}
 gam_doy_q <- gam(mean_TOC ~ s(doy, bs = "cc") + s(canyon_mouth_cfs),
@@ -146,8 +156,29 @@ gam_doy_q <- gam(mean_TOC ~ s(doy, bs = "cc") + s(canyon_mouth_cfs),
 gam.check(gam_doy_q)
 ```
 
+This looks really good! Model diagnostics are good too. 
+
+Let's add some complexity using some interaction for doy/canyon mouth
+
 ```{r}
-gam_doy_q_swe <- gam(
+gam_doy_q_inter <- gam(
+  mean_TOC ~ 
+    s(doy, bs = "cc") +
+    s(canyon_mouth_cfs) +
+    ti(doy, canyon_mouth_cfs, bs = c("cc", "tp")),
+  data   = training,
+  method = "REML"
+)
+
+gam.check(gam_doy_q_inter)
+```
+
+Even better still!
+
+Now, let's add some snowpack info.
+
+```{r}
+gam_doy_q_inter_swe <- gam(
   mean_TOC ~ 
     s(doy, bs = "cc") +
     s(canyon_mouth_cfs) +
@@ -157,8 +188,49 @@ gam_doy_q_swe <- gam(
   method = "REML"
 )
 
+gam.check(gam_doy_q_inter_swe)
+```
+
+Okay, we might be adding a bit too much complexity here, the interaction term
+decreased in significance and the swe values don't look great diagnostically.
+
+For kicks, let's drop the interaction term.
+
+```{r}
+gam_doy_q_swe <- gam(
+  mean_TOC ~ 
+    s(doy, bs = "cc") +
+    s(canyon_mouth_cfs) +
+    s(swe_pca, bs = "ts"),
+  data   = training,
+  method = "REML"
+)
+
 gam.check(gam_doy_q_swe)
 ```
+
+A little better in diagnostics, let's do an interaction term for q and swe.
+
+```{r}
+gam_doy_q_swe_inter <- gam(
+  mean_TOC ~ 
+    s(doy, bs = "cc") +
+    s(canyon_mouth_cfs) +
+    s(swe_pca, bs = "ts") +
+    ti(canyon_mouth_cfs, swe_pca, bs = c("ts", "ts")),
+  data   = training,
+  method = "REML"
+)
+
+gam.check(gam_doy_q_swe_inter)
+```
+
+Interesting, that interaction seems to really tighten up some of the upper-end
+values. The diagnostics aren't great for swe alone, but the edf is not maxed (it's
+about a point lower than the k') so we could argue that it's okay to leave in the
+swe pca data.
+
+Let's try using melt rate, with interaction term for melt rate and canyon mouth
 
 ```{r}
 gam_doy_q_swe_melt <- gam(
@@ -174,12 +246,13 @@ gam_doy_q_swe_melt <- gam(
 gam.check(gam_doy_q_swe_melt)
 ```
 
+Same but 14 day melt rate
+
 ```{r}
 gam_doy_q_swe_melt_14 <- gam(
   mean_TOC ~ 
     s(doy, bs = "cc") +
     s(canyon_mouth_cfs, bs = "tp") +
-    #s(melt_rate_7d, bs = "tp") +
     s(melt_rate_14d, bs = "tp") +
     ti(melt_rate_14d, canyon_mouth_cfs, bs = "tp"),
   data   = training,
@@ -189,14 +262,18 @@ gam_doy_q_swe_melt_14 <- gam(
 gam.check(gam_doy_q_swe_melt_14)
 ```
 
+Interesting. That 14 day melt rate seems to help tighten up the upper end a little.
+
 
 # Apply to test set
 
 ```{r}
-test$pred_TOC_best <- predict(gam_doy_q_swe_melt_14, test)
-test$pred_TOC_simple <- predict(gam_doy_q, test)
 
-ggplot(test, aes(x = mean_TOC, y = pred_TOC_best)) +
+test$pred_TOC_swe_inter <- predict(gam_doy_q_swe_inter, test)
+test$pred_TOC_melt <- predict(gam_doy_q_swe_melt_14, test)
+test$pred_TOC_simple <- predict(gam_doy_q_inter, test)
+
+ggplot(test, aes(x = mean_TOC, y = pred_TOC_swe_inter)) +
   geom_point() +
   theme_bw() +
   geom_abline(slope = 1, intercept = 0) +
@@ -204,9 +281,21 @@ ggplot(test, aes(x = mean_TOC, y = pred_TOC_best)) +
   labs(x = "measured TOC @ intake (mg/L)",
        y = "predicted TOC @ intake (mg/L)")
 
-rmse(test$mean_TOC, test$pred_TOC_best)
-mae(test$mean_TOC, test$pred_TOC_best)
-bias(test$mean_TOC, test$pred_TOC_best)
+rmse(test$mean_TOC, test$pred_TOC_swe_inter)
+mae(test$mean_TOC, test$pred_TOC_swe_inter)
+bias(test$mean_TOC, test$pred_TOC_swe_inter)
+
+ggplot(test, aes(x = mean_TOC, y = pred_TOC_melt)) +
+  geom_point() +
+  theme_bw() +
+  geom_abline(slope = 1, intercept = 0) +
+  coord_cartesian(xlim = c(1,12.5), ylim = c(1, 12.5)) +
+  labs(x = "measured TOC @ intake (mg/L)",
+       y = "predicted TOC @ intake (mg/L)")
+
+rmse(test$mean_TOC, test$pred_TOC_melt)
+mae(test$mean_TOC, test$pred_TOC_melt)
+bias(test$mean_TOC, test$pred_TOC_melt)
 
 ggplot(test, aes(x = mean_TOC, y = pred_TOC_simple)) +
   geom_point() +
@@ -220,5 +309,20 @@ rmse(test$mean_TOC, test$pred_TOC_simple)
 mae(test$mean_TOC, test$pred_TOC_simple)
 bias(test$mean_TOC, test$pred_TOC_simple)
 
+```
+
+So definitely some value in including melt statistics, but maybe not swe as 
+integrated in the example above. Given this, we'll export both the additive
+interaction GAM (simple model) and the 14-day snow melt GAM for operational 
+testing.
+
+# Export models
+
+Including the pca model for the snotel data.
+
+```{r}
+write_rds(gam_doy_q_swe_melt_14, here("data/derived/models/TOC_intake/TOC_intake_GAM_Q_swe-melt14_v2026-02-18.rds"))
+write_rds(gam_doy_q_inter, here("data/derived/models/TOC_intake/TOC_intake_GAM_Q_doy_inter_v2026-02-18.rds"))
+write_rds(pca_snotel, here("data/derived/models/TOC_intake/SWE_PCA_v2026-02-18.rds"))
 ```
 

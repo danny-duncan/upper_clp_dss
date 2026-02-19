@@ -1,0 +1,435 @@
+---
+title: "GAM application for intake forecast"
+author: "ROSSyndicate"
+date: 2026-02-19
+output: html_document
+---
+
+# Purpose
+
+This script is meant to apply the intake TOC GAM model to assess its 
+performance with forecasted Q from HEFS.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+library(here)
+library(cdssr)
+library(mgcv)
+library(Metrics)
+library(verification)
+library(arrow)
+library(snotelr)
+library(tidyverse)
+library(cowplot)
+
+```
+
+# Data
+
+Here, we'll grab the data for 2023-2025. Not all of these data are in the test
+set, but it will give us an idea of the added uncertainty for a 30-day forecast.
+We're using 2023-2025 here because those are the HEFS forecasts easily available 
+to us.
+
+```{r}
+# intake TOC
+fc_intake <- read_csv(here("data/collated/FC_intake/fc_intake_TOC_record_2010-2025.csv")) %>% 
+  filter(between(year(date), 2023, 2025))
+
+```
+
+And grab Snotel data
+
+```{r}
+# grab snotel sites in the HUC
+snotel_sites <- snotel_info() %>%
+  filter(grepl("10190007", description))
+
+# Download daily SNOTEL data
+snotel_data <- snotel_download(site_id = snotel_sites$site_id,
+                               internal = TRUE,
+                               metric = TRUE) %>% 
+  mutate(date = ymd(date),
+         doy = yday(date),
+         year = year(date)) %>% 
+  filter(between(year, 2023, 2025))
+
+# prep for PCA
+snotel_matrix <- snotel_data %>%
+  select(date, site_id, snow_water_equivalent) %>% 
+  pivot_wider(names_from = site_id, 
+              names_prefix = "swe_",
+              values_from = snow_water_equivalent) %>% 
+  .[complete.cases(.), ]
+
+# load PCA
+swe_pca <- read_rds(here("data/derived/models/TOC_intake/SWE_PCA_v2026-02-18.rds"))
+
+# apply to data, select only PC1
+snotel <- snotel_matrix %>% 
+  mutate(swe_pca = predict(swe_pca, .)[,"PC1"]) %>% 
+  select(date, swe_pca)
+
+# calculate 14-day melt
+snotel <- snotel %>% 
+  arrange(date) %>% 
+  mutate(date_m14 = date - days(14)) %>%
+  # join for differences
+  left_join(snotel %>%
+              select(date, swe_pca) %>%
+              rename(date_m14 = date,
+                     swe_pca_lag14 = swe_pca),
+            by = "date_m14") %>%
+  # compute melt rate
+  mutate(melt_rate_14d = (swe_pca_lag14 - swe_pca) / 14) %>% 
+  select(-c(date_m14, swe_pca_lag14))
+```
+
+Grab forecasted data (for our operational statistics) - these data were gathered in 
+`modeling/external_forecasts/HEFS_canyon_mouth_23-25.Rmd`
+
+```{r}
+forecasted_q <- read_parquet(here("data/raw/external_datasets/flow_forecast_HEFS/HEFS_2023_2025_forecast.parquet")) %>% 
+  # each of the forecasts start at noon, and we want the daily average, so we'll 
+  # subtract 12 to get an average of the "next day"
+  mutate(date_24h = date(date_time - hours(12))) %>% 
+  summarize(across(c(ens_1990:ens_2018, ens_2019),
+                   ~ mean(.x)),
+            .by = c(forecast_date, date_24h))
+
+# pivot to viretical to make the probabilistic forecast
+forecasted_q_vert <- forecasted_q %>% 
+  pivot_longer(cols = c(ens_1990:ens_2019),
+               names_to = "ensemble_member",
+               values_to = "canyon_mouth_cfs") %>% 
+  rename(date = forecast_date)
+```
+
+Create datasets to forecast on
+
+```{r}
+# join with location data, and reduce columns
+toc_q <- left_join(fc_intake, forecasted_q_vert,
+                   relationship = "one-to-many") %>%
+  filter(!is.na(canyon_mouth_cfs)) %>% 
+  select(date, date_24h, year, doy, canyon_mouth_cfs) 
+
+
+toc_q_swe <- left_join(toc_q, snotel) %>%
+  filter(!is.na(swe_pca)) %>% 
+  select(date, date_24h, year, doy, canyon_mouth_cfs, swe_pca, melt_rate_14d) 
+
+```
+
+# Load models
+
+```{r}
+q_doy_int <- read_rds(here("data/derived/models/TOC_intake/TOC_intake_GAM_Q_doy_inter_v2026-02-18.rds"))
+q_doy_swe <- read_rds(here("data/derived/models/TOC_intake/TOC_intake_GAM_Q_swe-melt14_v2026-02-18.rds"))
+```
+
+And apply them to the dataset
+
+```{r}
+toc_q_swe <- toc_q_swe %>% 
+  mutate(pred_doy_int = predict(q_doy_int, .),
+         pred_doy_swe = predict(q_doy_swe, .))
+```
+
+# Additive and Interaction GAM Q/DOY
+
+And visualize performance at a few time horizons, remember `date` is the day forecast 
+is made and `date_24` is the forecasted day.
+
+```{r, fig.dim=c(9, 6)}
+d1 <- toc_q_swe %>% 
+  filter(date == date_24h) %>% 
+  inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+  ggplot(., aes(x = mean_TOC, y = pred_doy_int)) + 
+  geom_boxplot(aes(group = date), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Predicted TOC (mg/L)\nfrom HEFS ensemble, 1 day horizon",
+       title = "Intake TOC Model Ensemble")
+d2 <- toc_q_swe %>% 
+  mutate(date = date + days(1)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+  ggplot(., aes(x = mean_TOC, y = pred_doy_int)) + 
+  geom_boxplot(aes(group = date), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Predicted TOC (mg/L)\nfrom HEFS ensemble, 2 day horizon",
+       title = "Intake TOC Model Ensemble")
+d3 <- toc_q_swe %>% 
+  mutate(date = date + days(2)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+  ggplot(., aes(x = mean_TOC, y = pred_doy_int)) + 
+  geom_boxplot(aes(group = date), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Predicted TOC (mg/L)\nfrom HEFS ensemble, 3 day horizon",
+       title = "Intake TOC Model Ensemble")
+d4 <- toc_q_swe %>% 
+  mutate(date = date + days(3)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+  ggplot(., aes(x = mean_TOC, y = pred_doy_int)) + 
+  geom_boxplot(aes(group = date), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Predicted TOC (mg/L)\nfrom HEFS ensemble, 4 day horizon",
+       title = "Intake TOC Model Ensemble")
+d5 <- toc_q_swe %>% 
+  mutate(date = date + days(4)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+  ggplot(., aes(x = mean_TOC, y = pred_doy_int)) + 
+  geom_boxplot(aes(group = date), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Predicted TOC (mg/L)\nfrom HEFS ensemble, 5 day horizon",
+       title = "Intake TOC Model Ensemble")
+d10 <- toc_q_swe %>% 
+  mutate(date = date + days(9)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+  ggplot(., aes(x = mean_TOC, y = pred_doy_int)) + 
+  geom_boxplot(aes(group = date), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Predicted TOC (mg/L)\nfrom HEFS ensemble, 10 day horizon",
+       title = "Intake TOC Model Ensemble")
+
+plot_grid(d1, d2, d3, d4, d5, d10, nrow = 2)
+```
+
+
+And get some performance stats, including Continuous Ranked Probability Score 
+(CRPS) which is better for probabilistic forecasts, but considered "comparable"
+to MAE in determinisitic forecasts.
+
+```{r, fig.dim=c(6, 3), message = FALSE}
+
+for_crps <- map(seq(1:30),
+    ~ toc_q_swe %>% 
+      mutate(date = date + days(.x-1)) %>% 
+      filter(date == date_24h) %>%
+      inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+      mutate(horizon = .x) %>% 
+      summarize(mean_toc = mean(pred_doy_int), 
+                sd_toc = sd(pred_doy_int),
+                n = n(),
+                .by = c(horizon, date, mean_TOC))) %>% 
+  bind_rows() %>% 
+  filter(n > 10) 
+
+calc_crps <- for_crps %>% 
+  rowwise() %>% 
+  mutate(crps_daily = crps(mean_TOC, c(mean_toc, sd_toc))$crps) %>% 
+  ungroup() %>% 
+  select(horizon, crps_daily, date)
+
+ggplot(calc_crps, aes(x = horizon, y = crps_daily)) +
+  geom_boxplot(aes(group = horizon)) +
+  theme_bw() +
+  labs(y = "continuous ranked probability score (mg/L)\ncomparable to MAE",
+       x = "forecast horizon",
+       title = "CRPS for intake TOC forecast",
+       subtitle = "GAM HEFS") +
+  scale_x_continuous(n.breaks = 30, minor_breaks = seq(1:30))
+
+```
+
+Look at performance in June only
+
+```{r, fig.dim=c(6, 3), message = FALSE}
+for_crps_jun <- map(seq(1:30),
+    ~ toc_q_swe %>% 
+      filter(month(date) == 6) %>% 
+      mutate(date = date + days(.x-1)) %>% 
+      filter(date == date_24h) %>%
+      inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+      mutate(horizon = .x) %>% 
+      summarize(mean_toc = mean(pred_doy_int), 
+                sd_toc = sd(pred_doy_int),
+                n = n(),
+                .by = c(horizon, date, mean_TOC))) %>% 
+  bind_rows() 
+
+calc_crps_jun <- for_crps_jun %>% 
+  rowwise() %>% 
+  mutate(crps_daily = crps(mean_TOC, c(mean_toc, sd_toc))$crps) %>% 
+  ungroup() %>% 
+  select(horizon, crps_daily, date)
+
+ggplot(calc_crps_jun, aes(x = horizon, y = crps_daily)) +
+  geom_boxplot(aes(group = horizon)) +
+  theme_bw() +
+  labs(y = "continuous ranked probability score (mg/L)\ncomparable to MAE",
+       x = "forecast horizon",
+       title = "CRPS for intake TOC forecast, June performance only",
+       subtitle = "GAM HEFS") +
+  scale_x_continuous(n.breaks = 30, minor_breaks = seq(1:30))
+```
+
+# Additive Interaction and SWE melt
+
+
+
+```{r, fig.dim=c(9, 6)}
+d1_melt <- toc_q_swe %>% 
+  filter(date == date_24h) %>% 
+  inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+  ggplot(., aes(x = mean_TOC, y = pred_doy_swe)) + 
+  geom_boxplot(aes(group = date), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble + melt, 1 day horizon",
+       title = "Intake TOC Model Ensemble")
+d2_melt <- toc_q_swe %>% 
+  mutate(date = date + days(1)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+  ggplot(., aes(x = mean_TOC, y = pred_doy_swe)) + 
+  geom_boxplot(aes(group = date), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble + melt, 2 day horizon",
+       title = "Intake TOC Model Ensemble")
+d3_melt <- toc_q_swe %>% 
+  mutate(date = date + days(2)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+  ggplot(., aes(x = mean_TOC, y = pred_doy_swe)) + 
+  geom_boxplot(aes(group = date), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble + melt, 3 day horizon",
+       title = "Intake TOC Model Ensemble")
+d4_melt <- toc_q_swe %>% 
+  mutate(date = date + days(3)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+  ggplot(., aes(x = mean_TOC, y = pred_doy_swe)) + 
+  geom_boxplot(aes(group = date), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble + melt, 4 day horizon",
+       title = "Intake TOC Model Ensemble")
+d5_melt <- toc_q_swe %>% 
+  mutate(date = date + days(4)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+  ggplot(., aes(x = mean_TOC, y = pred_doy_swe)) + 
+  geom_boxplot(aes(group = date), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble + melt, 5 day horizon",
+       title = "Intake TOC Model Ensemble")
+d10_melt <- toc_q_swe %>% 
+  mutate(date = date + days(9)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+  ggplot(., aes(x = mean_TOC, y = pred_doy_swe)) + 
+  geom_boxplot(aes(group = date), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble + melt, 10 day horizon",
+       title = "Intake TOC Model Ensemble")
+plot_grid(d1_melt, d2_melt, d3_melt, d4_melt, d5_melt, d10_melt, nrow = 2)
+```
+
+
+And get some performance stats, including Continuous Ranked Probability Score 
+(CRPS) which is better for probabilistic forecasts, but considered "comparable"
+to MAE in determinisitic forecasts.
+
+```{r, fig.dim=c(6, 3), message = FALSE}
+for_crps_melt <- map(seq(1:30),
+    ~ toc_q_swe %>% 
+      mutate(date = date + days(.x-1)) %>% 
+      filter(date == date_24h) %>%
+      inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+      mutate(horizon = .x) %>% 
+      summarize(mean_toc = mean(pred_doy_swe), 
+                sd_toc = sd(pred_doy_swe),
+                n = n(),
+                .by = c(horizon, date, mean_TOC))) %>% 
+  bind_rows() %>% 
+  filter(n > 10) 
+
+calc_crps_melt <- for_crps_melt %>% 
+  rowwise() %>% 
+  mutate(crps_daily = crps(mean_TOC, c(mean_toc, sd_toc))$crps) %>% 
+  ungroup() %>% 
+  select(horizon, crps_daily, date)
+
+ggplot(calc_crps_melt, aes(x = horizon, y = crps_daily)) +
+  geom_boxplot(aes(group = horizon)) +
+  theme_bw() +
+  labs(y = "continuous ranked probability score (mg/L)\ncomparable to MAE",
+       x = "forecast horizon",
+       title = "CRPS for intake TOC forecast",
+       subtitle = "GAM HEFS + SWE melt") +
+  scale_x_continuous(n.breaks = 30, minor_breaks = seq(1:30))
+
+```
+
+Just look at CRPS scores for June only
+
+```{r, fig.dim=c(6, 3), message = FALSE}
+for_crps_melt_jun <- map(seq(1:30),
+    ~ toc_q_swe %>% 
+      filter(month(date) == 6) %>% 
+      mutate(date = date + days(.x-1)) %>% 
+      filter(date == date_24h) %>%
+      inner_join(., fc_intake %>% select(date, mean_TOC)) %>% 
+      mutate(horizon = .x) %>% 
+      summarize(mean_toc = mean(pred_doy_swe), 
+                sd_toc = sd(pred_doy_swe),
+                n = n(),
+                .by = c(horizon, date, mean_TOC))) %>% 
+  bind_rows() 
+
+calc_crps_melt_jun <- for_crps_melt_jun %>% 
+  rowwise() %>% 
+  mutate(crps_daily = crps(mean_TOC, c(mean_toc, sd_toc))$crps) %>% 
+  ungroup() %>% 
+  select(horizon, crps_daily, date)
+
+ggplot(calc_crps_melt_jun, aes(x = horizon, y = crps_daily)) +
+  geom_boxplot(aes(group = horizon)) +
+  theme_bw() +
+  labs(y = "continuous ranked probability score (mg/L)\ncomparable to MAE",
+       x = "forecast horizon",
+       title = "CRPS for intake TOC forecast: June only",
+       subtitle = "GAM HEFS + SWE melt") +
+  scale_x_continuous(n.breaks = 30, minor_breaks = seq(1:30))
+```
+
