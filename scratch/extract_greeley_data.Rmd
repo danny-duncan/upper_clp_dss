@@ -26,7 +26,8 @@ source(here("src/setup_libraries.R"))
 
 This document performs some initial data structure analysis on the raw Greeley plant chemical data. The goal is to understand the data structure, transform the data into a format suitable for analysis, and perform some basic checks to ensure the transformations are correct.
 
-# DATA LOAD PREPARATION
+# Data Load Preparation
+
 ```{r data load prep}
 # Load path to raw Greeley data folder
 raw_path <- here("data/raw/chem/greeley_plant_chem")
@@ -37,16 +38,17 @@ file_list <- list.files(raw_path,
                         full.names = TRUE)
 ```
 
-# DATA EXTRACTION
+# Data Extraction
+
 To extract data from the raw Greeley files, we will use the tidyxl package.
 
 ## Retrieve Raw Data
 ```{r retrieve & transform data}
 # Create a list of our desired variables
-vars_actual <- c("TURBIDITY","CHLORINE","pH","ALKALINITY","COND.","T.D.S.","TEMPCEL","DATE","TIME")
+vars_actual <- c("DATE","TIME", "TURBIDITY","CHLORINE","pH","ALKALINITY","COND.","T.D.S.","HACHTOC", "TEMPCEL", "POUDRE", "CBT")
 
 # Create a regex pattern to filter for our desired variables in the character column of the tidyxl dataframe
-var_list <- paste(c("DATE", "TIME", "TURBIDITY", "CHLORINE", "PH", "ALKALINITY", "COND.", "T.D.S.", "TEMPCEL"),
+var_list <- paste(c("DATE", "TIME", "TURBIDITY", "CHLORINE", "PH", "ALKALINITY", "COND.", "T.D.S.", "HACHTOC", "TEMPCEL", "POUDRE", "CBT"),
                   collapse = "|")
 
 # Create a regex pattern to filter for monthly sheets in the sheet column of the tidyxl dataframe
@@ -71,7 +73,7 @@ desirable_sheet_list <- unique(rawData_combined$sheet[grepl(months, rawData_comb
 
 # Filter our newly created rawData_combined dataframe:
 filtered_tidyxl <-
-  # The character column contains unnecessary leading empty space before the value; gsub removes this empty space for uniformity
+  # The character column contains unnecessary leading empty space before the value; gsub() removes this empty space for uniformity
   as.data.frame(apply(rawData_combined,2, function(x) gsub("\\s+", "", x))) %>%
   # Filter for sheets that contain month abbreviations in their name
   filter(sheet %in% desirable_sheet_list) %>%
@@ -80,7 +82,14 @@ filtered_tidyxl <-
   # Filter for necessary information
   select(sheet, address, character)
 
-# Create a more refined dataframe that contains only the first occurrence of each variable in each sheet. Some sheets repeat these variables after the first "raw" measurment, so this selects the data we would like to keep.
+print(head(filtered_tidyxl))
+```
+
+The filtered_tidyxl dataframe contains all cell values and information for our variables of interest across all monthly sheets. This is a good starting point for where we need to look for these data in each sheet.
+
+## Filter & Refine
+```{r refine filtered data}
+# Continue to further refine our filtered data and transform it into wide format
 filtered_tidyxl_wide <- filtered_tidyxl %>%
   # Group by monthly sheet and variables
   group_by(sheet, character) %>%
@@ -92,9 +101,13 @@ filtered_tidyxl_wide <- filtered_tidyxl %>%
   # Create a year and month column by extracting from the sheet name using regular expressions.
   mutate(Month = str_extract(sheet, "(?<=^BEL)[A-Z]+(?=\\d{2}$)")) %>%
   mutate(Year  = paste0("20", str_extract(sheet, "\\d{2}$")))
+
+print(head(filtered_tidyxl_wide))
 ```
 
-## Use tidyxl to extract the data directly from the cell index without using read_excel().
+The filtered_tidyxl_wide dataframe contains the first cell location for each variable within each sheet. This will be used as an index for extracting the values of each variable of interest in the next section.
+
+## Extract WQ Data
 ```{r extract data with tidyxl}
 # Helper: convert excel column letter(s) to number (e.g., "A" -> 1, "AD" -> 30)
 col_to_num <- function(col_letter) {
@@ -124,31 +137,57 @@ extract_rows <- 35
 # Read the full workbook once
 cells <- rawData_combined
 
-# Extract only the cells that fall within the specified ranges
-extractedData <- bind_rows(lapply(seq_len(nrow(filtered_tidyxl_wide)), function(i) {
-  row_data <- filtered_tidyxl_wide[i, ]
-  sheet_name <- as.character(row_data$sheet)
+# # Extract only the cells that fall within the specified ranges
+# extractedData_base <- bind_rows(lapply(seq_len(nrow(filtered_tidyxl_wide)), function(i) {
+#   row_data <- filtered_tidyxl_wide[i, ]
+#   sheet_name <- as.character(row_data$sheet)
+# 
+#   bind_rows(lapply(var_cols, function(var_name) {
+#     cell_str <- as.character(row_data[[var_name]])
+# 
+#     if (is.na(cell_str) || cell_str == "") return(NULL)
+# 
+#     ref <- parse_cell(cell_str)
+#     start_row <- ref$row
+#     end_row   <- start_row + extract_rows
+# 
+#     cells %>%
+#       filter(
+#         sheet == sheet_name,
+#         col == ref$col,
+#         row >= start_row,
+#         row <= end_row
+#       ) %>%
+#       mutate(variable = var_name) %>%
+#       select(sheet, variable, address, row, col, content, numeric, character, data_type)
+#   }))
+# }))
 
-  bind_rows(lapply(var_cols, function(var_name) {
-    cell_str <- as.character(row_data[[var_name]])
+extractedData <- filtered_tidyxl_wide %>%
+  pmap_dfr(function(...) {
+    row_data <- tibble(...)
+    sheet_name <- as.character(row_data$sheet)
 
-    if (is.na(cell_str) || cell_str == "") return(NULL)
+    map_dfr(var_cols, function(var_name) {
+      cell_str <- as.character(row_data[[var_name]])
 
-    ref <- parse_cell(cell_str)
-    start_row <- ref$row
-    end_row   <- start_row + extract_rows
+      if (is.na(cell_str) || cell_str == "") return(tibble())
 
-    cells %>%
-      filter(
-        sheet == sheet_name,
-        col == ref$col,
-        row >= start_row,
-        row <= end_row
-      ) %>%
-      mutate(variable = var_name) %>%
-      select(sheet, variable, address, row, col, content, numeric, character, data_type)
-  }))
-}))
+      ref <- parse_cell(cell_str)
+      start_row <- ref$row
+      end_row   <- start_row + extract_rows
+
+      cells %>%
+        filter(
+          sheet == sheet_name,
+          col == ref$col,
+          row >= start_row,
+          row <= end_row
+        ) %>%
+        mutate(variable = var_name) %>%
+        select(sheet, variable, address, row, content, numeric, character, data_type)
+    })
+  })
 
 # finalData_cleaned <- extractedData %>%
 #   filter(data_type == "numeric") %>% 
@@ -162,6 +201,8 @@ extractedData <- bind_rows(lapply(seq_len(nrow(filtered_tidyxl_wide)), function(
 ```
 
 One problem with the commented-out code above is that some of the DATE (day) values are in character format instead of numeric. To fix this, we need to create a function which uses an if_else statement to create the day column.
+
+## Clean Data
 ```{r clean data}
 cleanedData <- extractedData %>%
   # Edit the numeric column so that if the value is NA but the character column contains a numeric value, it will place that value in the numeric column instead.
@@ -182,19 +223,34 @@ cleanedData <- extractedData %>%
   mutate(Year  = paste0("20", str_extract(sheet, "\\d{2}$"))) %>%
   mutate(Day = DATE) %>%
   mutate(DTG = parse_date_time(paste(Year, Month, Day), orders = "Ybd")) %>%
-  select(DTG, Year, Month, Day, TIME, ALKALINITY, CHLORINE, COND., `T.D.S.`, TEMPCEL, TURBIDITY, pH, sheet, row) %>% 
+  select(DTG, Year, Month, Day, TIME, ALKALINITY, CHLORINE, COND., `T.D.S.`, TEMPCEL, TURBIDITY, POUDRE, CBT, pH, sheet, row, col) %>% 
   drop_na(DTG)
 
-head(cleanedData)
-# Unfortunately, some of the DTG are still failing to parse. This might be because some DATE (day) values aren't present in a few of the original datasheets. We'll have to explore these to see if there isn't a day column within the actual sheet, or if there's a bug in the code that's causing this issue.
+print(head(cleanedData))
+```
 
+Unfortunately, some of the DTG are still failing to parse. This might be because some DATE (day) values aren't present in a few of the original datasheets. We'll have to explore these to see if there isn't a day column within the actual sheet, or if there's a bug in the code that's causing this issue.
+
+# Data Exploration
+```{r}
 # For now, lets see how the data looks
 cleanedData_long <- cleanedData %>% 
   select(!c(sheet, row, Year, Month, Day)) %>%
-  pivot_longer(cols = c(ALKALINITY, CHLORINE, COND., `T.D.S.`, TEMPCEL, TURBIDITY, pH), 
+  pivot_longer(cols = c(ALKALINITY, CHLORINE, COND., `T.D.S.`, TEMPCEL, TURBIDITY, POUDRE, CBT, pH), 
                names_to = "variable", values_to = "value")
 
+# Graph all variables over time to see if there are any obvious issues with the data
+cleanedData_long %>% 
+  ggplot(aes(x = DTG, y = value, colour = variable)) +
+  geom_line() +
+  scale_x_datetime(date_breaks = "1 year", date_labels = "%Y") +
+  labs(title = "Greeley Plant Chemical Data Over Time",
+       x = "Date",
+       y = "Value") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal()
 
+# Graphing Alkalinity alongside Conductivity
 cleanedData_long %>% 
   filter(variable == c("ALKALINITY", "COND.")) %>%
   ggplot(aes(x = DTG, y = value, colour = variable)) +
@@ -206,3 +262,4 @@ cleanedData_long %>%
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   theme_minimal()
 ```
+
