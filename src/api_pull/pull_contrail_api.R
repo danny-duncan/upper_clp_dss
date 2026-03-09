@@ -206,7 +206,7 @@ pull_contrail_api <- function(start_DT, end_DT = Sys.time(), username, password,
         site_id_info <- str_extract(full_param_url, "(?<=site_id=).*")
         #encode url for download
         encoded_url <- paste0(
-          "https://contrail.fcgov.com/export/file/?site_id=", site_id_info,
+          "https://contrail.fcgov.com/api/file/?site_id=", site_id_info,
           "&mode=&hours=&data_start=", start_DT_encoded,
           "&data_end=", end_DT_encoded,
           "&tz=US%2FMountain&format_datetime=%25Y-%25m-%25d+%25H%3A%25i%3A%25S&mime=txt&delimiter=comma"
