@@ -62,7 +62,23 @@ snotel_matrix <- snotel_data %>%
 pca_snotel <- snotel_matrix %>% 
   select(starts_with("swe_")) %>% 
   prcomp(., center = TRUE, scale. = TRUE) 
- 
+
+```
+
+And let's look at the pca
+
+```{r}
+summary(pca_snotel)
+
+pca_snotel$rotation
+
+autoplot(pca_snotel, loadings = TRUE, loadings.label = TRUE,variance_percentage = T)
+
+```
+
+
+
+```{r}
 # make the dataframe
 snotel <- tibble(swe_pca = pca_snotel$x[,1], date = snotel_matrix$date) 
 

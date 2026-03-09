@@ -112,12 +112,13 @@ Create datasets to forecast on
 toc_q <- left_join(fc_intake, forecasted_q_vert,
                    relationship = "one-to-many") %>%
   filter(!is.na(canyon_mouth_cfs)) %>% 
-  select(date, date_24h, year, doy, canyon_mouth_cfs) 
-
+  select(date, date_24h, year, canyon_mouth_cfs)  %>% 
+  mutate(doy = yday(date_24h))
 
 toc_q_swe <- left_join(toc_q, snotel) %>%
   filter(!is.na(swe_pca)) %>% 
-  select(date, date_24h, year, doy, canyon_mouth_cfs, swe_pca, melt_rate_14d) 
+  select(date, date_24h, year, canyon_mouth_cfs, swe_pca, melt_rate_14d)  %>% 
+  mutate(doy = yday(date_24h))
 
 ```
 
