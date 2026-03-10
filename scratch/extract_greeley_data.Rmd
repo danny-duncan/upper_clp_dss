@@ -12,12 +12,8 @@ library(readxl)
 library(tidyxl)
 library(purrr)
 library(here)
-library(kableExtra)
-library(gghighlight)
-library(cdssr)
 library(tidyverse)
 library(reticulate)
-library(parallel)
 
 source(here("src/setup_libraries.R"))
 ```
@@ -80,7 +76,7 @@ filtered_tidyxl <-
   # Filter for values in the character column that match our list of variables of interest (vars_actual)
   filter(character %in% vars_actual) %>%
   # Filter for necessary information
-  select(sheet, address, character)
+  select(sheet, address, row, col, character)
 
 print(head(filtered_tidyxl))
 ```
@@ -90,12 +86,28 @@ The filtered_tidyxl dataframe contains all cell values and information for our v
 ## Filter & Refine
 ```{r refine filtered data}
 # Continue to further refine our filtered data and transform it into wide format
-filtered_tidyxl_wide <- filtered_tidyxl %>%
+filtered_dates <- filtered_tidyxl %>%
+  filter(character == "DATE") %>%
+  # Group by monthly sheet and variables
+  group_by(sheet) %>%
+  arrange(col) %>%
+  slice(1) %>%
+  ungroup() %>%
+  # Change DATE address for the 2022 sheets to match the actual DATE column in those sheets (Column C). Filter for sheets that contain "22" in their name and change the address to C12 for those sheets.
+  mutate(address = if_else(sheet %in% desirable_sheet_list[grepl("22", desirable_sheet_list)], "C12", address),
+         col = if_else(sheet %in% desirable_sheet_list[grepl("22", desirable_sheet_list)], "3", col),
+         row = if_else(sheet %in% desirable_sheet_list[grepl("22", desirable_sheet_list)], "12", row))
+
+filtered_vars <- filtered_tidyxl %>%
+  filter(character != "DATE") %>%
   # Group by monthly sheet and variables
   group_by(sheet, character) %>%
   # Slice the first occurrence for each variable.
-  slice(1) %>% 
-  ungroup() %>%
+  slice(1) %>%
+  ungroup()
+
+filtered_tidyxl_wide <- full_join(filtered_dates, filtered_vars) %>%
+  select(-c('col', 'row')) %>%
   # Make the data wide
   pivot_wider(names_from = character, values_from = address) %>%
   # Create a year and month column by extracting from the sheet name using regular expressions.
@@ -137,32 +149,7 @@ extract_rows <- 35
 # Read the full workbook once
 cells <- rawData_combined
 
-# # Extract only the cells that fall within the specified ranges
-# extractedData_base <- bind_rows(lapply(seq_len(nrow(filtered_tidyxl_wide)), function(i) {
-#   row_data <- filtered_tidyxl_wide[i, ]
-#   sheet_name <- as.character(row_data$sheet)
-# 
-#   bind_rows(lapply(var_cols, function(var_name) {
-#     cell_str <- as.character(row_data[[var_name]])
-# 
-#     if (is.na(cell_str) || cell_str == "") return(NULL)
-# 
-#     ref <- parse_cell(cell_str)
-#     start_row <- ref$row
-#     end_row   <- start_row + extract_rows
-# 
-#     cells %>%
-#       filter(
-#         sheet == sheet_name,
-#         col == ref$col,
-#         row >= start_row,
-#         row <= end_row
-#       ) %>%
-#       mutate(variable = var_name) %>%
-#       select(sheet, variable, address, row, col, content, numeric, character, data_type)
-#   }))
-# }))
-
+# Extract data for each variable based on the cell references in filtered_tidyxl_wide
 extractedData <- filtered_tidyxl_wide %>%
   pmap_dfr(function(...) {
     row_data <- tibble(...)
@@ -185,19 +172,10 @@ extractedData <- filtered_tidyxl_wide %>%
           row <= end_row
         ) %>%
         mutate(variable = var_name) %>%
-        select(sheet, variable, address, row, content, numeric, character, data_type)
+        select(sheet, variable, address, row, col, content, numeric, character, data_type)
     })
   })
 
-# finalData_cleaned <- extractedData %>%
-#   filter(data_type == "numeric") %>% 
-#   select(sheet, variable, row, content) %>%
-#   pivot_wider(names_from = variable, values_from = content) %>% 
-#   mutate(Month = str_extract(sheet, "(?i)(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)")) %>%
-#   mutate(Year  = paste0("20", str_extract(sheet, "\\d{2}$"))) %>% 
-#   mutate(Day = DATE) %>%
-#   mutate(Date = parse_date_time(paste(Year, Month, Day), orders = "Ybd")) %>%
-#   select(Date, Year, Month, Day, TIME, ALKALINITY, CHLORINE, COND., `T.D.S.`, TEMPCEL, TURBIDITY, pH, sheet, row)
 ```
 
 One problem with the commented-out code above is that some of the DATE (day) values are in character format instead of numeric. To fix this, we need to create a function which uses an if_else statement to create the day column.
@@ -213,27 +191,74 @@ cleanedData <- extractedData %>%
   mutate(data_type = if_else(!is.na(numeric) & !is.na(character),
                          "numeric",
                          data_type)) %>%
-  # Filter for only numeric rows
-  filter(data_type == "numeric") %>% 
+  # Filter for only numeric rows; inflow is abbreviated as "INF" in the original sheets, but is also a numeric value for positive infinity, so we need to filter out those rows as well.
+  filter(data_type == "numeric",
+         numeric != Inf) %>% 
   select(sheet, variable, row, numeric) %>%
   # Remove duplicate rows before pivoting
-  distinct(sheet, variable, row, .keep_all = TRUE) %>%
+  distinct(sheet, variable, row, .keep_all = TRUE) %>% 
   pivot_wider(names_from = variable, values_from = numeric) %>%
   mutate(Month = toupper(str_extract(sheet, "(?i)(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)"))) %>%
   mutate(Year  = paste0("20", str_extract(sheet, "\\d{2}$"))) %>%
-  mutate(Day = DATE) %>%
+  mutate(Day = DATE) %>% 
   mutate(DTG = parse_date_time(paste(Year, Month, Day), orders = "Ybd")) %>%
-  select(DTG, Year, Month, Day, TIME, ALKALINITY, CHLORINE, COND., `T.D.S.`, TEMPCEL, TURBIDITY, POUDRE, CBT, pH, sheet, row, col) %>% 
+  select(DTG, Year, Month, Day, TIME, ALKALINITY, CHLORINE, COND., `T.D.S.`, TEMPCEL, TURBIDITY, POUDRE, CBT, pH, sheet, row) %>% 
+  # Removes 6 rows which DTG failed to parse; these rows are all erroneous or summary rows.
   drop_na(DTG)
 
 print(head(cleanedData))
+
 ```
 
-Unfortunately, some of the DTG are still failing to parse. This might be because some DATE (day) values aren't present in a few of the original datasheets. We'll have to explore these to see if there isn't a day column within the actual sheet, or if there's a bug in the code that's causing this issue.
+When examining the cleandData dataframe, 200 of the DTG columns fail to parse, with different reasons for this error as follows:
+1. August 2020 - DATE column within sheet is formatted as MDY-HMS instead of the standard day (1-31) format within the majority of other sheets.
+2. December 2022 - An additional empty DATE column is present in column DD which the code is detecting instead of the actual DATE column (C).
+3. February 2009/2010/2011/2023 - Sheets have Days 1-29, with 29th day empty since it these are not leap years. 2023 contains Days 1-31
+4. April 2022 - Code detecting Poudre and CBT summary values where there is no DATE.
+5. February 2022 - Read in three summary rows (43-45)
+6. June 2022 - Detecting an additional empty DATE column (Actual Column: C; Detected Column: CY)
+7. June 2023/2024 - DATE column contains 1-31; June only contains 30 days.
+8. November 2022 - Detecting an additional empty date column.
+9. November 2002 - Undetermined; code is reading correct column but no values are being parsed.
+10. October 2022 - Undetermined; code is reading correct column but no values are being parsed.
+11. September 2022 - Undetermined; code is reading correct column but no values are being parsed.
+12. November 2023/2024 - DATE column contains 1-31; November only contains 30 days.
+13. September 2023/2024 - DATE column contains 1-31; September only contains 30 days.
+
+The date parsing issues have been resolved.
+
+# Data Validation
+
+To ensure that our extracted and parsed data is correct, we will create a validation dataframe which contains "ground truth" values for each variable for a specific month and year. We will then compare the values in our cleanedData dataframe to the values in our validation dataframe to ensure they match.
+
+```{r}
+# Set parameters for random date generation
+set.seed(42) 
+start_date <- as.Date("2001-01-01")
+end_date <- as.Date("2024-12-31")
+
+validationData <- tibble(
+  DTG = sort(sample(seq(start_date, end_date, by = "day"), 20))) %>%
+  mutate(
+    TURBIDITY = NA_real_,
+    CHLORINE = NA_real_,
+    pH = NA_real_,
+    ALKALINITY = NA_real_,
+    COND. = NA_real_,
+    T.D.S. = NA_real_,
+    HACHTOC = NA_real_, 
+    TEMPCEL = NA_real_, 
+    POUDRE = NA_real_, 
+    CBT = NA_real_
+      )
+
+print(validationData$DTG)
+```
+
 
 # Data Exploration
 ```{r}
-# For now, lets see how the data looks
+# Pivot data longer for graphing purposes
 cleanedData_long <- cleanedData %>% 
   select(!c(sheet, row, Year, Month, Day)) %>%
   pivot_longer(cols = c(ALKALINITY, CHLORINE, COND., `T.D.S.`, TEMPCEL, TURBIDITY, POUDRE, CBT, pH), 
