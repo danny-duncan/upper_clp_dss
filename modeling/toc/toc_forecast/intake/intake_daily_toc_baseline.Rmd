@@ -14,7 +14,7 @@ library(snotelr)
 library(mgcv)
 library(Metrics)
 library(tidyverse)
-
+library(ggfortify)
 ```
 
 # Purpose
