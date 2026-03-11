@@ -3,9 +3,9 @@
 Repo to organize all data/code related to the Upper CLP Decision Support
 System.
 
-## Primarily project goals:
+## Primary project goals:
 
--   Create dashboard for all WQ and quanity data relevant to CLP
+-   Create dashboard for all WQ and quantity data relevant to CLP
     Municipal water supplies
 
 -   Collate all relevant in-stream water quality data to create models
