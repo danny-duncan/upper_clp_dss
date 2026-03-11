@@ -1,0 +1,344 @@
+---
+title: "Intake daily TOC baseline"
+author: "ROSSyndicate"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+
+library(here)
+library(cdssr)
+library(snotelr)
+library(mgcv)
+library(Metrics)
+library(tidyverse)
+library(ggfortify)
+```
+
+# Purpose
+
+This document explores some options for modeling daily TOC data from the City of 
+Fort Collins' intake.
+
+# Data
+
+```{r}
+# intake TOC
+fc_intake <- read_csv(here("data/collated/FC_intake/fc_intake_TOC_record_2010-2025.csv"))
+
+# read in flow data at canyon mouth
+flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
+                       start_date = "2010-01-01",
+                       end_date = "2025-12-31",
+                       timescale = "day") %>%
+  select(datetime, canyon_mouth_cfs = value) %>% 
+  mutate(date = date(datetime), 
+         year = year(date),
+         doy = yday(date)) 
+
+# grab sites in the HUC
+snotel_sites <- snotel_info() %>%
+  filter(grepl("10190007", description))
+
+# Download daily SNOTEL data
+snotel_data <- snotel_download(site_id = snotel_sites$site_id,
+                               internal = TRUE,
+                               metric = TRUE) %>% 
+  mutate(date = ymd(date),
+         doy = yday(date),
+         year = year(date))
+
+# prep for PCA
+snotel_matrix <- snotel_data %>%
+  select(date, site_id, snow_water_equivalent) %>% 
+  pivot_wider(names_from = site_id, 
+              names_prefix = "swe_",
+              values_from = snow_water_equivalent) %>% 
+  .[complete.cases(.), ]
+
+# run PCA
+pca_snotel <- snotel_matrix %>% 
+  select(starts_with("swe_")) %>% 
+  prcomp(., center = TRUE, scale. = TRUE) 
+
+```
+
+And let's look at the pca
+
+```{r}
+summary(pca_snotel)
+
+pca_snotel$rotation
+
+autoplot(pca_snotel, loadings = TRUE, loadings.label = TRUE,variance_percentage = T)
+
+```
+
+
+
+```{r}
+# make the dataframe
+snotel <- tibble(swe_pca = pca_snotel$x[,1], date = snotel_matrix$date) 
+
+# calculate melt from PCA statistic
+snotel <- snotel %>% 
+  arrange(date) %>% 
+  mutate(date_m14 = date - days(14), 
+         date_m7 = date - days(7),
+         date_m3 = date - days(3)) %>%
+  # join for differences
+  left_join(snotel %>%
+              select(date, swe_pca) %>%
+              rename(date_m14 = date,
+                     swe_pca_lag14 = swe_pca),
+            by = "date_m14") %>%
+  left_join(snotel %>%
+              select(date, swe_pca) %>%
+              rename(date_m7 = date,
+                     swe_pca_lag7 = swe_pca),
+            by = "date_m7") %>%
+  left_join(snotel %>% 
+              select(date, swe_pca) %>% 
+              rename(date_m3 = date,
+                     swe_pca_lag3 = swe_pca)) %>% 
+  # compute melt rate
+  mutate(melt_rate_14d = (swe_pca_lag14 - swe_pca) / 14,
+    melt_rate_7d = (swe_pca_lag7 - swe_pca) / 7,
+    melt_rate_3d = (swe_pca_lag3 - swe_pca) / 3) %>% 
+  select(-c(date_m14, swe_pca_lag14,
+            date_m7, swe_pca_lag7, 
+            date_m3, swe_pca_lag3))
+
+intake_flow_swe <- left_join(fc_intake, flow_data) %>% 
+  left_join(snotel)
+```
+
+# Visualize TOC
+
+```{r}
+ggplot(intake_flow_swe, aes(x = date, y = mean_TOC)) +
+  geom_point() +
+  theme_bw() +
+  labs(x = "day of year",
+       y = "intake TOC (mg/L)")
+
+intake_flow_swe %>% 
+  summarize(max_TOC = max(mean_TOC),
+            mean_TOC = mean(mean_TOC),
+            n_TOC = n(), 
+            .by = year) %>% 
+  arrange(year)
+```
+
+# Pull testing data
+
+Given the 16 years of data, we're going to be cautious from the top and pull out
+a test set of 2 years of data.
+
+```{r}
+test_years <- c(2018, 2024)
+
+test <- intake_flow_swe %>% 
+  filter(year %in% test_years)
+
+training <- anti_join(intake_flow_swe, test)
+```
+
+# Play with training data
+
+Just using day of year.
+
+```{r}
+gam_doy <- gam(mean_TOC ~ s(doy, bs = "cc", k = 20),
+               data = training, 
+               method = "REML")
+
+gam.check(gam_doy)
+```
+
+If we increase k substantially (to 20 here), we start to see some meaningful 
+model diagnositcs (k' < edf, p value increasing indicating that the model is 
+capturing more variation), but there's a lot of variation at the high end.
+
+Using doy + canyon mouth as additive.
+
+```{r}
+gam_doy_q <- gam(mean_TOC ~ s(doy, bs = "cc") + s(canyon_mouth_cfs),
+                 data = training,
+                 method = "REML")
+
+gam.check(gam_doy_q)
+```
+
+This looks really good! Model diagnostics are good too. 
+
+Let's add some complexity using some interaction for doy/canyon mouth
+
+```{r}
+gam_doy_q_inter <- gam(
+  mean_TOC ~ 
+    s(doy, bs = "cc") +
+    s(canyon_mouth_cfs) +
+    ti(doy, canyon_mouth_cfs, bs = c("cc", "tp")),
+  data   = training,
+  method = "REML"
+)
+
+gam.check(gam_doy_q_inter)
+```
+
+Even better still!
+
+Now, let's add some snowpack info.
+
+```{r}
+gam_doy_q_inter_swe <- gam(
+  mean_TOC ~ 
+    s(doy, bs = "cc") +
+    s(canyon_mouth_cfs) +
+    ti(doy, canyon_mouth_cfs, bs = c("cc", "tp")) +
+    s(swe_pca, bs = "ts"),
+  data   = training,
+  method = "REML"
+)
+
+gam.check(gam_doy_q_inter_swe)
+```
+
+Okay, we might be adding a bit too much complexity here, the interaction term
+decreased in significance and the swe values don't look great diagnostically.
+
+For kicks, let's drop the interaction term.
+
+```{r}
+gam_doy_q_swe <- gam(
+  mean_TOC ~ 
+    s(doy, bs = "cc") +
+    s(canyon_mouth_cfs) +
+    s(swe_pca, bs = "ts"),
+  data   = training,
+  method = "REML"
+)
+
+gam.check(gam_doy_q_swe)
+```
+
+A little better in diagnostics, let's do an interaction term for q and swe.
+
+```{r}
+gam_doy_q_swe_inter <- gam(
+  mean_TOC ~ 
+    s(doy, bs = "cc") +
+    s(canyon_mouth_cfs) +
+    s(swe_pca, bs = "ts") +
+    ti(canyon_mouth_cfs, swe_pca, bs = c("ts", "ts")),
+  data   = training,
+  method = "REML"
+)
+
+gam.check(gam_doy_q_swe_inter)
+```
+
+Interesting, that interaction seems to really tighten up some of the upper-end
+values. The diagnostics aren't great for swe alone, but the edf is not maxed (it's
+about a point lower than the k') so we could argue that it's okay to leave in the
+swe pca data.
+
+Let's try using melt rate, with interaction term for melt rate and canyon mouth
+
+```{r}
+gam_doy_q_swe_melt <- gam(
+  mean_TOC ~ 
+    s(doy, bs = "cc") +
+    s(canyon_mouth_cfs, bs = "tp") +
+    s(melt_rate_7d, bs = "tp") +
+    ti(melt_rate_7d, canyon_mouth_cfs, bs = "tp"),
+  data   = training,
+  method = "REML"
+)
+
+gam.check(gam_doy_q_swe_melt)
+```
+
+Same but 14 day melt rate
+
+```{r}
+gam_doy_q_swe_melt_14 <- gam(
+  mean_TOC ~ 
+    s(doy, bs = "cc") +
+    s(canyon_mouth_cfs, bs = "tp") +
+    s(melt_rate_14d, bs = "tp") +
+    ti(melt_rate_14d, canyon_mouth_cfs, bs = "tp"),
+  data   = training,
+  method = "REML"
+)
+
+gam.check(gam_doy_q_swe_melt_14)
+```
+
+Interesting. That 14 day melt rate seems to help tighten up the upper end a little.
+
+
+# Apply to test set
+
+```{r}
+
+test$pred_TOC_swe_inter <- predict(gam_doy_q_swe_inter, test)
+test$pred_TOC_melt <- predict(gam_doy_q_swe_melt_14, test)
+test$pred_TOC_simple <- predict(gam_doy_q_inter, test)
+
+ggplot(test, aes(x = mean_TOC, y = pred_TOC_swe_inter)) +
+  geom_point() +
+  theme_bw() +
+  geom_abline(slope = 1, intercept = 0) +
+  coord_cartesian(xlim = c(1,12.5), ylim = c(1, 12.5)) +
+  labs(x = "measured TOC @ intake (mg/L)",
+       y = "predicted TOC @ intake (mg/L)")
+
+rmse(test$mean_TOC, test$pred_TOC_swe_inter)
+mae(test$mean_TOC, test$pred_TOC_swe_inter)
+bias(test$mean_TOC, test$pred_TOC_swe_inter)
+
+ggplot(test, aes(x = mean_TOC, y = pred_TOC_melt)) +
+  geom_point() +
+  theme_bw() +
+  geom_abline(slope = 1, intercept = 0) +
+  coord_cartesian(xlim = c(1,12.5), ylim = c(1, 12.5)) +
+  labs(x = "measured TOC @ intake (mg/L)",
+       y = "predicted TOC @ intake (mg/L)")
+
+rmse(test$mean_TOC, test$pred_TOC_melt)
+mae(test$mean_TOC, test$pred_TOC_melt)
+bias(test$mean_TOC, test$pred_TOC_melt)
+
+ggplot(test, aes(x = mean_TOC, y = pred_TOC_simple)) +
+  geom_point() +
+  theme_bw() +
+  geom_abline(slope = 1, intercept = 0) +
+  coord_cartesian(xlim = c(1,12.5), ylim = c(1, 12.5)) +
+  labs(x = "measured TOC @ intake (mg/L)",
+       y = "predicted TOC @ intake (mg/L)")
+
+rmse(test$mean_TOC, test$pred_TOC_simple)
+mae(test$mean_TOC, test$pred_TOC_simple)
+bias(test$mean_TOC, test$pred_TOC_simple)
+
+```
+
+So definitely some value in including melt statistics, but maybe not swe as 
+integrated in the example above. Given this, we'll export both the additive
+interaction GAM (simple model) and the 14-day snow melt GAM for operational 
+testing.
+
+# Export models
+
+Including the pca model for the snotel data.
+
+```{r}
+write_rds(gam_doy_q_swe_melt_14, here("data/derived/models/TOC_intake/TOC_intake_GAM_Q_swe-melt14_v2026-02-18.rds"))
+write_rds(gam_doy_q_inter, here("data/derived/models/TOC_intake/TOC_intake_GAM_Q_doy_inter_v2026-02-18.rds"))
+write_rds(pca_snotel, here("data/derived/models/TOC_intake/SWE_PCA_v2026-02-18.rds"))
+```
+
