@@ -1,0 +1,342 @@
+---
+title: "Apply GAM to fraction of test data with forecasted Q"
+author: "ROSSyndicate"
+date: "2026-01-26"
+output: html_document
+---
+
+# Purpose
+
+This script is meant to apply the distributed TOC GAM model to assess its 
+performance with forecasted Q from HEFS.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+library(here)
+library(cdssr)
+library(mgcv)
+library(Metrics)
+library(verification)
+library(snotelr)
+library(arrow)
+library(tidyverse)
+
+source(here("src/collation/load_grab_sample_data.R"))
+
+```
+
+# Data
+
+Here, we'll grab the data for 2023-2025. Not all of these data are in the test
+set, but it will give us an idea of the added uncertainty for a 30-day forecast.
+We're using 2023-2025 here because those are the HEFS forecasts easily available 
+to us.
+
+```{r}
+# grab chemistry data
+chem <- load_grab_sample_data() %>% 
+  # remove intake for now
+  filter(site_code != "prw" & !is.na(Campaign)) %>% 
+  # check for DOC/TOC data
+  filter(!is.na(TOC) | !is.na(DOC)) %>% 
+  # only grab columns we need right now
+  select(Date, site_name, site_code, collector, TOC, DOC, flag,
+         Campaign, location_type, watershed, distance_upstream_km) %>% 
+  # drop any duplicates here
+  unique()
+
+mainstem <- chem %>% 
+  filter(Campaign %in% c("Mainstem - Upper", "South Fork") & 
+           location_type %in% c("Mainstem", "Stream", "Inflow") &
+           # remove inflows
+           !(site_name %in% c("Poudre Above Joe Wright",
+                              "Beaver",
+                              "Comanche Inflow",
+                              "Hourglass Inflow"))) %>% 
+  mutate(DOY = yday(Date),
+         year = year(Date), 
+         toc_doc = if_else(!is.na(TOC), TOC, DOC),
+         # to play with categorical variables, they failed.
+         identity = if_else(Campaign == "South Fork", 1, 0),
+         fire_signal = if_else(year %in% c(2021, 2022), 1, 0)) %>% 
+  # limit time, remove fire signal, remove flier
+  filter(!is.na(toc_doc), between(DOY, 100, 320), 
+         fire_signal == 0) %>% 
+  # remove data after the 2013 flood (Sept 9, 2013)
+  filter(!(Date >= "2013-09-2013" & year == 2013)) %>% 
+  rename(date = Date) %>% 
+  # let's also make sure we only have one sample per day per site
+  summarize(toc_doc = mean(toc_doc),
+            .by = c(date, site_name, DOY, year, distance_upstream_km)) %>% 
+  # also remove the outlier in south fork and manners bridge
+  filter(!(site_name == "Poudre South Fork" & DOY > 200 & toc_doc > 9)) %>% 
+  filter(!(site_name == "Poudre at Manner's Bridge" & DOY > 200 & toc_doc >5))
+
+```
+
+Grab forecasted data (for our operational statistics) - these data were gathered in 
+`modeling/external_forecasts/HEFS_canyon_mouth_23-25.Rmd`
+
+```{r}
+forecasted_q <- read_parquet(here("data/raw/external_datasets/flow_forecast_HEFS/HEFS_2023_2025_forecast.parquet")) %>% 
+  # each of the forecasts start at noon, and we want the daily average, so we'll 
+  # subtract 12 to get an average of the "next day"
+  mutate(date_24h = date(date_time - hours(12))) %>% 
+  summarize(across(c(ens_1990:ens_2018, ens_2019),
+                   ~ mean(.x)),
+            .by = c(forecast_date, date_24h))
+
+# pivot to viretical to make the probabilistic forecast
+forecasted_q_vert <- forecasted_q %>% 
+  pivot_longer(cols = c(ens_1990:ens_2019),
+               names_to = "ensemble_member",
+               values_to = "canyon_mouth_cfs") %>% 
+  rename(date = forecast_date)
+
+# join with location data, and reduce columns
+mainstem_forecasted <- left_join(mainstem, forecasted_q_vert,
+                                 relationship = "many-to-many") %>%
+  filter(!is.na(canyon_mouth_cfs)) %>% 
+  select(date, year, distance_upstream_km, canyon_mouth_cfs, site_name, date_24h) %>% 
+  mutate(DOY = yday(date_24h))
+```
+
+# Model application
+
+Load in the model files. 
+
+```{r}
+fit_1 <- read_rds(here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit1_v2026-02-09.rds"))
+fit_2 <- read_rds(here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit2_v2026-02-09.rds"))
+fit_3 <- read_rds(here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit3_v2026-02-09.rds"))
+fit_4 <- read_rds(here("data/derived/models/TOC_distributed/working/TOC_GAM_Q_add_fit4_v2026-02-09.rds"))
+```
+
+
+And now we'll apply the GAM defined by the data from the watershed (including
+both FC data and ROSS data, but not intake data).
+
+```{r}
+mainstem_forecasted <- mainstem_forecasted %>% 
+  mutate(pred_toc_1 = exp(predict(fit_1, mainstem_forecasted)),
+         pred_toc_2 = exp(predict(fit_2, mainstem_forecasted)),
+         pred_toc_3 = exp(predict(fit_3, mainstem_forecasted)),
+         pred_toc_4 = exp(predict(fit_4, mainstem_forecasted)),
+         pred_toc = (pred_toc_1 + pred_toc_2 + pred_toc_3 + pred_toc_4) / 4)
+```
+
+And visualize performance at a few time horizons, remember `date` is the day forecast 
+is made and `date_24` is the forecasted day.
+
+```{r}
+mainstem_forecasted %>% 
+  filter(date == date_24h) %>% 
+  inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+  mutate(date_site_name = paste0(date, site_name)) %>% 
+  ggplot(., aes(x = toc_doc, y = pred_toc)) + 
+  geom_boxplot(aes(group = date_site_name), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble, 1 day horizon",
+       title = "Distrubed TOC Model Ensemble")
+```
+
+```{r}
+mainstem_forecasted %>% 
+  # move forward the "date" to find matches in the observed dataset (but using that
+  # new date's identity to get the forecast)
+  mutate(date = date + days(1)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+  mutate(date_site_name = paste0(date, site_name)) %>% 
+  ggplot(., aes(x = toc_doc, y = pred_toc)) + 
+  geom_boxplot(aes(group = date_site_name), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble, 2 day horizon",
+       title = "Distrubed TOC Model Ensemble")
+```
+
+```{r}
+mainstem_forecasted %>% 
+  mutate(date = date + days(2)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+  mutate(date_site_name = paste0(date, site_name)) %>% 
+  ggplot(., aes(x = toc_doc, y = pred_toc)) + 
+  geom_boxplot(aes(group = date_site_name), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble, 3 day horizon",
+       title = "Distrubed TOC Model Ensemble")
+```
+
+```{r}
+mainstem_forecasted %>% 
+  mutate(date = date + days(3)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+  mutate(date_site_name = paste0(date, site_name)) %>% 
+  ggplot(., aes(x = toc_doc, y = pred_toc)) + 
+  geom_boxplot(aes(group = date_site_name), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble, 4 day horizon",
+       title = "Distrubed TOC Model Ensemble")
+```
+
+```{r}
+mainstem_forecasted %>% 
+  mutate(date = date + days(4)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+  mutate(date_site_name = paste0(date, site_name)) %>% 
+  ggplot(., aes(x = toc_doc, y = pred_toc)) + 
+  geom_boxplot(aes(group = date_site_name), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble, 5 day horizon",
+       title = "Distrubed TOC Model Ensemble")
+```
+
+```{r}
+mainstem_forecasted %>% 
+  mutate(date = date + days(9)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+  mutate(date_site_name = paste0(date, site_name)) %>% 
+  ggplot(., aes(x = toc_doc, y = pred_toc)) + 
+  geom_boxplot(aes(group = date_site_name), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble, 10 day horizon",
+       title = "Distrubed TOC Model Ensemble")
+```
+
+
+```{r}
+mainstem_forecasted %>% 
+  mutate(date = date + days(14)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+  mutate(date_site_name = paste0(date, site_name)) %>% 
+  ggplot(., aes(x = toc_doc, y = pred_toc)) + 
+  geom_boxplot(aes(group = date_site_name), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble, 15 day horizon",
+       title = "Distrubed TOC Model Ensemble")
+```
+
+
+```{r}
+mainstem_forecasted %>% 
+  mutate(date = date + days(19)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+  mutate(date_site_name = paste0(date, site_name)) %>% 
+  ggplot(., aes(x = toc_doc, y = pred_toc)) + 
+  geom_boxplot(aes(group = date_site_name), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble, 20 day horizon",
+       title = "Distrubed TOC Model Ensemble")
+```
+
+```{r}
+mainstem_forecasted %>% 
+  mutate(date = date + days(24)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+  mutate(date_site_name = paste0(date, site_name)) %>% 
+  ggplot(., aes(x = toc_doc, y = pred_toc)) + 
+  geom_boxplot(aes(group = date_site_name), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble, 25 day horizon",
+       title = "Distrubed TOC Model Ensemble")
+```
+
+```{r}
+mainstem_forecasted %>% 
+  mutate(date = date + days(29)) %>% 
+  filter(date == date_24h) %>%
+  inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+  mutate(date_site_name = paste0(date, site_name)) %>% 
+  ggplot(., aes(x = toc_doc, y = pred_toc)) + 
+  geom_boxplot(aes(group = date_site_name), position = position_dodge(), width = 0.2, alpha = 0.5) +
+  theme_bw() +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "red") +
+  coord_cartesian(xlim = c(0, 12.5), ylim = c(0, 12.5)) +
+  labs(x = "Measured TOC (mg/L)",
+       y = "Average Predicted TOC (mg/L)\nfrom HEFS ensemble, 30 day horizon",
+       title = "Distrubed TOC Model Ensemble")
+```
+
+And get some performance stats, including Continuous Ranked Probability Score 
+(CRPS) which is better for probabilistic forecasts, but considered "comparable"
+to MAE in determinisitic forecasts.
+
+```{r, message = FALSE}
+
+performance_horizon <- map(seq(1:30),
+    ~ mainstem_forecasted %>% 
+      mutate(date = date + days(.x-1)) %>% 
+      filter(date == date_24h) %>%
+      inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+      summarize(mean_toc = mean(pred_toc), .by = c(date, site_name, toc_doc)) %>% 
+      summarize(RMSE = rmse(toc_doc, mean_toc), 
+                MAE = mae(toc_doc, mean_toc),
+                BIAS = bias(toc_doc, mean_toc), 
+                n = n()) %>% 
+      mutate(horizon = .x)) %>% 
+  bind_rows() 
+
+for_crps <- map(seq(1:30),
+    ~ mainstem_forecasted %>% 
+      mutate(date = date + days(.x-1)) %>% 
+      filter(date == date_24h) %>%
+      inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+      mutate(horizon = .x) %>% 
+      summarize(mean_toc = mean(pred_toc), 
+                sd_toc = sd(pred_toc),
+                n = n(),
+                .by = c(horizon, date, site_name, toc_doc))) %>% 
+  bind_rows() %>% 
+  filter(n > 10) 
+
+calc_crps <- for_crps %>% 
+  rowwise() %>% 
+  mutate(crps_daily = crps(toc_doc, c(mean_toc, sd_toc))$crps) %>% 
+  ungroup() %>% 
+  select(horizon, site_name, crps_daily, date)
+
+ggplot(calc_crps, aes(x = horizon, y = crps_daily)) +
+  geom_boxplot(aes(group = horizon)) +
+  theme_bw() +
+  labs(y = "continuous ranked probability score (mg/L)\ncomparable to MAE",
+       x = "forecast horizon",
+       title = "CRPS for distributed TOC forecast") +
+  scale_x_continuous(n.breaks = 30, minor_breaks = seq(1:30))
+
+```
+
+
+
