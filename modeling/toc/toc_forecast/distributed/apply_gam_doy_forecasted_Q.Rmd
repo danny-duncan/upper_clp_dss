@@ -7,12 +7,16 @@ output: html_document
 
 # Purpose
 
-This script is meant to apply the distributed TOC GAM model to assess its 
+This script is meant to apply the distributed TOC GAM model to assess its
 performance with forecasted Q from HEFS.
+
+> **NOTE — Migrated to `uclp_dashboard` workflow.**
+> The live operational version of this logic lives in
+> `uclp_dashboard/R/model_run_workflow.R`, called daily by
+> `.github/workflows/model_run.yml`. 
 
 ```{r, echo = FALSE, message = FALSE, warning = FALSE}
 library(here)
-library(cdssr)
 library(mgcv)
 library(Metrics)
 library(verification)
@@ -39,7 +43,7 @@ chem <- load_grab_sample_data() %>%
   # check for DOC/TOC data
   filter(!is.na(TOC) | !is.na(DOC)) %>% 
   # only grab columns we need right now
-  select(Date, site_name, site_code, collector, TOC, DOC, flag,
+  dplyr::select(Date, site_name, site_code, collector, TOC, DOC, flag,
          Campaign, location_type, watershed, distance_upstream_km) %>% 
   # drop any duplicates here
   unique()
@@ -96,7 +100,7 @@ forecasted_q_vert <- forecasted_q %>%
 mainstem_forecasted <- left_join(mainstem, forecasted_q_vert,
                                  relationship = "many-to-many") %>%
   filter(!is.na(canyon_mouth_cfs)) %>% 
-  select(date, year, distance_upstream_km, canyon_mouth_cfs, site_name, date_24h) %>% 
+  dplyr::select(date, year, distance_upstream_km, canyon_mouth_cfs, site_name, date_24h) %>% 
   mutate(DOY = yday(date_24h))
 ```
 
@@ -297,28 +301,28 @@ to MAE in determinisitic forecasts.
 ```{r, message = FALSE}
 
 performance_horizon <- map(seq(1:30),
-    ~ mainstem_forecasted %>% 
-      mutate(date = date + days(.x-1)) %>% 
-      filter(date == date_24h) %>%
-      inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
-      summarize(mean_toc = mean(pred_toc), .by = c(date, site_name, toc_doc)) %>% 
-      summarize(RMSE = rmse(toc_doc, mean_toc), 
-                MAE = mae(toc_doc, mean_toc),
-                BIAS = bias(toc_doc, mean_toc), 
-                n = n()) %>% 
-      mutate(horizon = .x)) %>% 
+                           ~ mainstem_forecasted %>% 
+                             mutate(date = date + days(.x-1)) %>% 
+                             filter(date == date_24h) %>%
+                             inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+                             summarize(mean_toc = mean(pred_toc), .by = c(date, site_name, toc_doc)) %>% 
+                             summarize(RMSE = rmse(toc_doc, mean_toc), 
+                                       MAE = mae(toc_doc, mean_toc),
+                                       BIAS = bias(toc_doc, mean_toc), 
+                                       n = n()) %>% 
+                             mutate(horizon = .x)) %>% 
   bind_rows() 
 
 for_crps <- map(seq(1:30),
-    ~ mainstem_forecasted %>% 
-      mutate(date = date + days(.x-1)) %>% 
-      filter(date == date_24h) %>%
-      inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
-      mutate(horizon = .x) %>% 
-      summarize(mean_toc = mean(pred_toc), 
-                sd_toc = sd(pred_toc),
-                n = n(),
-                .by = c(horizon, date, site_name, toc_doc))) %>% 
+                ~ mainstem_forecasted %>% 
+                  mutate(date = date + days(.x-1)) %>% 
+                  filter(date == date_24h) %>%
+                  inner_join(., mainstem %>% select(date, site_name, toc_doc)) %>% 
+                  mutate(horizon = .x) %>% 
+                  summarize(mean_toc = mean(pred_toc), 
+                            sd_toc = sd(pred_toc),
+                            n = n(),
+                            .by = c(horizon, date, site_name, toc_doc))) %>% 
   bind_rows() %>% 
   filter(n > 10) 
 
