@@ -1,0 +1,221 @@
+---
+title: "turbidity"
+author: "ROSSyndicate"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, error = FALSE, warning = FALSE)
+```
+
+# Purpose
+
+This script is meant to explore patterns in turbidity in an attempt to forecast
+turbidity at a 1-3 day time horizon at the FC intake.
+
+```{r}
+library(tidyverse)
+library(cdssr)
+library(corrr)
+library(gghighlight)
+
+turb <- read_csv("data/collated/FC_intake/fc_intake_munroe_turbidity_quantile_record_2010-2025.csv")
+
+summary(turb)
+
+# read in flow data at canyon mouth
+flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
+                       start_date = "2010-01-01",
+                       end_date = "2025-12-31",
+                       timescale = "day") %>%
+  select(datetime, canyon_mouth_cfs = value) %>% 
+  mutate(date = date(datetime), 
+         year = year(date),
+         doy = yday(date)) 
+
+turb_q <- full_join(turb, flow_data)
+```
+Look at the patterns by DOY
+
+```{r}
+turb %>% 
+  pivot_longer(cols = c(p05:p95), names_to = "quantile", values_to = "turb") %>% 
+  ggplot(., aes(x = doy, y = turb)) +
+  geom_point() +
+  facet_grid(quantile ~ ., scales = "free_y")
+```
+
+And look at p95 year-by-year for seasonal patterns
+
+```{r}
+map(min(year(turb$date)):max(year(turb$date)),
+    ~ {
+      turb %>% 
+        filter(year(date) == .x) %>% 
+        ggplot(., aes(x = doy, y = p95)) +
+        geom_point() +
+        labs(title = paste0("Intake - ", .x))
+    }) 
+```
+
+And the correlation between p95 and others:
+
+```{r}
+turb %>% 
+  select(c(starts_with("p"), -pct_diff)) %>% 
+  correlate() %>% 
+  stretch() %>% 
+  filter(x == "p95" & !is.na(r))
+```
+
+Not really a strong correlation across any of the other quantiles.
+
+# Flow + Turbidity
+
+Plot the two together
+
+```{r}
+turb_q %>% 
+  ggplot(., aes(x = doy)) +
+  geom_point(aes(y = p95)) +
+  geom_line(aes(y = canyon_mouth_cfs/20)) +
+  coord_cartesian(ylim = c(0, 300)) + #limit to keep things reasonable
+  facet_wrap(year ~ .)
+```
+
+Let's plot turbidity against flow, faceted by month, as I suspect there are some antecedent
+conditions to consider that this might start to tease out
+
+```{r}
+turb_q %>% 
+  pivot_longer(cols = c(p05:p95), names_to = "quantile", values_to = "turb") %>% 
+  mutate(month = month(date)) %>% 
+  filter(between(month, 4, 9)) %>% 
+  ggplot(., aes(x = canyon_mouth_cfs, y = turb)) +
+  geom_point() +
+  facet_grid(quantile ~ month, scales = "free_y")
+```
+
+
+# Changes in Q
+
+Instead of looking at today's Q, let's look at the change in Q over the previous
+24h.
+
+```{r}
+turb_apr_sept_lagQ <- turb_q %>% 
+  arrange(date) %>% 
+  mutate(deltaQ_24h = canyon_mouth_cfs - lag(canyon_mouth_cfs),
+         deltaQ_48h = canyon_mouth_cfs - lag(canyon_mouth_cfs, n = 2),
+         deltaQ_72h = canyon_mouth_cfs - lag(canyon_mouth_cfs, n = 3))
+
+turb_apr_sept_lagQ %>% 
+  ggplot(., aes(x = doy)) +
+  geom_line(aes(y = deltaQ_24h/5)) + # standardize a little to for viewing
+  geom_point(aes(y = p95-200), color = "purple") +
+  coord_cartesian(ylim = c(-200, 100)) + #limit to keep things reasonable
+  facet_wrap(year ~ .)
+
+turb_apr_sept_lagQ %>% 
+  ggplot(., aes(x = doy)) +
+  geom_line(aes(y = deltaQ_48h/5)) + # standardize a little to for viewing
+  geom_point(aes(y = p95-200), color = "purple") +
+  coord_cartesian(ylim = c(-200, 100)) + #limit to keep things reasonable
+  facet_wrap(year ~ .)
+
+turb_apr_sept_lagQ %>% 
+  ggplot(., aes(x = doy)) +
+  geom_line(aes(y = deltaQ_72h/5)) + # standardize a little to for viewing
+  geom_point(aes(y = p95-200), color = "purple") +
+  coord_cartesian(ylim = c(-200, 100)) + #limit to keep things reasonable
+  facet_wrap(year ~ .)
+```
+
+Well, this looks useful... what does it look like as a regression?
+
+```{r}
+turb_apr_sept_lagQ %>% 
+  pivot_longer(cols = c(p05:p95), names_to = "quantile", values_to = "turb") %>% 
+  mutate(month = month(date)) %>% 
+  filter(between(month, 4, 9)) %>% 
+  ggplot(., aes(x = deltaQ_24h, y = turb)) +
+  geom_point() +
+  facet_grid(quantile ~ month, scales = "free_y")
+
+turb_apr_sept_lagQ %>% 
+  pivot_longer(cols = c(p05:p95), names_to = "quantile", values_to = "turb") %>% 
+  mutate(month = month(date)) %>% 
+  filter(between(month, 4, 9)) %>% 
+  ggplot(., aes(x = deltaQ_48h, y = turb)) +
+  geom_point() +
+  facet_grid(quantile ~ month, scales = "free_y")
+
+turb_apr_sept_lagQ %>% 
+  pivot_longer(cols = c(p05:p95), names_to = "quantile", values_to = "turb") %>% 
+  mutate(month = month(date)) %>% 
+  filter(between(month, 4, 9)) %>% 
+  ggplot(., aes(x = deltaQ_72h, y = turb)) +
+  geom_point() +
+  facet_grid(quantile ~ month, scales = "free_y")
+
+```
+
+Look a little closer at p95:
+
+```{r}
+turb_apr_sept_lagQ %>% 
+  mutate(month = month(date)) %>% 
+  filter(between(month, 4, 9)) %>% 
+  ggplot(., aes(x = deltaQ_24h, y = p95)) +
+  geom_point() 
+
+turb_apr_sept_lagQ %>% 
+  mutate(month = month(date)) %>% 
+  filter(between(month, 4, 9)) %>% 
+  ggplot(., aes(x = deltaQ_48h, y = p95)) +
+  geom_point() 
+
+turb_apr_sept_lagQ %>% 
+  mutate(month = month(date)) %>% 
+  filter(between(month, 4, 9)) %>% 
+  ggplot(., aes(x = deltaQ_72h, y = p95)) +
+  geom_point() 
+
+```
+
+Not so great. Can we see anything if we facet by month?
+
+```{r}
+turb_apr_sept_lagQ %>% 
+  mutate(month = month(date)) %>% 
+  filter(between(month, 4, 9)) %>% 
+  ggplot(., aes(x = deltaQ_24h, y = p95)) +
+  geom_point()  +
+  coord_cartesian(xlim = c(-1000,1000),
+                  ylim = c(0, 500)) +
+  facet_wrap(month ~ .)
+
+turb_apr_sept_lagQ %>% 
+  mutate(month = month(date)) %>% 
+  filter(between(month, 4, 9)) %>% 
+  ggplot(., aes(x = deltaQ_48h, y = p95)) +
+  geom_point() +
+  coord_cartesian(xlim = c(-1000,1000),
+                  ylim = c(0, 500)) +
+  facet_wrap(month ~ .)
+
+turb_apr_sept_lagQ %>% 
+  mutate(month = month(date)) %>% 
+  filter(between(month, 4, 9)) %>% 
+  ggplot(., aes(x = deltaQ_72h, y = p95)) +
+  geom_point()+
+  coord_cartesian(xlim = c(-1000,1000),
+                  ylim = c(0, 500)) +
+  facet_wrap(month ~ .)
+
+
+```
+
+Mayyyyybe at the 72h lag.
+
