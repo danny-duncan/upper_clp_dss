@@ -12,13 +12,20 @@ knitr::opts_chunk$set(message = FALSE, error = FALSE, warning = FALSE)
 # Purpose
 
 This script is meant to explore patterns in turbidity in an attempt to forecast
-turbidity at a 1-3 day time horizon at the FC intake.
+turbidity at a 1-3 day time horizon at the FC intake. We know that from a conceptual
+standpoint, turbidity is coming from autochthounous and allochthonous sources and
+those sources and responses differ over the year. Turbidity can spike during snowmelt
+events (primarily on the rising limb of Q), it can spike from reservoir releases,
+and it can spike from convective storms. Over fire-affected landscapes, turbidity
+can be at a higher magnitude and for a longer period of time, but is dependent on
+complex factors that probably can't be incorporated in a simple model.
 
 ```{r}
 library(tidyverse)
 library(cdssr)
 library(corrr)
 library(gghighlight)
+library(RcppRoll)
 
 turb <- read_csv("data/collated/FC_intake/fc_intake_munroe_turbidity_quantile_record_2010-2025.csv")
 
@@ -36,12 +43,15 @@ flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
 
 turb_q <- full_join(turb, flow_data)
 ```
+
+# Data Exploration
+
 Look at the patterns by DOY
 
 ```{r}
 turb %>% 
   pivot_longer(cols = c(p05:p95), names_to = "quantile", values_to = "turb") %>% 
-  ggplot(., aes(x = doy, y = turb)) +
+  ggplot(., aes(x = doy, y = turb, color = location)) +
   geom_point() +
   facet_grid(quantile ~ ., scales = "free_y")
 ```
@@ -53,7 +63,7 @@ map(min(year(turb$date)):max(year(turb$date)),
     ~ {
       turb %>% 
         filter(year(date) == .x) %>% 
-        ggplot(., aes(x = doy, y = p95)) +
+        ggplot(., aes(x = doy, y = p95, color = location)) +
         geom_point() +
         labs(title = paste0("Intake - ", .x))
     }) 
@@ -63,13 +73,22 @@ And the correlation between p95 and others:
 
 ```{r}
 turb %>% 
+  filter(location == "intake_turb_NTU") %>% 
+  select(c(starts_with("p"), -pct_diff)) %>% 
+  correlate() %>% 
+  stretch() %>% 
+  filter(x == "p95" & !is.na(r))
+
+turb %>% 
+  filter(location == "munroe_turb_NTU") %>% 
   select(c(starts_with("p"), -pct_diff)) %>% 
   correlate() %>% 
   stretch() %>% 
   filter(x == "p95" & !is.na(r))
 ```
 
-Not really a strong correlation across any of the other quantiles.
+Not really a strong correlation at the intake - fairly strong at p75/p95 at 
+munroe though!
 
 # Flow + Turbidity
 
@@ -81,7 +100,7 @@ turb_q %>%
   geom_point(aes(y = p95)) +
   geom_line(aes(y = canyon_mouth_cfs/20)) +
   coord_cartesian(ylim = c(0, 300)) + #limit to keep things reasonable
-  facet_wrap(year ~ .)
+  facet_wrap(year ~ location)
 ```
 
 Let's plot turbidity against flow, faceted by month, as I suspect there are some antecedent
@@ -92,7 +111,7 @@ turb_q %>%
   pivot_longer(cols = c(p05:p95), names_to = "quantile", values_to = "turb") %>% 
   mutate(month = month(date)) %>% 
   filter(between(month, 4, 9)) %>% 
-  ggplot(., aes(x = canyon_mouth_cfs, y = turb)) +
+  ggplot(., aes(x = canyon_mouth_cfs, y = turb, color = location)) +
   geom_point() +
   facet_grid(quantile ~ month, scales = "free_y")
 ```
@@ -108,28 +127,29 @@ turb_apr_sept_lagQ <- turb_q %>%
   arrange(date) %>% 
   mutate(deltaQ_24h = canyon_mouth_cfs - lag(canyon_mouth_cfs),
          deltaQ_48h = canyon_mouth_cfs - lag(canyon_mouth_cfs, n = 2),
-         deltaQ_72h = canyon_mouth_cfs - lag(canyon_mouth_cfs, n = 3))
+         deltaQ_72h = canyon_mouth_cfs - lag(canyon_mouth_cfs, n = 3),
+         .by = location)
 
 turb_apr_sept_lagQ %>% 
-  ggplot(., aes(x = doy)) +
+  ggplot(., aes(x = doy, color = location)) +
   geom_line(aes(y = deltaQ_24h/5)) + # standardize a little to for viewing
   geom_point(aes(y = p95-200), color = "purple") +
   coord_cartesian(ylim = c(-200, 100)) + #limit to keep things reasonable
-  facet_wrap(year ~ .)
+  facet_wrap(year ~ location)
 
 turb_apr_sept_lagQ %>% 
-  ggplot(., aes(x = doy)) +
+  ggplot(., aes(x = doy, color = location)) +
   geom_line(aes(y = deltaQ_48h/5)) + # standardize a little to for viewing
   geom_point(aes(y = p95-200), color = "purple") +
   coord_cartesian(ylim = c(-200, 100)) + #limit to keep things reasonable
-  facet_wrap(year ~ .)
+  facet_wrap(year ~ location)
 
 turb_apr_sept_lagQ %>% 
   ggplot(., aes(x = doy)) +
   geom_line(aes(y = deltaQ_72h/5)) + # standardize a little to for viewing
   geom_point(aes(y = p95-200), color = "purple") +
   coord_cartesian(ylim = c(-200, 100)) + #limit to keep things reasonable
-  facet_wrap(year ~ .)
+  facet_wrap(year ~ location)
 ```
 
 Well, this looks useful... what does it look like as a regression?
@@ -139,7 +159,7 @@ turb_apr_sept_lagQ %>%
   pivot_longer(cols = c(p05:p95), names_to = "quantile", values_to = "turb") %>% 
   mutate(month = month(date)) %>% 
   filter(between(month, 4, 9)) %>% 
-  ggplot(., aes(x = deltaQ_24h, y = turb)) +
+  ggplot(., aes(x = deltaQ_24h, y = turb, color =location)) +
   geom_point() +
   facet_grid(quantile ~ month, scales = "free_y")
 
@@ -147,7 +167,7 @@ turb_apr_sept_lagQ %>%
   pivot_longer(cols = c(p05:p95), names_to = "quantile", values_to = "turb") %>% 
   mutate(month = month(date)) %>% 
   filter(between(month, 4, 9)) %>% 
-  ggplot(., aes(x = deltaQ_48h, y = turb)) +
+  ggplot(., aes(x = deltaQ_48h, y = turb, color = location)) +
   geom_point() +
   facet_grid(quantile ~ month, scales = "free_y")
 
@@ -155,7 +175,7 @@ turb_apr_sept_lagQ %>%
   pivot_longer(cols = c(p05:p95), names_to = "quantile", values_to = "turb") %>% 
   mutate(month = month(date)) %>% 
   filter(between(month, 4, 9)) %>% 
-  ggplot(., aes(x = deltaQ_72h, y = turb)) +
+  ggplot(., aes(x = deltaQ_72h, y = turb, color =location)) +
   geom_point() +
   facet_grid(quantile ~ month, scales = "free_y")
 
@@ -167,19 +187,19 @@ Look a little closer at p95:
 turb_apr_sept_lagQ %>% 
   mutate(month = month(date)) %>% 
   filter(between(month, 4, 9)) %>% 
-  ggplot(., aes(x = deltaQ_24h, y = p95)) +
+  ggplot(., aes(x = deltaQ_24h, y = p95, color = location)) +
   geom_point() 
 
 turb_apr_sept_lagQ %>% 
   mutate(month = month(date)) %>% 
   filter(between(month, 4, 9)) %>% 
-  ggplot(., aes(x = deltaQ_48h, y = p95)) +
+  ggplot(., aes(x = deltaQ_48h, y = p95, color = location)) +
   geom_point() 
 
 turb_apr_sept_lagQ %>% 
   mutate(month = month(date)) %>% 
   filter(between(month, 4, 9)) %>% 
-  ggplot(., aes(x = deltaQ_72h, y = p95)) +
+  ggplot(., aes(x = deltaQ_72h, y = p95, color = location)) +
   geom_point() 
 
 ```
@@ -190,32 +210,95 @@ Not so great. Can we see anything if we facet by month?
 turb_apr_sept_lagQ %>% 
   mutate(month = month(date)) %>% 
   filter(between(month, 4, 9)) %>% 
-  ggplot(., aes(x = deltaQ_24h, y = p95)) +
+  ggplot(., aes(x = deltaQ_24h, y = p95, color = location)) +
   geom_point()  +
   coord_cartesian(xlim = c(-1000,1000),
                   ylim = c(0, 500)) +
-  facet_wrap(month ~ .)
+  facet_wrap(month ~ location)
 
 turb_apr_sept_lagQ %>% 
   mutate(month = month(date)) %>% 
   filter(between(month, 4, 9)) %>% 
-  ggplot(., aes(x = deltaQ_48h, y = p95)) +
+  ggplot(., aes(x = deltaQ_48h, y = p95, color = location)) +
   geom_point() +
   coord_cartesian(xlim = c(-1000,1000),
                   ylim = c(0, 500)) +
-  facet_wrap(month ~ .)
+  facet_wrap(month ~ location)
 
 turb_apr_sept_lagQ %>% 
   mutate(month = month(date)) %>% 
   filter(between(month, 4, 9)) %>% 
-  ggplot(., aes(x = deltaQ_72h, y = p95)) +
+  ggplot(., aes(x = deltaQ_72h, y = p95, color = location)) +
   geom_point()+
   coord_cartesian(xlim = c(-1000,1000),
                   ylim = c(0, 500)) +
-  facet_wrap(month ~ .)
-
+  facet_wrap(month ~ location)
 
 ```
 
-Mayyyyybe at the 72h lag.
+Mayyyyybe at the 48/72h lag for May and June.
 
+# Precipitation Events
+
+This one is kind of tricky, we're going to grab data from a single precip gauge,
+but we know that precip is variable across space (and the impacts of storms are 
+too)
+
+```{r}
+precip_data <- get_climate_ts(site_id = "US1COLR0815",
+                              param = "Precip",
+                              start_date = "2010-01-01",
+                              end_date = "2025-12-31",
+                              timescale = "day") %>%
+  select(datetime, redfeather_precip = value) %>% 
+  mutate(date = date(datetime), 
+         year = year(date),
+         doy = yday(date)) 
+
+summary(precip_data)
+
+turb_q_precip <- full_join(turb_q, precip_data)
+```
+
+Plot the two together
+
+```{r}
+turb_q_precip %>% 
+  ggplot(., aes(x = doy, color = location)) +
+  geom_point(aes(y = p95)) +
+  geom_line(aes(y = redfeather_precip*100)) +
+  coord_cartesian(ylim = c(0, 300)) + #limit to keep things reasonable
+  facet_wrap(year ~ location)
+```
+
+And with a rolling 2-day sum of precipitation
+
+```{r}
+turb_q_precip <- turb_q_precip %>%
+  arrange(date) %>%
+  mutate(precip_2day = roll_sum(replace_na(redfeather_precip, 0), n = 2, fill = NA, align = "right"),
+         .by = location)
+
+ggplot(turb_q_precip, aes(x = doy, color = location)) +
+  geom_point(aes(y = p95)) +
+  geom_line(aes(y = precip_2day * 100)) +
+  coord_cartesian(ylim = c(0, 300)) +
+  facet_wrap(year ~ location)
+
+ggplot(turb_q_precip, aes(x = p95, y = precip_2day * 100)) +
+  geom_point() +
+  facet_wrap(year ~ location)
+
+```
+
+Maybe some responses, but nothing linear at near-real time. This is unsurprising, 
+but we press on. 
+
+# Thoughts
+
+If we had a lot of other basins, we might be able to do some spatial models to 
+incorporate the land heterogeneity/physical connections, but we don't, so we 
+probably need a model that would pick up on patterns that aren't super "visible".
+This is a pretty good problem for a Long-Short Term Memory (LSTM) model - we have 
+year-round data (mostly) and there's a lot of seasonal/antecedent conditions 
+that are important that wouldn't be captured in most other model types. 
