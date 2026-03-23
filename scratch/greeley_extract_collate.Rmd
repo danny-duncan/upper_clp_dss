@@ -8,6 +8,7 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, out.width = '100%')
 
+library(compareDF)
 library(readxl)
 library(openxlsx)
 library(tidyxl)
@@ -15,9 +16,9 @@ library(purrr)
 library(cellranger)
 library(here)
 library(tidyverse)
-library(reticulate)
 
-source(here("src/setup_libraries.R"))
+
+source(here("src/setup_libraries.R")) 
 ```
 
 # Overview
