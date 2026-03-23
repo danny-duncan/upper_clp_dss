@@ -130,6 +130,7 @@ Now it's time to perform some cleaning and transformation.
 
 ```{r clean data}
 cleanedData <- extractedData %>%
+  mutate(content = if_else(data_type == "character", NA, content)) %>%
   select(sheet, year, month, variable, content, row) %>%
   pivot_wider(names_from = variable, values_from = content) %>% 
   # Create a date column
@@ -188,4 +189,3 @@ greeley_intake_chem_data_ <- cleanedData %>%
 parquet_fileName <- paste0("greeley_intake_chem_data_", Sys.Date(),".parquet")
 write_parquet(greeley_intake_chem_data_, here("data/collated/chem/", parquet_fileName))
 ```
-
