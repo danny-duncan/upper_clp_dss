@@ -7,8 +7,13 @@ output: html_document
 
 # Purpose
 
-This script is meant to apply the intake TOC GAM model to assess its 
+This script is meant to apply the intake TOC GAM model to assess its
 performance with forecasted Q from HEFS.
+
+> **NOTE — Migrated to `uclp_dashboard` workflow.**
+> The live operational version of this logic lives in
+> `uclp_dashboard/R/model_run_workflow.R`, called daily by
+> `.github/workflows/model_run.yml`.
 
 ```{r, echo = FALSE, message = FALSE, warning = FALSE}
 knitr::opts_chunk$set(message = FALSE, warning = FALSE)
