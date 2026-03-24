@@ -1,0 +1,290 @@
+---
+title: "extract_greeley_data"
+author: "Danny Duncan"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, out.width = '100%')
+
+library(readxl)
+library(tidyxl)
+library(purrr)
+library(here)
+library(tidyverse)
+library(reticulate)
+
+source(here("src/setup_libraries.R"))
+```
+
+# Overview
+
+This document performs some initial data structure analysis on the raw Greeley plant chemical data. The goal is to understand the data structure, transform the data into a format suitable for analysis, and perform some basic checks to ensure the transformations are correct.
+
+# Data Load Preparation
+
+```{r data load prep}
+# Load path to raw Greeley data folder
+raw_path <- here("data/raw/chem/greeley_plant_chem")
+
+# List all Excel files in the raw data folder
+file_list <- list.files(raw_path, 
+                        pattern = "\\.xlsx$", 
+                        full.names = TRUE)
+```
+
+# Data Extraction
+
+To extract data from the raw Greeley files, we will use the tidyxl package.
+
+## Retrieve Raw Data
+```{r retrieve & transform data}
+# Create a list of our desired variables
+vars_actual <- c("DATE","TIME", "TURBIDITY","CHLORINE","pH","ALKALINITY","COND.","T.D.S.","HACHTOC", "TEMPCEL", "POUDRE", "CBT")
+
+# Create a regex pattern to filter for our desired variables in the character column of the tidyxl dataframe
+var_list <- paste(c("DATE", "TIME", "TURBIDITY", "CHLORINE", "PH", "ALKALINITY", "COND.", "T.D.S.", "HACHTOC", "TEMPCEL", "POUDRE", "CBT"),
+                  collapse = "|")
+
+# Create a regex pattern to filter for monthly sheets in the sheet column of the tidyxl dataframe
+months = paste(c("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"), 
+                  collapse = "|")
+
+# Map through all excel files and extract the tidyxl dataframes for each file, then combine into a single dataframe
+for (x in file_list) {
+  # Uses xlsx_cells() to extract all cells that contain data
+  tidyxl_df <- xlsx_cells(paste(x), include_blank_cells = FALSE)
+  # Combine all tidyxl dataframes into a single dataframe
+  if (!exists("rawData_combined")) {
+    rawData_combined <- tidyxl_df}
+  # Creates combined dataframe if it doesn't exist
+  else {
+    rawData_combined <- bind_rows(rawData_combined, tidyxl_df)
+  }
+}
+
+# Create a list of all monthly sheets we would like to keep for analysis
+desirable_sheet_list <- unique(rawData_combined$sheet[grepl(months, rawData_combined$sheet, ignore.case = TRUE)])
+
+# Filter our newly created rawData_combined dataframe:
+filtered_tidyxl <-
+  # The character column contains unnecessary leading empty space before the value; gsub() removes this empty space for uniformity
+  as.data.frame(apply(rawData_combined,2, function(x) gsub("\\s+", "", x))) %>%
+  # Filter for sheets that contain month abbreviations in their name
+  filter(sheet %in% desirable_sheet_list) %>%
+  # Filter for values in the character column that match our list of variables of interest (vars_actual)
+  filter(character %in% vars_actual) %>%
+  # Filter for necessary information
+  select(sheet, address, row, col, character)
+
+print(head(filtered_tidyxl))
+```
+
+The filtered_tidyxl dataframe contains all cell values and information for our variables of interest across all monthly sheets. This is a good starting point for where we need to look for these data in each sheet.
+
+## Filter & Refine
+```{r refine filtered data}
+# Continue to further refine our filtered data and transform it into wide format
+filtered_dates <- filtered_tidyxl %>%
+  filter(character == "DATE") %>%
+  # Group by monthly sheet and variables
+  group_by(sheet) %>%
+  arrange(col) %>%
+  slice(1) %>%
+  ungroup() %>%
+  # Change DATE address for the 2022 sheets to match the actual DATE column in those sheets (Column C). Filter for sheets that contain "22" in their name and change the address to C12 for those sheets.
+  mutate(address = if_else(sheet %in% desirable_sheet_list[grepl("22", desirable_sheet_list)], "C12", address),
+         col = if_else(sheet %in% desirable_sheet_list[grepl("22", desirable_sheet_list)], "3", col),
+         row = if_else(sheet %in% desirable_sheet_list[grepl("22", desirable_sheet_list)], "12", row))
+
+filtered_vars <- filtered_tidyxl %>%
+  filter(character != "DATE") %>%
+  # Group by monthly sheet and variables
+  group_by(sheet, character) %>%
+  # Slice the first occurrence for each variable.
+  slice(1) %>%
+  ungroup()
+
+filtered_tidyxl_wide <- full_join(filtered_dates, filtered_vars) %>%
+  select(-c('col', 'row')) %>%
+  # Make the data wide
+  pivot_wider(names_from = character, values_from = address) %>%
+  # Create a year and month column by extracting from the sheet name using regular expressions.
+  mutate(Month = str_extract(sheet, "(?<=^BEL)[A-Z]+(?=\\d{2}$)")) %>%
+  mutate(Year  = paste0("20", str_extract(sheet, "\\d{2}$")))
+
+print(head(filtered_tidyxl_wide))
+```
+
+The filtered_tidyxl_wide dataframe contains the first cell location for each variable within each sheet. This will be used as an index for extracting the values of each variable of interest in the next section.
+
+## Extract WQ Data
+```{r extract data with tidyxl}
+# Helper: convert excel column letter(s) to number (e.g., "A" -> 1, "AD" -> 30)
+col_to_num <- function(col_letter) {
+  col_letter <- toupper(col_letter)
+  chars <- rev(strsplit(col_letter, "")[[1]])
+  sum(sapply(seq_along(chars), function(i) {
+    (match(chars[i], LETTERS)) * 26^(i - 1)
+  }))
+}
+
+# Helper: parse a single cell reference like "AD5" into col number and row number
+parse_cell <- function(cell_str) {
+  col_letter <- gsub("\\d+", "", cell_str)
+  row_num    <- as.integer(gsub("[A-Za-z]+", "", cell_str))
+  list(
+    col = col_to_num(col_letter),
+    row = row_num
+  )
+}
+
+# Define variable columns (everything except sheet, Month, Year)
+var_cols <- setdiff(names(filtered_tidyxl_wide), c("sheet", "Month", "Year"))
+
+# Number of rows to extract from the start cell. 35 ensures accounts for row gaps between the variable name and the data, as well as the <= 31 rows of data we want to extract.
+extract_rows <- 35
+
+# Read the full workbook once
+cells <- rawData_combined
+
+# Extract data for each variable based on the cell references in filtered_tidyxl_wide
+extractedData <- filtered_tidyxl_wide %>%
+  pmap_dfr(function(...) {
+    row_data <- tibble(...)
+    sheet_name <- as.character(row_data$sheet)
+
+    map_dfr(var_cols, function(var_name) {
+      cell_str <- as.character(row_data[[var_name]])
+
+      if (is.na(cell_str) || cell_str == "") return(tibble())
+
+      ref <- parse_cell(cell_str)
+      start_row <- ref$row
+      end_row   <- start_row + extract_rows
+
+      cells %>%
+        filter(
+          sheet == sheet_name,
+          col == ref$col,
+          row >= start_row,
+          row <= end_row
+        ) %>%
+        mutate(variable = var_name) %>%
+        select(sheet, variable, address, row, col, content, numeric, character, data_type)
+    })
+  })
+
+```
+
+One problem with the commented-out code above is that some of the DATE (day) values are in character format instead of numeric. To fix this, we need to create a function which uses an if_else statement to create the day column.
+
+## Clean Data
+```{r clean data}
+cleanedData <- extractedData %>%
+  # Edit the numeric column so that if the value is NA but the character column contains a numeric value, it will place that value in the numeric column instead.
+  mutate(numeric = if_else(is.na(numeric) & !is.na(as.numeric(character)),
+                         as.numeric(character),
+                         numeric)) %>%
+  # Change the data_type to "numeric" for rows that were just transformed.
+  mutate(data_type = if_else(!is.na(numeric) & !is.na(character),
+                         "numeric",
+                         data_type)) %>%
+  # Filter for only numeric rows; inflow is abbreviated as "INF" in the original sheets, but is also a numeric value for positive infinity, so we need to filter out those rows as well.
+  filter(data_type == "numeric",
+         numeric != Inf) %>% 
+  select(sheet, variable, row, numeric) %>%
+  # Remove duplicate rows before pivoting
+  distinct(sheet, variable, row, .keep_all = TRUE) %>% 
+  pivot_wider(names_from = variable, values_from = numeric) %>%
+  mutate(Month = toupper(str_extract(sheet, "(?i)(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)"))) %>%
+  mutate(Year  = paste0("20", str_extract(sheet, "\\d{2}$"))) %>%
+  mutate(Day = DATE) %>% 
+  mutate(DTG = parse_date_time(paste(Year, Month, Day), orders = "Ybd")) %>%
+  select(DTG, Year, Month, Day, TIME, ALKALINITY, CHLORINE, COND., `T.D.S.`, TEMPCEL, TURBIDITY, POUDRE, CBT, pH, sheet, row) %>% 
+  # Removes 6 rows which DTG failed to parse; these rows are all erroneous or summary rows.
+  drop_na(DTG)
+
+print(head(cleanedData))
+
+```
+
+When examining the cleandData dataframe, 200 of the DTG columns fail to parse, with different reasons for this error as follows:
+1. August 2020 - DATE column within sheet is formatted as MDY-HMS instead of the standard day (1-31) format within the majority of other sheets.
+2. December 2022 - An additional empty DATE column is present in column DD which the code is detecting instead of the actual DATE column (C).
+3. February 2009/2010/2011/2023 - Sheets have Days 1-29, with 29th day empty since it these are not leap years. 2023 contains Days 1-31
+4. April 2022 - Code detecting Poudre and CBT summary values where there is no DATE.
+5. February 2022 - Read in three summary rows (43-45)
+6. June 2022 - Detecting an additional empty DATE column (Actual Column: C; Detected Column: CY)
+7. June 2023/2024 - DATE column contains 1-31; June only contains 30 days.
+8. November 2022 - Detecting an additional empty date column.
+9. November 2002 - Undetermined; code is reading correct column but no values are being parsed.
+10. October 2022 - Undetermined; code is reading correct column but no values are being parsed.
+11. September 2022 - Undetermined; code is reading correct column but no values are being parsed.
+12. November 2023/2024 - DATE column contains 1-31; November only contains 30 days.
+13. September 2023/2024 - DATE column contains 1-31; September only contains 30 days.
+
+The date parsing issues have been resolved.
+
+# Data Validation
+
+To ensure that our extracted and parsed data is correct, we will create a validation dataframe which contains "ground truth" values for each variable for a specific month and year. We will then compare the values in our cleanedData dataframe to the values in our validation dataframe to ensure they match.
+
+```{r}
+# Set parameters for random date generation
+set.seed(42) 
+start_date <- as.Date("2001-01-01")
+end_date <- as.Date("2024-12-31")
+
+validationData <- tibble(
+  DTG = sort(sample(seq(start_date, end_date, by = "day"), 20))) %>%
+  mutate(
+    TURBIDITY = NA_real_,
+    CHLORINE = NA_real_,
+    pH = NA_real_,
+    ALKALINITY = NA_real_,
+    COND. = NA_real_,
+    T.D.S. = NA_real_,
+    HACHTOC = NA_real_, 
+    TEMPCEL = NA_real_, 
+    POUDRE = NA_real_, 
+    CBT = NA_real_
+      )
+
+print(validationData$DTG)
+```
+
+
+# Data Exploration
+```{r}
+# Pivot data longer for graphing purposes
+cleanedData_long <- cleanedData %>% 
+  select(!c(sheet, row, Year, Month, Day)) %>%
+  pivot_longer(cols = c(ALKALINITY, CHLORINE, COND., `T.D.S.`, TEMPCEL, TURBIDITY, POUDRE, CBT, pH), 
+               names_to = "variable", values_to = "value")
+
+# Graph all variables over time to see if there are any obvious issues with the data
+cleanedData_long %>% 
+  ggplot(aes(x = DTG, y = value, colour = variable)) +
+  geom_line() +
+  scale_x_datetime(date_breaks = "1 year", date_labels = "%Y") +
+  labs(title = "Greeley Plant Chemical Data Over Time",
+       x = "Date",
+       y = "Value") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal()
+
+# Graphing Alkalinity alongside Conductivity
+cleanedData_long %>% 
+  filter(variable == c("ALKALINITY", "COND.")) %>%
+  ggplot(aes(x = DTG, y = value, colour = variable)) +
+  geom_line() +
+  scale_x_datetime(date_breaks = "1 year", date_labels = "%Y") +
+  labs(title = "Greeley Plant Chemical Data Over Time",
+       x = "Date",
+       y = "Value") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal()
+```
+

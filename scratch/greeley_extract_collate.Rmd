@@ -1,0 +1,219 @@
+---
+title: "greeley_extract_collate"
+author: "Danny Duncan"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, out.width = "100%")
+
+library(compareDF)
+library(readxl)
+library(openxlsx)
+library(tidyxl)
+library(purrr)
+library(cellranger)
+library(here)
+library(tidyverse)
+
+
+source(here("src/setup_libraries.R"))
+```
+
+# Overview
+
+This document performs some initial data structure analysis on the raw Greeley plant chemical data. The goal is to understand the data structure, transform the data into a format suitable for analysis, and perform some basic checks to ensure the transformations are correct.
+
+# Data Load Preparation
+
+```{r data load prep}
+# Load path to raw Greeley data folder.
+raw_path <- here("data/raw/chem/greeley_plant_chem")
+
+# List all Excel files in the raw data folder.
+file_list <- list.files(raw_path,
+  pattern = "\\.xlsx$",
+  full.names = TRUE
+)
+
+# Read in reference data; this document lists the location of water quality variables in the raw Greeley files.
+referenceData <- read_excel(here(raw_path, "/greeley_monthly_sheets.xlsx")) %>%
+  # To retrieve data for our water quality parameters of interest, we will first mutate our reference data to calculate cell ranges based on the month and year of the sheet. This will ensure that we only extract necessary daily values.
+  mutate(DATE = make_date(YEAR, MONTH, 1)) %>%
+  # Create a new column that contains the days in each month.
+  mutate(
+    days_in_month = days_in_month(DATE),
+    # Create a new column that contains the ending row of data based on the start row and days in month.
+    END_ROW = START_ROW + days_in_month - 1
+  )
+```
+
+# Data Extraction
+
+To extract data from the raw Greeley files, we will use the tidyxl package to read in the cell-level data from each workbook. The following section defines two functions. 1. 'extract_workbook_data()' reads in data from the workbook at the filepath input and extracts relevant data based on the referenceData dataframe. 2. 'extract_all_workbooks()' applies the 'extract_workbook_data()' function to each workbook within our file list and combines the results into a single dataframe.
+
+## Create Extraction Functions
+
+```{r create extraction functions}
+# Define variable columns (everything except sheet, Month, Year)
+param_cols <- c("DAY", "TIME", "TURBIDITY", "CHLORINE", "PH", "ALKALINITY", "COND.", "T.D.S.", "HACHTOC", "TEMPCEL", "POUDRE_MGD", "CBT_MGD")
+
+# Create a a function to extract data from an excel workbook based on the referenceData dataframe
+extract_workbook_data <- function(filepath, reference_data, param_cols) {
+  # Load in all data from workbook
+  cells <- xlsx_cells(filepath)
+  # Remove whitespace from sheet names
+  reference_data <- reference_data %>%
+    mutate(SHEET = str_trim(SHEET))
+  cells <- cells %>%
+    mutate(sheet = str_trim(sheet))
+  # Get list of all unique sheet names in the workbook
+  workbook_sheets <- unique(cells$sheet)
+
+  reference_data <- reference_data %>%
+    filter(SHEET %in% workbook_sheets) %>%
+    distinct(SHEET, START_ROW, END_ROW, .keep_all = TRUE)
+
+  if (nrow(reference_data) == 0) {
+    return(tibble())
+  }
+
+  extracted <- reference_data %>%
+    pmap_dfr(function(...) {
+      row_data <- tibble(...)
+      sheet_name <- as.character(row_data$SHEET)
+      start_row <- as.integer(row_data$START_ROW)
+      end_row <- as.integer(row_data$END_ROW)
+      year_val <- as.integer(row_data$YEAR)
+      month_val <- as.integer(row_data$MONTH)
+
+      map_dfr(param_cols, function(param_name) {
+        col_letter <- str_trim(as.character(row_data[[param_name]]))
+
+        if (is.na(col_letter) || col_letter == "") {
+          return(tibble())
+        }
+        # Convert column letter to number with cellranger
+        col_index <- letter_to_num(col_letter)
+
+        cells %>%
+          filter(
+            sheet == sheet_name,
+            col == col_index,
+            row >= start_row,
+            row <= end_row
+          ) %>%
+          mutate(
+            variable = param_name,
+            year = year_val,
+            month = month_val
+          ) %>%
+          select(sheet, year, month, variable, address, row, col, content, numeric, character, data_type)
+      })
+    })
+  return(extracted)
+}
+
+# Create a function to map through all workbooks and extract data from the list of files.
+extract_all_workbooks <- function(file_list, reference_data, param_cols) {
+  file_list %>%
+    map_dfr(~ extract_workbook_data(.x, reference_data, param_cols) %>%
+      mutate(source_file = basename(.x)))
+}
+```
+
+## Run Extraction Functions
+
+```{r run extraction functions}
+# Run the extraction across all workbooks
+extractedData <- extract_all_workbooks(file_list, referenceData, param_cols)
+```
+
+# Cleaning Data
+
+Now it's time to perform some cleaning and transformation.
+
+```{r clean data}
+cleanedData <- extractedData %>%
+  mutate(content = if_else(data_type == "character", NA, content)) %>%
+  select(sheet, year, month, variable, content, row) %>%
+  pivot_wider(names_from = variable, values_from = content) %>%
+  # Create a date column
+  mutate(DTG = make_date(year, month, as.integer(DAY))) %>%
+  # Change column types to numeric with proper amount of decimal places.
+  mutate_at(vars(TURBIDITY, CHLORINE, PH, ALKALINITY, COND., T.D.S., HACHTOC, TEMPCEL, POUDRE_MGD, CBT_MGD), as.numeric) %>%
+  mutate_at(vars(POUDRE_MGD, CBT_MGD), round, 3) %>%
+  # Format time column to HH:MM. Since there are some erroneous times when the plant is not running, we will first change those to NA values.
+  mutate(
+    TIME = if_else(is.na(TURBIDITY), NA_real_, as.integer(TIME)),
+    TIME = parse_date_time(str_pad(TIME, 4, pad = "0"), orders = "HM"),
+    TIME = format(TIME, "%H:%M")
+  ) %>%
+  # Rearrange columns for a nicer format
+  select(sheet, row, DTG, year, month, DAY, TIME, everything())
+```
+
+# Data Validation
+
+To ensure that our cleaned data is correct, we will create a validation dataframe which contains "ground truth" values for each variable for a specific month and year. We will then compare the values in our cleanedData dataframe to the values in our validation dataframe to ensure they match.
+
+```{r data validation}
+validationData <- read_csv(paste0(raw_path, "/validation-data.csv")) %>%
+  mutate(DTG = as.Date(DTG))
+
+validationTest <- cleanedData %>%
+  mutate(DTG = as.Date(DTG)) %>%
+  filter(DTG %in% validationData$DTG) %>%
+  select(c(DTG, TURBIDITY, CHLORINE, PH, ALKALINITY, COND., T.D.S., HACHTOC, TEMPCEL, POUDRE_MGD, CBT_MGD)) %>%
+  arrange(DTG)
+
+valData_compare <- compare_df(validationData, validationTest, c("DTG"), stop_on_error = FALSE)
+view(valData_compare$comparison_df)
+
+# Compared values reveal that the two dataframes are identical!!!
+```
+
+# Save Collated Data
+
+```{r save data}
+# Rename columns to match formatting of other collated parquet files.
+greeley_intake_chem_data_ <- cleanedData %>%
+  rename(
+    date = DTG,
+    time = TIME,
+    turbidity = TURBIDITY,
+    Cl = CHLORINE,
+    pH = PH,
+    alkalinity = ALKALINITY,
+    conductivity = `COND.`,
+    TDS = `T.D.S.`,
+    TOC = HACHTOC,
+    temp_C = TEMPCEL,
+    poudre_mgd = POUDRE_MGD,
+    cbt_mgd = CBT_MGD
+  ) %>%
+  select(date, time, turbidity, alkalinity, conductivity, Cl, pH, TDS, TOC, temp_C, poudre_mgd, cbt_mgd)
+
+# Save the data as a parquet file in the collated data folder.
+parquet_fileName <- paste0("greeley_intake_chem_data_", Sys.Date(), ".parquet")
+write_parquet(greeley_intake_chem_data_, here("data/collated/chem/", parquet_fileName))
+```
+
+# Post-processing
+
+## Times Series Plot
+
+```{r, warning = FALSE}
+greeley_intake_chem_data_long <- greeley_intake_chem_data_ %>%
+  pivot_longer(cols = -c(date, time), names_to = "variable", values_to = "value")
+
+plot_ly(
+  data = greeley_intake_chem_data_long,
+  x = ~date,
+  y = ~value,
+  color = ~variable,
+  type = "scatter",
+  mode = "lines"
+)
+```
