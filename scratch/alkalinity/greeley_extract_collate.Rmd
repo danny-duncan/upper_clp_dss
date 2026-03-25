@@ -38,7 +38,7 @@ file_list <- list.files(raw_path,
 )
 
 # Read in reference data; this document lists the location of water quality variables in the raw Greeley files.
-referenceData <- read_excel(here(raw_path, "/greeley_monthly_sheets.xlsx")) %>%
+referenceData <- read_excel(here(raw_path, "greeley_monthly_sheets.xlsx")) %>%
   # To retrieve data for our water quality parameters of interest, we will first mutate our reference data to calculate cell ranges based on the month and year of the sheet. This will ensure that we only extract necessary daily values.
   mutate(DATE = make_date(YEAR, MONTH, 1)) %>%
   # Create a new column that contains the days in each month.
