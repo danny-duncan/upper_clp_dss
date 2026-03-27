@@ -1,0 +1,192 @@
+---
+title: "greeley_baseline_alkalinity"
+author: "Danny Duncan"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, out.width = "100%")
+
+library(tidyverse)
+library(purrr)
+library(here)
+library(cdssr)
+library(corrr)
+library(gghighlight)
+library(RcppRoll)
+
+source(here("src/setup_libraries.R"))
+```
+
+# Overview
+
+# Data Load
+```{r data load}
+# Load path to collated data folder.
+collate_path <- here("data/collated/chem")
+
+# FInd greeley parquet file path in collated data folder.
+file_path <- list.files(collate_path,
+  pattern = "^greeley_intake_chem_data_.*?\\.parquet$",
+  full.names = TRUE
+)
+
+# Read in the parquet file.
+chem_data <- read_parquet(file_path) %>%
+  filter(!is.na(alkalinity) | !is.na(conductivity) | !is.na(TDS)) %>%
+  mutate(
+    year = year(date),
+    doy = yday(date)
+  )
+
+chem_data_long <- chem_data %>%
+  pivot_longer(
+    cols = -c(date, year, doy, time),
+    names_to = "variable",
+    values_to = "value",
+    values_drop_na = T
+  )
+
+alk_data_long <- chem_data %>%
+  pivot_longer(
+    cols = -c(date, year, doy, time, alkalinity),
+    names_to = "variable",
+    values_to = "value",
+    values_drop_na = T
+  )
+```
+
+# Alkalinity over time
+```{r alkalinity over time}
+# Plot alkalinity over time.
+ggplot(chem_data, aes(x = doy, y = alkalinity)) +
+  geom_line(na.rm = T) +
+  facet_wrap(~year) +
+  labs(
+    x = "Day of Year",
+    y = "Alkalinity (mg/L as CaCO3)",
+    caption = "Figure 1: Alkalinity measurements at the Greeley, CO chemical plant intake between 2001 - 2025."
+  ) +
+  theme(plot.caption = element_text(hjust = 0.5))
+# For some reason, 2020-06-01 to 2020-06-30 has a lot of erroneous Alkalinity values.
+
+# Plot alkalinity, conductivity, and total dissolved solids over time.
+chem_data_long %>%
+  filter(variable %in% c("alkalinity", "conductivity", "TDS")) %>%
+  ggplot() +
+  geom_line(aes(x = doy, y = value, colour = variable), na.rm = T) +
+  facet_wrap(~year) +
+  labs(
+    x = "Day of Year",
+    y = "Value",
+    caption = "Figure 2: Alkalinity, Conductivity, and Total Dissolved Solids\n measurements at the Greeley, CO chemical plant intake between 2001 - 2025."
+  ) +
+  theme(plot.caption = element_text(hjust = 0.5))
+```
+
+# Alkalinity Relationship
+```{r alkalinity relationship}
+# Plot alkalinity vs. other chemical parameters.
+alk_data_long %>%
+  # Remove the month of June 2020.
+  filter(!(between(date, as.Date("2020-06-01"), as.Date("2020-06-30")))) %>%
+  ggplot(aes(x = alkalinity, y = value)) +
+  geom_point() +
+  facet_wrap(~variable, scales = "free_y") +
+  labs(
+    x = "Alkalinity (mg/L as CaCO3)",
+    y = "Value",
+    caption = "Figure 3: Relationship of Alkalinity versus all other recorded water chemistry parameters at the Greeley, CO chemical plant intake (2001 - 2025"
+  ) +
+  theme(plot.caption = element_text(hjust = 0.5))
+```
+
+# Linear regression of alkalinity vs. conductivity and TDS
+```{r}
+# Linear model of alkalinity vs. conductivity.
+alk_cond_lm <- lm(alkalinity ~ conductivity, data = chem_data)
+summary(alk_cond_lm)
+
+# Linear model of alkalinity vs. total dissolved solids.
+alk_tds_lm <- lm(alkalinity ~ TDS, data = chem_data)
+summary(alk_tds_lm)
+
+# Linear model of alkalinity vs. conductivity and total dissolved solids.
+alk_cond_tds_lm <- lm(alkalinity ~ conductivity + TDS, data = chem_data)
+summary(alk_cond_tds_lm)
+
+# Linear model of alkalinity vs. conductivity, total dissolved solids, and day of year.
+# Day of year accounts for seasonal variation in alkalinity.
+alk_cond_tds_doy_lm <- lm(alkalinity ~ conductivity * TDS * doy, data = chem_data)
+summary(alk_cond_tds_doy_lm)
+
+alk_preds <- chem_data %>%
+  mutate(
+    alk_cond_pred = predict(alk_cond_lm, newdata = .),
+    alk_cond_residuals = alkalinity - alk_cond_pred,
+    alk_tds_pred = predict(alk_tds_lm, newdata = .),
+    alk_tds_residuals = alkalinity - alk_tds_pred,
+    alk_cond_tds_pred = predict(alk_cond_tds_lm, newdata = .),
+    alk_cond_tds_residuals = alkalinity - alk_cond_tds_pred,
+    alk_cond_tds_doy_pred = predict(alk_cond_tds_doy_lm, newdata = .),
+    alk_cond_tds_doy_residuals = alkalinity - alk_cond_tds_doy_pred
+  ) %>%
+  filter(!is.na(alk_cond_pred) & !is.na(alk_tds_pred) & !is.na(alk_cond_tds_pred) & !is.na(alk_cond_tds_doy_pred))
+```
+
+# Plot predicted vs. actual alkalinity for each model.
+```{r}
+alk_model_data <- alk_preds %>%
+  select(year, alkalinity, alk_cond_pred, alk_cond_tds_pred, alk_cond_tds_pred, alk_cond_tds_doy_pred) %>%
+  pivot_longer(cols = -c(year, alkalinity), names_to = "model", values_to = "predicted_alkalinity") %>%
+  mutate(model = case_when(
+    model == "alk_cond_pred" ~ "Alkalinity ~ Conductivity",
+    model == "alk_tds_pred" ~ "Alkalinity ~ TDS",
+    model == "alk_cond_tds_pred" ~ "Alkalinity ~ Conductivity + TDS",
+    model == "alk_cond_tds_doy_pred" ~ "Alkalinity ~ Conductivity + TDS + Day of Year"
+  )) %>%
+  filter(!is.na(predicted_alkalinity))
+
+alk_model_data %>%
+  group_split(model) %>%
+  map(~ ggplot(., aes(
+    x = alkalinity,
+    y = predicted_alkalinity,
+    color = factor(year)
+  )) +
+    geom_point() +
+    geom_abline(
+      slope = 1,
+      intercept = 0,
+      linetype = "dashed"
+    ) +
+    labs(
+      x = "Actual Alkalinity (mg/L as CaCO3)",
+      y = "Predicted Alkalinity (mg/L as CaCO3)",
+      color = "Year",
+      title = unique(.$model)
+    ))
+
+
+ggplot(
+  alk_model_data,
+  aes(
+    x = alkalinity,
+    y = predicted_alkalinity,
+    color = model
+  )
+) +
+  geom_point() +
+  geom_abline(
+    slope = 1,
+    intercept = 0,
+    linetype = "dashed"
+  ) +
+  labs(
+    x = "Actual Alkalinity (mg/L as CaCO3)",
+    y = "Predicted Alkalinity (mg/L as CaCO3)",
+    color = "Model",
+    title = "Predicted vs. Actual Alkalinity for Different Linear Models"
+  )
+```
