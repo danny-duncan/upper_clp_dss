@@ -33,7 +33,7 @@ raw_path <- here("data/raw/chem/greeley_plant_chem")
 
 # List all Excel files in the raw data folder.
 file_list <- list.files(raw_path,
-  pattern = "\\.xlsx$",
+  pattern = "^20.*?\\.xlsx$",
   full.names = TRUE
 )
 

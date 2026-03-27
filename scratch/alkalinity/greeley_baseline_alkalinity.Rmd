@@ -69,7 +69,6 @@ ggplot(chem_data, aes(x = doy, y = alkalinity)) +
     caption = "Figure 1: Alkalinity measurements at the Greeley, CO chemical plant intake between 2001 - 2025."
   ) +
   theme(plot.caption = element_text(hjust = 0.5))
-# For some reason, 2020-06-01 to 2020-06-30 has a lot of erroneous Alkalinity values.
 
 # Plot alkalinity, conductivity, and total dissolved solids over time.
 chem_data_long %>%
@@ -83,14 +82,21 @@ chem_data_long %>%
     caption = "Figure 2: Alkalinity, Conductivity, and Total Dissolved Solids\n measurements at the Greeley, CO chemical plant intake between 2001 - 2025."
   ) +
   theme(plot.caption = element_text(hjust = 0.5))
+
+# Plot seasonality of alkalinity, conductivity, and total dissolved solids.
+chem_data_long %>%
+  filter(variable %in% c("alkalinity", "conductivity", "TDS")) %>%
+  ggplot(aes(x = doy, y = value, colour = year)) +
+  geom_point(na.rm = T) +
+  geom_smooth(method = "loess", se = FALSE, na.rm = T, color = "red") +
+  facet_wrap(~variable)
+
 ```
 
 # Alkalinity Relationship
 ```{r alkalinity relationship}
 # Plot alkalinity vs. other chemical parameters.
 alk_data_long %>%
-  # Remove the month of June 2020.
-  filter(!(between(date, as.Date("2020-06-01"), as.Date("2020-06-30")))) %>%
   ggplot(aes(x = alkalinity, y = value)) +
   geom_point() +
   facet_wrap(~variable, scales = "free_y") +
@@ -120,6 +126,9 @@ summary(alk_cond_tds_lm)
 # Day of year accounts for seasonal variation in alkalinity.
 alk_cond_tds_doy_lm <- lm(alkalinity ~ conductivity * TDS * doy, data = chem_data)
 summary(alk_cond_tds_doy_lm)
+
+# Check for multicollinearity
+
 
 alk_preds <- chem_data %>%
   mutate(
@@ -168,7 +177,6 @@ alk_model_data %>%
       title = unique(.$model)
     ))
 
-
 ggplot(
   alk_model_data,
   aes(
@@ -190,3 +198,25 @@ ggplot(
     title = "Predicted vs. Actual Alkalinity for Different Linear Models"
   )
 ```
+
+# Model Training
+```{r}
+# split data into training and testing sets.
+train_set <- chem_data %>% select(alkalinity, conductivity, TDS, date, year, doy) %>%
+  subset(., year < 2020)
+
+test_set <- chem_data %>% select(alkalinity, conductivity, TDS, date, year, doy) %>%
+  subset(., year >= 2020)
+
+ggplot() +
+  geom_line(data = train_set, aes(x = date, y = alkalinity, color = "Training"), size = 1) +
+  geom_line(data = test_set, aes(x = date, y = alkalinity, color = "Testing"), size = 1) +
+  labs(
+    title = "Alkalinity - Training and Testing Sets",
+    x = "Date",
+    y = "Alkalinity (mg/L as CaCO3)"
+  ) +
+  scale_color_manual(values = c("Training" = "#12355B", "Testing" = "#D72638"), name = "Dataset")
+
+```
+
