@@ -9,20 +9,26 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE, out.width = "100%")
 
 library(tidyverse)
-library(purrr)
+library(Metrics)
+library(mgcv)
+library(corrplot)
+library(forecast)
 library(here)
-library(cdssr)
-library(corrr)
-library(gghighlight)
-library(RcppRoll)
 
-source(here("src/setup_libraries.R"))
+source("src/setup_libraries.R")
+source("src/collation/load_grab_sample_data.R")
+source("src/collation/load_sensor_data.R")
 ```
 
 # Overview
 
-# Data Load
-```{r data load}
+# Data Preparation
+
+## Load Datasets
+
+### Greeley Chemical Plant Intake (2001 - 2025)
+
+```{r load greeley data}
 # Load path to collated data folder.
 collate_path <- here("data/collated/chem")
 
@@ -33,14 +39,14 @@ file_path <- list.files(collate_path,
 )
 
 # Read in the parquet file.
-chem_data <- read_parquet(file_path) %>%
+plant_data <- read_parquet(file_path) %>%
   filter(!is.na(alkalinity) | !is.na(conductivity) | !is.na(TDS)) %>%
   mutate(
     year = year(date),
     doy = yday(date)
   )
 
-chem_data_long <- chem_data %>%
+plant_data_long <- plant_data %>%
   pivot_longer(
     cols = -c(date, year, doy, time),
     names_to = "variable",
@@ -48,19 +54,88 @@ chem_data_long <- chem_data %>%
     values_drop_na = T
   )
 
-alk_data_long <- chem_data %>%
+alk_data_long <- plant_data %>%
   pivot_longer(
     cols = -c(date, year, doy, time, alkalinity),
     names_to = "variable",
     values_to = "value",
     values_drop_na = T
   )
+
 ```
 
-# Alkalinity over time
+### Grab Sample
+
+```{r load grab sample data}
+grab_data <- load_grab_sample_data() %>%
+  filter(!is.na(Alkalinity),
+         #filter to sites where we have sensor data
+         site_code %in% c("pbr", "pnf", # close to PMAN/ FC Intake
+                          "pbd", # At Greeley Intake
+                          "chd", "sfm", 
+                          "nfg"))%>%
+  select(Date, site_code, site_name, Alkalinity, SC, TSS, TOC, pH)%>%
+  mutate(year = year(Date), 
+         doy = yday(Date))%>%
+  mutate(ws = if_else(site_code == "nfg", "NF", "CLP"))
+
+```
+
+### Flow Data
+```{r load flow data}
+# Load in flow data for the canyon mouth (CLAFTCCO)
+canyon_flow_data <- get_sw_ts(
+     abbrev = "CLAFTCCO",
+     start_date = min(plant_data$date, na.rm = T),
+     end_date = max(plant_data$date, na.rm = T),
+     timescale = "day"
+ )%>%
+  rename(canyon_mouth_cfs = value)%>%
+  mutate(canyon_mouth_cfs_rescale = rescale(canyon_mouth_cfs, to = c(0,100)))%>%
+  select(datetime, canyon_mouth_cfs, canyon_mouth_cfs_rescale)
+
+# Load in flow data for the North Fork (CLANSECO)
+nf_flow_data <- get_sw_ts(
+     abbrev = "CLANSECO",
+     start_date = min(plant_data$date, na.rm = T),
+     end_date = max(plant_data$date, na.rm = T),
+     timescale = "day"
+ )%>%
+  rename(nf_cfs = value)%>%
+  mutate(nf_cfs_rescale = rescale(nf_cfs, to = c(0,100)))%>%
+  select(datetime, nf_cfs, nf_cfs_rescale)
+
+# Calculate flow ratio of North Fork to canyon mouth
+flow_data <- canyon_flow_data %>%
+  left_join(nf_flow_data, by = c("datetime"))%>%
+  mutate(nf_prop = nf_cfs / canyon_mouth_cfs)%>%
+    mutate(year = factor(year(datetime)), 
+    doy = yday(datetime))%>%
+  filter(doy >= 60 & doy <= 325)
+```
+
+### Sensor Data
+```{r load sensor data}
+sensor_data <- load_sensor_data() %>%
+  filter(site %in% c("pbd", "sfm", "pman", "pbr", "chd") & parameter == "Specific Conductivity") %>%
+  mutate(date = as_date(DT_round),
+         site = if_else(site == "pman", "pnf", site))%>%
+  summarise(sensor_sc = mean(mean_cleaned, na.rm = T),
+            n_measure = sum(!is.na(mean_cleaned)),
+            .by = c( "date", "site"))%>%
+  filter(n_measure >= 48) #need > 1/2 of a day's data to use
+
+```
+
+# Data Exploration
+
+## Greeley Plant Chemical Data
+
+### Alkalinity over time
+
 ```{r alkalinity over time}
 # Plot alkalinity over time.
-ggplot(chem_data, aes(x = doy, y = alkalinity)) +
+ggplot(plant_data, aes(x = doy, y = alkalinity)) +
   geom_line(na.rm = T) +
   facet_wrap(~year) +
   labs(
@@ -71,7 +146,7 @@ ggplot(chem_data, aes(x = doy, y = alkalinity)) +
   theme(plot.caption = element_text(hjust = 0.5))
 
 # Plot alkalinity, conductivity, and total dissolved solids over time.
-chem_data_long %>%
+plant_data_long %>%
   filter(variable %in% c("alkalinity", "conductivity", "TDS")) %>%
   ggplot() +
   geom_line(aes(x = doy, y = value, colour = variable), na.rm = T) +
@@ -84,7 +159,7 @@ chem_data_long %>%
   theme(plot.caption = element_text(hjust = 0.5))
 
 # Plot seasonality of alkalinity, conductivity, and total dissolved solids.
-chem_data_long %>%
+plant_data_long %>%
   filter(variable %in% c("alkalinity", "conductivity", "TDS")) %>%
   ggplot(aes(x = doy, y = value, colour = year)) +
   geom_point(na.rm = T) +
@@ -93,10 +168,17 @@ chem_data_long %>%
 
 ```
 
-# Alkalinity Relationship
+### Alkalinity Relationship
+
 ```{r alkalinity relationship}
 # Plot alkalinity vs. other chemical parameters.
-alk_data_long %>%
+plant_data %>%
+  pivot_longer(
+    cols = -c(date, year, doy, time, alkalinity),
+    names_to = "variable",
+    values_to = "value",
+    values_drop_na = T
+  ) %>%
   ggplot(aes(x = alkalinity, y = value)) +
   geom_point() +
   facet_wrap(~variable, scales = "free_y") +
@@ -108,29 +190,70 @@ alk_data_long %>%
   theme(plot.caption = element_text(hjust = 0.5))
 ```
 
-# Linear regression of alkalinity vs. conductivity and TDS
+## Flow Data
+
+### North Fork Conductivity
+```{r north fork conductivity}
+# Sitewise alkalinity distribution by
+ggplot(grab_data, aes(x = Alkalinity, fill = site_code))+
+  geom_histogram()+
+  geom_vline(xintercept = 60, linetype = "dashed", color = "red")+
+  facet_wrap(~ws, scale = "free_x")+
+  labs(title = "Alkalinity Distribution by Site",
+       x = "Alkalinity (mg/L as CaCO3)", 
+       y = "Count", 
+       fill = "Site")
+
+alk_data_nf_flows <- plant_data %>%
+  left_join(flow_data %>%
+              select(datetime, 
+                     canyon_mouth_cfs,
+                     nf_cfs,
+                     nf_prop
+                     ),
+              by = c("date" = "datetime")) %>%
+  filter(nf_prop >= 0
+         & !is.na(nf_prop)
+         & !is.na(alkalinity) 
+         & !is.na(conductivity)
+         & !is.na(TDS))
+
+ggplot(alk_data_nf_flows, aes(x = nf_prop,
+                              y = alkalinity, 
+                              color = factor(year))) +
+  geom_point(size = 3) +
+  labs(title = "North Fork ~ Cache la Poudre Flow Ratio vs Alkalinity at Greeley Plant Intake",
+       x = "nf_cfs / canyon_mouth_cfs ",
+       y = "Alkalinity (mg/L as CaCO3)", 
+       color = "Year")
+```
+
+# Linear Regression
+
+## Alkalinity, Conductivity, and Total Dissolved Solids
 ```{r}
 # Linear model of alkalinity vs. conductivity.
-alk_cond_lm <- lm(alkalinity ~ conductivity, data = chem_data)
+alk_cond_lm <- lm(alkalinity ~ conductivity, data = alk_data_nf_flows)
 summary(alk_cond_lm)
 
 # Linear model of alkalinity vs. total dissolved solids.
-alk_tds_lm <- lm(alkalinity ~ TDS, data = chem_data)
+alk_tds_lm <- lm(alkalinity ~ TDS, data = alk_data_nf_flows)
 summary(alk_tds_lm)
 
 # Linear model of alkalinity vs. conductivity and total dissolved solids.
-alk_cond_tds_lm <- lm(alkalinity ~ conductivity + TDS, data = chem_data)
+alk_cond_tds_lm <- lm(alkalinity ~ conductivity + TDS, data = alk_data_nf_flows)
 summary(alk_cond_tds_lm)
+
+# Linear model of conductivity + flow ratio vs. conductivity
+alk_flow_lm <- lm(alkalinity ~ nf_prop + conductivity + TDS, data = alk_data_nf_flows)
+summary(alk_flow_lm)
 
 # Linear model of alkalinity vs. conductivity, total dissolved solids, and day of year.
 # Day of year accounts for seasonal variation in alkalinity.
-alk_cond_tds_doy_lm <- lm(alkalinity ~ conductivity * TDS * doy, data = chem_data)
-summary(alk_cond_tds_doy_lm)
+alk_flow_doy_lm <- lm(alkalinity ~ nf_prop + conductivity + TDS + doy, data = alk_data_nf_flows)
+summary(alk_flow_doy_lm)
 
-# Check for multicollinearity
-
-
-alk_preds <- chem_data %>%
+alk_preds <- alk_data_nf_flows %>%
   mutate(
     alk_cond_pred = predict(alk_cond_lm, newdata = .),
     alk_cond_residuals = alkalinity - alk_cond_pred,
@@ -138,22 +261,26 @@ alk_preds <- chem_data %>%
     alk_tds_residuals = alkalinity - alk_tds_pred,
     alk_cond_tds_pred = predict(alk_cond_tds_lm, newdata = .),
     alk_cond_tds_residuals = alkalinity - alk_cond_tds_pred,
-    alk_cond_tds_doy_pred = predict(alk_cond_tds_doy_lm, newdata = .),
-    alk_cond_tds_doy_residuals = alkalinity - alk_cond_tds_doy_pred
+    alk_flow_pred = predict(alk_flow_lm, newdata = .),
+    alk_flow_residuals = alkalinity - alk_flow_pred,
+    alk_flow_doy_pred = predict(alk_flow_doy_lm, newdata = .,),
+    alk_flow_doy_residuals = alkalinity - alk_flow_doy_pred
   ) %>%
-  filter(!is.na(alk_cond_pred) & !is.na(alk_tds_pred) & !is.na(alk_cond_tds_pred) & !is.na(alk_cond_tds_doy_pred))
+  filter(!is.na(alk_cond_pred) & !is.na(alk_tds_pred) & !is.na(alk_cond_tds_pred) & !is.na(alk_flow_pred) & !is.na(alk_flow_doy_pred))
 ```
 
-# Plot predicted vs. actual alkalinity for each model.
+## Predicted vs. Actual Alkalinity
+
 ```{r}
 alk_model_data <- alk_preds %>%
-  select(year, alkalinity, alk_cond_pred, alk_cond_tds_pred, alk_cond_tds_pred, alk_cond_tds_doy_pred) %>%
+  select(year, alkalinity, alk_cond_pred, alk_tds_pred, alk_cond_tds_pred, alk_flow_pred, alk_flow_doy_pred) %>%
   pivot_longer(cols = -c(year, alkalinity), names_to = "model", values_to = "predicted_alkalinity") %>%
   mutate(model = case_when(
     model == "alk_cond_pred" ~ "Alkalinity ~ Conductivity",
     model == "alk_tds_pred" ~ "Alkalinity ~ TDS",
     model == "alk_cond_tds_pred" ~ "Alkalinity ~ Conductivity + TDS",
-    model == "alk_cond_tds_doy_pred" ~ "Alkalinity ~ Conductivity + TDS + Day of Year"
+    model == "alk_flow_pred" ~ "Alkalinity ~ Flow Ratio + Conductivity + TDS",
+    model == "alk_flow_doy_pred" ~ "Alkalinity ~ Flow Ratio + Conductivity + TDS + Day of Year"
   )) %>%
   filter(!is.na(predicted_alkalinity))
 
@@ -170,6 +297,8 @@ alk_model_data %>%
       intercept = 0,
       linetype = "dashed"
     ) +
+    geom_hline(yintercept = 60, linetype = "dashed", color = "red") +
+    geom_vline(xintercept = 60, linetype = "dashed", color = "red") +
     labs(
       x = "Actual Alkalinity (mg/L as CaCO3)",
       y = "Predicted Alkalinity (mg/L as CaCO3)",
@@ -199,13 +328,97 @@ ggplot(
   )
 ```
 
+## Model Comparison
+```{r}
+alk_cond_rmse = Metrics::rmse(alk_preds$alkalinity, alk_preds$alk_cond_pred)
+alk_cond_bias = bias(alk_preds$alkalinity, alk_preds$alk_cond_pred)
+alk_conde_mse = mse(alk_preds$alkalinity, alk_preds$alk_cond_pred)
+
+alk_tds_rmse = Metrics::rmse(alk_preds$alkalinity, alk_preds$alk_tds_pred)
+alk_tds_bias = bias(alk_preds$alkalinity, alk_preds$alk_tds_pred)
+alk_tds_mse = mse(alk_preds$alkalinity, alk_preds$alk_tds_pred)
+
+alk_cond_tds_rmse = Metrics::rmse(alk_preds$alkalinity, alk_preds$alk_cond_tds_pred)
+alk_cond_tds_bias = bias(alk_preds$alkalinity, alk_preds$alk_cond_tds_pred)
+alk_cond_tds_mse = mse(alk_preds$alkalinity, alk_preds$alk_cond_tds_pred)
+
+alk_flow_rmse = Metrics::rmse(alk_preds$alkalinity, alk_preds$alk_flow_pred)
+alk_flow_bias = bias(alk_preds$alkalinity, alk_preds$alk_flow_pred)
+alk_flow_mse = mse(alk_preds$alkalinity, alk_preds$alk_flow_pred)
+
+alk_flow_doy_rmse = Metrics::rmse(alk_preds$alkalinity, alk_preds$alk_flow_doy_pred)
+alk_flow_doy_bias = bias(alk_preds$alkalinity, alk_preds$alk_flow_doy_pred)
+alk_flow_doy_mse = mse(alk_preds$alkalinity, alk_preds$alk_flow_doy_pred)
+
+tibble(
+  Model = c("Conudctivity", "Total Dissolved Solids", "Conductivity + Total Dissolved Solids", "Conductivity + Total Dissolved Solids + Flow Ratio", "Conductivity + Total Dissolved Solids + Flow Ratio + Day of Year"),
+  RMSE = c(alk_cond_rmse, alk_tds_rmse, alk_cond_tds_rmse, alk_flow_rmse, alk_flow_doy_rmse),
+  Bias = c(alk_cond_bias, alk_tds_bias, alk_cond_tds_bias, alk_flow_bias, alk_flow_doy_bias),
+  MSE = c(alk_conde_mse, alk_tds_mse, alk_cond_tds_mse, alk_flow_mse, alk_flow_doy_mse)
+)%>%
+  knitr::kable()
+```
+
+## Sensor Data Comparison
+```{r}
+sensor_plant_comp <- sensor_data %>%
+  filter(site == "pbd") %>%
+  left_join(plant_data, by = c("date" = "date"))
+
+cor_plot <- sensor_plant_comp %>%
+  select(sensor_sc, conductivity, alkalinity, TDS) %>%
+  drop_na() %>%
+  cor()
+
+ggplot(sensor_plant_comp, aes(x = sensor_sc, y = conductivity))+
+  geom_point() +
+  coord_cartesian(xlim = c(30, 150), ylim = c(30,150))+
+  labs(title = "Sensor vs Greeley Plant Intake Conductivity Measurements",
+       x = "Sonde Conductivity (µS/cm)",
+       y = "Plant Conductivity (µS/cm)")
+
+ggplot(sensor_plant_comp, aes(x = sensor_sc, y = alkalinity)) +
+  geom_point() +
+  geom_smooth(method = "gam", se = FALSE, color = "red") +
+  labs(title = "Sensor Conductivity vs. Greeley Plant Intake Alkalinity",
+       x = "Sensor Conductivity (µS/cm)",
+       y = "Plant Alkalinity (mg/L as CaCO3)",)
+```
+
+## Sensor Model
+```{r}
+sensor_sc_lm <- lm(alkalinity ~ sensor_sc, data = sensor_plant_comp)
+summary(sensor_sc_lm)
+
+sensor_sc_gam <- lm(model = "GAM", alkalinity ~ sensor_sc, data = sensor_plant_comp)
+summary(sensor_sc_gam)
+
+sensor_preds <- sensor_plant_comp %>%
+  mutate(gam_pred = predict(sensor_sc_gam, newdata = .), 
+         gam_res = alkalinity - gam_pred,
+         lm_pred = predict(sensor_sc_lm, newdata = .),
+         lm_res = alkalinity - lm_pred) %>%
+  filter(!is.na(gam_pred) & !is.na(lm_pred)) %>% 
+  select(date, alkalinity, lm_pred, gam_pred) %>% 
+  pivot_longer(cols = -c(date, alkalinity), names_to = "model", values_to = "alk_pred")
+
+ggplot(sensor_preds, aes(x = date)) +
+  geom_line(aes(y = alk_pred, color = model)) +
+  geom_line(aes(y = alkalinity, color = "Intake Measurement")) +
+  labs(title = "Predicted Alkalinity at Greeley Plant Intake from Sensor Data",
+       x = "Date",
+       y = "Alkalinity (mg/L as CaCO3)", 
+       color = "Legend")
+```
+
 # Model Training
+
 ```{r}
 # split data into training and testing sets.
-train_set <- chem_data %>% select(alkalinity, conductivity, TDS, date, year, doy) %>%
+train_set <- plant_data %>% select(alkalinity, conductivity, TDS, date, year, doy) %>%
   subset(., year < 2020)
 
-test_set <- chem_data %>% select(alkalinity, conductivity, TDS, date, year, doy) %>%
+test_set <- plant_data %>% select(alkalinity, conductivity, TDS, date, year, doy) %>%
   subset(., year >= 2020)
 
 ggplot() +
@@ -219,4 +432,3 @@ ggplot() +
   scale_color_manual(values = c("Training" = "#12355B", "Testing" = "#D72638"), name = "Dataset")
 
 ```
-
