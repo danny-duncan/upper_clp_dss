@@ -342,7 +342,7 @@ ggplot(gam_test, aes(x = gam_mod_pred, y = gam_mod_resid)) +
   theme_minimal()
 ```
 
-```{r, include=FALSE}
+```{r}
 gam_metrics <- gam_test %>%
   pivot_longer(
     cols = ends_with("_pred"),
@@ -473,7 +473,7 @@ ggplot(plot_sens, aes(x = date, y = value, color = series)) +
   theme(legend.position = "bottom")
 ```
 
-```{r, include=false}
+```{r}
 # Add MAPE + multi-metric ranking
 sens_metrics <- sens_preds %>%
   pivot_longer(
