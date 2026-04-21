@@ -226,8 +226,7 @@ source of large slopes and values are real runoff events. Because the
 threshold is derived from the same data that contains real events, the p99 cutoff
 is set by the most extreme real events and still flags the next tier of real
 events below them. There is no way to separate sensor artifacts from real
-hydrological signal using slope alone without site visit records to split the
-record on cleaning events.
+hydrological signal using slope alone without site visit records or additional sensors (Depth or SC) .
 
 **Drift flagging (`add_drift_flag`)**
 
