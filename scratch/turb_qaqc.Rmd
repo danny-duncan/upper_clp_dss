@@ -221,7 +221,7 @@ those assumptions:
 **Slope-based flagging (`add_seasonal_flag` slope violation)**
 
 `make_threshold_table` computes p99 of positive slopes and values from the historical record, 
-pooled across all years within each season. For in-stream turbidity, the dominant 
+pooled across all years within each season. For in-line turbidity sensors, the dominant 
 source of large slopes and values are real runoff events. Because the
 threshold is derived from the same data that contains real events, the p99 cutoff
 is set by the most extreme real events and still flags the next tier of real
