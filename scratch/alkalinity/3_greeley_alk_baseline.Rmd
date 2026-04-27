@@ -1,0 +1,314 @@
+---
+title: "alk_ratio_forecast"
+author: "Danny Duncan"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(here)
+library(mgcv)
+library(tidyverse)
+library(lubridate)
+library(kableExtra)
+
+source("src/setup_libraries.R")
+```
+
+# Background
+
+Disinfectant byproducts (DBPs) are a concern for water utilities due to their negative health impacts, namely DBPs associated with Chlorine. Alkalinity indirectly affects the efficiency of Chlorine and the production of DBPs from treatment. Per the EPA's Disinfectant Byproduct Rule, water treatment facility operators must follow a TOC removal matrix to reduce the production of DBP and DBP precursors.
+
+```{r toc-removal-table, include=FALSE}
+tibble(
+  `Source Water TOC (mg/L)` = c(">2.0 to 4.0", ">4.0 to 8.0", ">8.0"),
+  `0-60` = c("35.0%", "45.0%", "50.0%"),
+  `>60-120` = c("25.0%", "35.0%", "40.0%"),
+  `>120` = c("15.0%", "25.0%", "30.0%")
+) %>%
+  kable(align = "c", caption = "EPA Required Percent Removal of TOC (40 CFR Part 141, Subpart H)") %>%
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"), full_width = FALSE) %>%
+  add_header_above(c(" " = 1, "Source Water Alkalinity, mg/L, as CaCO3" = 3)) %>%
+  column_spec(1, bold = TRUE)
+```
+
+# Data Load
+
+```{r, message = FALSE}
+# Historical chemical data from Greeley intake (2001 - 2025)
+collate_path <- here("data/collated/chem")
+file_path <- list.files(collate_path,
+  pattern = "^greeley_intake_chem_data_.*?\\.parquet$",
+  full.names = TRUE
+) %>% tail(1)
+
+plant_data <- read_parquet(file_path)
+```
+
+```{r flow data, warning=FALSE}
+# Read in flow data
+cm_flow_data <- get_sw_ts(
+     abbrev = "CLAFTCCO",
+     start_date = min(plant_data$date, na.rm = T),
+     end_date = max(plant_data$date, na.rm = T),
+     timescale = "day"
+ ) %>%
+  rename(cm_cfs = value) %>%
+  mutate(cm_cfs_rescale = rescale(cm_cfs, to = c(0,100))) %>%
+  select(datetime, cm_cfs, cm_cfs_rescale)
+
+nf_flow_data <- get_sw_ts(
+  abbrev = "CLANSECO",
+  start_date = min(plant_data$date, na.rm = T),
+  end_date = max(plant_data$date, na.rm = T),
+  timescale = "day"
+ ) %>%
+  rename(nf_cfs = value) %>%
+  mutate(nf_cfs_rescale = rescale(nf_cfs, to = c(0,100))) %>%
+  select(datetime, nf_cfs, nf_cfs_rescale)
+
+flow_data <- cm_flow_data %>%
+  left_join(nf_flow_data, by = c("datetime")) %>%
+  mutate(flow_ratio = nf_cfs / cm_cfs) %>%
+  rename(date = datetime)
+```
+
+```{r combine data, warning=FALSE}
+# Combine flow and plant data
+all_data <- plant_data %>%
+  left_join(flow_data, by = "date") %>% 
+  mutate(date = as.Date(date),
+         doy = yday(date),
+         year = year(date)) %>% 
+  filter(!is.na(alkalinity), !is.na(flow_ratio), !is.na(doy)) %>%
+  arrange(date)
+```
+
+# GAM Exploration
+
+From our initial exploration, the proportion of North Fork flow to Canyon Mouth flow (flow_ratio) is the best predictor when paired with day-of-year (doy). Unlike the Canyon Mouth, no flow forecast is available for the North Fork. Since this is the case, we'll create a forecast which calculates "flow_ratio" from the Canyon Mouth forecast for n+7 while using the n+0 observation from the North Fork.
+
+## Data Prep
+```{r}
+# Data Prep
+clean_data <- all_data %>%
+  mutate(
+    date = as.Date(date),
+    year = year(date),
+    doy = as.numeric(doy)
+  ) %>%
+  filter(!is.na(alkalinity), !is.na(nf_cfs), !is.na(cm_cfs), alkalinity > 0) %>%
+  arrange(date)
+
+# Train/Test Data Split
+train_data <- clean_data %>% filter(year <= 2022)
+```
+
+## Model Building
+```{r}
+# Build GAM with CM/NF flow ratio & Day-of-Year
+# Cyclic spline utilized to capture seasonality in DOY
+# Gamma distribution with log link for right-skewed Alkalinity data
+m1 <- gam(
+  alkalinity ~ s(flow_ratio) + s(doy, bs = "cc"),
+  data = train_data,
+  family = Gamma(link = "log"),
+  method = "REML"
+)
+
+gam.check(m1)
+summary(m1)
+```
+
+## Forecast Simulation
+
+```{r}
+# Create 7-day forecast simulation dataset for 2023-2024
+# For every "today", we create a 7-day forecast window.
+test_dates <- clean_data %>% 
+  filter(year >= 2023) %>% 
+  pull(date) %>% 
+  unique()
+
+# Initialize the forecast horizon (1 to 7 days for every date)
+sim_skeleton <- expand_grid(
+  origin_date = test_dates,
+  lead_time = 1:7
+) %>%
+  mutate(target_date = origin_date + lead_time)
+
+daily_sim_df <- sim_skeleton %>%
+  # Get the NF flow from the ORIGIN date (Persisted)
+  left_join(clean_data %>% select(date, nf_cfs), by = c("origin_date" = "date")) %>%
+  rename(nf_flow_obs = nf_cfs) %>%
+  # Get the CM flow and Alkalinity from the TARGET date (Forecasted/Actual)
+  left_join(clean_data %>% select(date, cm_cfs, alkalinity, doy), by = c("target_date" = "date")) %>%
+  rename(cm_flow_fcst = cm_cfs, alkalinity_actual = alkalinity) %>%
+  # Calculate predictors for the model
+  mutate(
+    flow_ratio_sim = nf_flow_obs / cm_flow_fcst,
+    # Ensure we drop any rows where we don't have target data
+    doy = yday(target_date)
+  ) %>%
+  filter(!is.na(alkalinity_actual), !is.na(flow_ratio_sim))
+
+# Generate predictions for all simulated forecasts; pass simulated flow ratio and DOY to GAM
+alk_preds <- predict(m1, 
+                     newdata = data.frame(
+                       flow_ratio = daily_sim_df$flow_ratio_sim,
+                       doy = daily_sim_df$doy
+                     ), 
+                     type = "response", 
+                     se.fit = TRUE)
+
+daily_sim_df <- daily_sim_df %>%
+  mutate(
+    alk_pred = alk_preds$fit,
+    se = alk_preds$se.fit,
+    upper_ci = alk_pred + (1.96 * se),
+    lower_ci = alk_pred - (1.96 * se),
+    error = alk_pred - alkalinity_actual
+  )
+
+# Analyze Performance by Lead Time
+# Reveals how much the 'Persisted NF Flow' assumption hurts accuracy over time
+performance_summary <- daily_sim_df %>%
+  group_by(lead_time) %>%
+  summarise(
+    RMSE = sqrt(mean(error^2)),
+    MAE = mean(abs(error)),
+    Bias = mean(error),
+    n_simulations = n()
+  )
+
+print(performance_summary)
+```
+
+```{r}
+# Plot day 1 & 7 forecast against observed Alkalinity
+plot_data <- daily_sim_df %>%
+  filter(lead_time %in% c(1, 7)) %>% 
+  mutate(
+    year = year(target_date),
+    lead_label = paste0("Day ", lead_time, " Forecast")
+  )
+
+ggplot(plot_data) +
+  # Observed Alkalinity
+  geom_line(aes(x = target_date, y = alkalinity_actual, color = "Actual"), 
+            size = 0.8, alpha = 0.5) +
+  # Predicted Alkalinity for Day 1 and Day 7 "forecasts"
+  geom_line(aes(x = target_date, y = alk_pred, color = lead_label), 
+            size = 0.8) +
+  facet_wrap(~year, scales = "free_x", ncol = 1) +
+  scale_color_manual(values = c("Actual" = "black", 
+                                "Day 1 Forecast" = "dodgerblue", 
+                                "Day 7 Forecast" = "firebrick")) +
+  labs(
+    title = "Alkalinity Forecast vs Actual (2023-2025)",
+    subtitle = "Comparing the 1-Day Lead (using yesterday's NF) vs 7-Day Lead (using 7-day old NF)",
+    x = "Date",
+    y = "Alkalinity (mg/L)",
+    color = "Legend"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+# Extreme Observations Test
+```{r}
+# Create a 7-day horizon for every single day in the test period
+rolling_sens_df <- expand_grid(
+  origin_date = test_dates,
+  lead_time = 1:7
+) %>%
+  mutate(target_date = origin_date + lead_time) %>%
+  # Join Origin NF Flow (Persisted)
+  left_join(clean_data %>% select(date, nf_cfs), by = c("origin_date" = "date")) %>%
+  rename(nf_flow_obs = nf_cfs) %>%
+  # Join Target CM Flow and Actual Alkalinity
+  left_join(clean_data %>% select(date, cm_cfs, alkalinity, doy), by = c("target_date" = "date")) %>%
+  rename(cm_flow_actual = cm_cfs, alkalinity_actual = alkalinity) %>%
+  filter(!is.na(alkalinity_actual), !is.na(nf_flow_obs)) %>%
+  # Sensitivity modification
+  mutate(
+    # Scenario A: Control (Actual CM Flow)
+    flow_ratio_control = nf_flow_obs / cm_flow_actual,
+    # Scenario B: Sensitivity (1.25x CM Flow)
+    cm_flow_sens = cm_flow_actual * 1.25,
+    flow_ratio_sens = nf_flow_obs / cm_flow_sens
+  )
+
+# Generate predictions for control & sensitivity
+# Predict Control
+rolling_sens_df$alk_pred_control <- predict(m1, 
+                                            newdata = data.frame(
+                                              flow_ratio = rolling_sens_df$flow_ratio_control,
+                                              doy = rolling_sens_df$doy
+                                            ), type = "response")
+
+# Predict Sensitivity
+rolling_sens_df$alk_pred_sens <- predict(m1, 
+                                          newdata = data.frame(
+                                            flow_ratio = rolling_sens_df$flow_ratio_sens,
+                                            doy = rolling_sens_df$doy
+                                          ), type = "response")
+
+# Calculate the Delta (The impact of the 25% flow increase on the forecast)
+rolling_sens_df <- rolling_sens_df %>%
+  mutate(diff_mgL = alk_pred_sens - alk_pred_control)
+
+# Performance and Sensitivity Analysis
+sens_summary <- rolling_sens_df %>%
+  group_by(lead_time) %>%
+  summarise(
+    avg_control_pred = mean(alk_pred_control),
+    avg_sens_pred = mean(alk_pred_sens),
+    mean_diff = mean(diff_mgL),
+    pct_impact = (mean_diff / avg_control_pred) * 100
+  )
+
+print(sens_summary)
+
+# Visualize the 7-Day Sensitivity Trajectories; visualizing one specific day
+sample_origin <- as.Date("2024-05-20") # Spring runoff period
+
+sample_data <- rolling_sens_df %>% filter(origin_date == sample_origin)
+
+ggplot(sample_data, aes(x = target_date)) +
+  geom_line(aes(y = alkalinity_actual, color = "Actual Observed"), size = 1.2, linetype = "dotted") +
+  geom_line(aes(y = alk_pred_control, color = "Forecast (Normal CM)"), size = 1) +
+  geom_line(aes(y = alk_pred_sens, color = "Forecast (+25% CM Sensitivity)"), size = 1, linetype = "dashed") +
+  geom_point(aes(y = alk_pred_control, color = "Forecast (Normal CM)")) +
+  geom_point(aes(y = alk_pred_sens, color = "Forecast (+25% CM Sensitivity)")) +
+  scale_color_manual(values = c("Actual Observed" = "black", 
+                                "Forecast (Normal CM)" = "blue", 
+                                "Forecast (+25% CM Sensitivity)" = "red")) +
+  labs(title = paste("7-Day Forecast Sensitivity starting", sample_origin),
+       subtitle = "Comparing predicted alkalinity if CM flow was 25% higher than reality",
+       y = "Alkalinity (mg/L)", x = "Forecast Date") +
+  theme_minimal()
+
+# Visualizing yearly summaries
+# Compare the average forecast of both scenarios vs Actual across the test years
+yearly_summary <- rolling_sens_df %>%
+  group_by(target_date) %>%
+  summarise(actual = first(alkalinity_actual),
+            pred_control = mean(alk_pred_control),
+            pred_sens = mean(alk_pred_sens)) %>%
+  mutate(year = year(target_date))
+
+ggplot(yearly_summary, aes(x = target_date)) +
+  geom_line(aes(y = actual, color = "Actual"), alpha = 0.4) +
+  geom_line(aes(y = pred_control, color = "Control Forecast"), size = 0.8) +
+  geom_line(aes(y = pred_sens, color = "Sensitivity Forecast"), size = 0.8, linetype = "dashed") +
+  facet_wrap(~year, scales = "free_x", ncol = 1) +
+  scale_color_manual(values = c("Actual" = "gray50", "Control Forecast" = "blue", "Sensitivity Forecast" = "red")) +
+  labs(title = "Rolling Forecast Sensitivity: 2023-2025",
+       subtitle = "Blue: Forecast using actual CM flow | Red: Forecast using 1.25x CM flow",
+       y = "Alkalinity (mg/L)") +
+  theme_minimal()
+```

@@ -1,0 +1,230 @@
+---
+title: "Greeley Intake Alkalinity Exploration"
+author: "Danny-Duncan"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Purpose
+
+The purpose of this document is to explore the relationship between possible predictors and alkalinity at the Greeley intake. This is an initial exploration to inform the development of a baseline model for predicting alkalinity at the Greeley intake, which is a key covariate for DBP formation potential.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+
+library(tidyverse)
+library(mgcv)
+library(here)
+library(Metrics)
+library(arrow)
+library(kableExtra)
+
+source("src/setup_libraries.R")
+```
+
+# Background
+
+Disinfectant byproducts (DBPs) are a concern for water utilities due to their negative health impacts, namely DBPs associated with Chlorine. Alkalinity indirectly affects the efficiency of Chlorine and the production of DBPs from treatment. Per the EPA's Disinfectant Byproduct Rule, water treatment facility operators must follow a TOC removal matrix to reduce the production of DBP and DBP precursors.
+
+```{r toc-removal-table}
+tibble(
+  `Source Water TOC (mg/L)` = c(">2.0 to 4.0", ">4.0 to 8.0", ">8.0"),
+  `0-60` = c("35.0%", "45.0%", "50.0%"),
+  `>60-120` = c("25.0%", "35.0%", "40.0%"),
+  `>120` = c("15.0%", "25.0%", "30.0%")
+) %>%
+  kable(align = "c", caption = "EPA Required Percent Removal of TOC (40 CFR Part 141, Subpart H)") %>%
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"), full_width = FALSE) %>%
+  add_header_above(c(" " = 1, "Source Water Alkalinity, mg/L, as CaCO3" = 3)) %>%
+  column_spec(1, bold = TRUE)
+```
+
+# Load in data
+
+```{r, message = FALSE}
+# Historical chemical data from Greeley intake (2001 - 2025)
+collate_path <- here("data/collated/chem")
+file_path <- list.files(collate_path,
+  pattern = "^greeley_intake_chem_data_.*?\\.parquet$",
+  full.names = TRUE
+) %>% tail(1)
+
+plant_data <- read_parquet(file_path)
+```
+
+```{r}
+# Read in flow data
+cm_flow_data <- get_sw_ts(
+     abbrev = "CLAFTCCO",
+     start_date = min(plant_data$date, na.rm = T),
+     end_date = max(plant_data$date, na.rm = T),
+     timescale = "day"
+ ) %>%
+  rename(cm_cfs = value) %>%
+  mutate(cm_cfs_rescale = rescale(cm_cfs, to = c(0,100))) %>%
+  select(datetime, cm_cfs, cm_cfs_rescale)
+
+nf_flow_data <- get_sw_ts(
+  abbrev = "CLANSECO",
+  start_date = min(plant_data$date, na.rm = T),
+  end_date = max(plant_data$date, na.rm = T),
+  timescale = "day"
+ ) %>%
+  rename(nf_cfs = value) %>%
+  mutate(nf_cfs_rescale = rescale(nf_cfs, to = c(0,100))) %>%
+  select(datetime, nf_cfs, nf_cfs_rescale)
+
+flow_data <- cm_flow_data %>%
+  left_join(nf_flow_data, by = c("datetime")) %>%
+  mutate(flow_ratio = nf_cfs / cm_cfs) %>%
+  rename(date = datetime)
+```
+
+```{r}
+# Join plant & flow data
+all_data <- plant_data %>%
+  left_join(flow_data, by = "date") %>% 
+  mutate(date = as.Date(date),
+         doy = yday(date),
+         year = year(date))
+```
+
+# Initial Data Exploration
+
+Let's take a look at how alkalinity relates to other recorded water chemistry parameters at the Greeley intake.
+```{r}
+plant_data %>%
+  pivot_longer(
+    cols = -c(date, time, alkalinity),
+    names_to = "variable",
+    values_to = "value",
+    values_drop_na = T
+  ) %>%
+  ggplot(aes(x = alkalinity, y = value)) +
+  geom_point() +
+  facet_wrap(~variable, scales = "free_y") +
+  labs(
+    x = "Alkalinity (mg/L as CaCO3)",
+    y = "Value",
+    caption = "Relationship of Alkalinity versus other recorded water chemistry parameters at the Greeley, CO chemical plant intake (2001 - 2025)"
+  ) +
+  theme(plot.caption = element_text(hjust = 0.5))
+```
+
+Previous exploration of Alkalinity by Sam Struthers has shown that alkalinity correlates with specific conductivity. This relationship is evident in the figure above, where we see a strong positive correlation between alkalinity and specific conductivity. Visually, pH seems to have a weak positive correlation with alkalinity.
+
+```{r}
+ggpairs(all_data %>% select(alkalinity, conductivity, pH, cm_cfs, nf_cfs, flow_ratio)) +
+  theme_bw() +
+  labs(
+    title = "Pairwise relationships between alkalinity, conductivity, and pH at the Greeley intake"
+  )
+
+log_data <- all_data %>%
+  select(alkalinity, conductivity, pH, cm_cfs, nf_cfs, flow_ratio) %>%
+  mutate(
+    log_alkalinity = log(alkalinity),
+    log_conductivity = log(conductivity),
+    log_cm_cfs = log(cm_cfs),
+    log_nf_cfs = log(nf_cfs)
+  )
+  
+ggpairs(log_data %>% select(log_alkalinity, log_conductivity, pH, log_cm_cfs, log_nf_cfs, flow_ratio)) +
+  theme_bw() +
+  labs(
+    title = "Pairwise relationships between log-transformed alkalinity, conductivity, and flow at the Greeley intake"
+  )
+```
+
+# Alkalinity and DOY
+
+```{r}
+ggplot(all_data, aes(x = yday(date), y = cm_cfs, color = year)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(color = "blue") +
+  theme_bw() +
+  labs(
+    x = "Day of Year",
+    y = "Canyon Mouth Flow (cfs)",
+    title = "Canyon mouth flow seasonal pattern"
+  ) + 
+  scale_color_viridis_c(guide = guide_legend(title = "Year"))
+
+```
+
+# Model Exploration
+
+## Alkalinity & Canyon Mouth Flow
+
+First, let's explore alkalinity with canyon mouth flow.
+```{r}
+gam_data <- all_data %>%
+  filter(!is.na(alkalinity), !is.na(cm_cfs), !is.na(nf_cfs)) %>%
+  mutate(log_alkalinity = log(alkalinity),
+         log_cm_cfs = log(cm_cfs), 
+         log_nf_cfs = log(nf_cfs),
+         log_flow_ratio = log(flow_ratio)) %>% 
+  filter(is.finite(log_alkalinity), is.finite(log_cm_cfs), is.finite(log_nf_cfs), is.finite(flow_ratio))
+
+gam_alk_Q <- gam(alkalinity ~ s(cm_cfs), data = gam_data)
+
+gam.check(gam_alk_Q)
+summary(gam_alk_Q)
+```
+
+Although our k-index = 0.93 and p-value = <2e-16, there's still some structure in the residuals. Lets try adding day of year to capture some structure in the seasonality.
+
+## Alkalinity & Canyon Mouth Flow + DOY
+```{r}
+gam_alk_Q_doy <- gam(alkalinity ~ 
+                       s(cm_cfs) +
+                       s(doy, bs = "cc"), 
+                     data = gam_data)
+
+gam.check(gam_alk_Q_doy)
+summary(gam_alk_Q_doy)
+```
+
+Since the residuals are pretty right-skewed, lets try a log transformation of alkalinity & flow.
+
+```{r}
+gam_alk_Q_doy_log <- gam(log_alkalinity ~ 
+                       s(log_cm_cfs) +
+                       s(doy, bs = "cc"), 
+                     data = gam_data)
+
+gam.check(gam_alk_Q_doy_log)
+summary(gam_alk_Q_doy_log)
+```
+
+There's still some structure in the residuals, with a larger fan of values at the higher end of the fitted values. Let's try changing the family to a Gamma distribution with a log link, which is often used for right-skewed data.
+
+```{r}
+gam_alk_Q_doy_log_gamma <- gam(log_alkalinity ~ 
+                       s(log_cm_cfs) +
+                       s(doy, bs = "cc"), 
+                     data = gam_data,
+                     method = "REML",
+                     family = Gamma(link = "log"))
+
+gam.check(gam_alk_Q_doy_log_gamma)
+```
+
+We're still seeing structure in the residuals, with fanning at the higher end and banding at the lower end. Although forecasting at the North Fork isn't publically available, lets see if flow ratio (NF / Canyon) can help capture some of this structure.
+
+```{r}
+gam_ratio_doy_log <- gam(log_alkalinity ~ 
+                    s(log_flow_ratio) +
+                    s(doy, bs = "cc"), 
+                  data = gam_data,
+                  method = "REML",
+                  family = Gamma(link = "log"))
+
+gam.check(gam_ratio_doy_log)
+summary(gam_ratio_doy_log)
+```
+
+Incorporating the NF / Canyon flow ratio with day of year seems to help capture most of our residual structure. Still, there is some banding in the lower range along with a leg of residuals that trends negative at the higher end of fitted values.
+
+# Future Work
+
+From here, we'll continue to explore a baseline forecast based on flow ratio and day-of-year. The third .Rmd will provide a more in-depth GAM model exploration, where a rolling forecast window is utilized for predicting alkalinity at the Greeley intake.
