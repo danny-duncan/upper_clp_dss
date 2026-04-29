@@ -1,7 +1,7 @@
 ---
 title: "Fort Collins Intake Data Explore"
 output: html_document
-date: "2026-01-08"
+date: "2026-04-29"
 editor_options: 
   markdown: 
     wrap: 80
@@ -297,48 +297,318 @@ This still needs a little massaging, so let's look year-by-year.
 
 ### First Pass QAQC
 
-<details open>
-<summary>Click to collapse year-by-year plots</summary>
+-   2010 some low-NTU noise during spring runnoff, noise october to end of year
+
+<details>
+<summary>Click to expand plots</summary>
 
 ```{r}
-# plot year-by-year for outliers and errors
-map(2010:2025, \(y) {
-  start_date <- paste0(y, "-01-01")
-  end_date <- paste0(y + 1, "-01-01")
-  ggplot(fc_turb %>% filter(between(datetime, 
-                                    ymd(start_date), 
-                                    ymd(end_date))), 
-         aes(x = datetime, y = NTU, color = location)) +
-    geom_point() +
-    labs(title = y) +
-    scale_color_viridis_d() +
-    theme_bw() +
-    theme(legend.position = "bottom")
-  
-})
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2010-01-01"), 
+                                  ymd("2011-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2010-04-01"), 
+                                  ymd("2010-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2010-05-05"),
+                               ymd("2010-07-01")) &
+                         NTU < 3, 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2010-04-01"), 
+                                  ymd("2010-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2010-10-01"), 
+                                  ymd("2011-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2010-10-01"), 
+                                  ymd("2010-11-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2010-10-01"),
+                                 ymd("2010-10-06")) &
+                           NTU > 3.5 ~ NA,
+                         between(datetime, 
+                                 ymd("2010-10-06"),
+                                 ymd("2010-10-13")) &
+                           NTU > 3 ~ NA,
+                         between(datetime, 
+                                 ymd("2010-10-13"),
+                                 ymd("2010-10-14")) &
+                           NTU > 5 ~ NA,
+                         between(datetime, 
+                                 ymd("2010-10-14"),
+                                 ymd("2010-11-01")) &
+                           NTU > 3 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2010-10-01"), 
+                                  ymd("2010-11-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2010-11-01"), 
+                                  ymd("2010-12-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2010-11-02"),
+                                 ymd("2010-12-01")) &
+                           NTU > 2 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2010-11-01"), 
+                                  ymd("2010-12-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2010-12-01"), 
+                                  ymd("2011-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2010-12-01"),
+                                 ymd("2011-01-01")) &
+                           NTU > 10 ~ NA,
+                         between(datetime, 
+                                 ymd("2010-12-12"),
+                                 ymd("2010-12-19")) &
+                           NTU > 2 ~ NA,
+                         between(datetime, 
+                                 ymd("2010-12-20"),
+                                 ymd("2011-01-01")) &
+                           NTU > 2 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2010-10-01"), 
+                                  ymd("2011-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
 ```
+
+</details>
+
+-   2011 early season noise, noise during runoff, a spike in Sept that may not be real
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2011-01-01"), 
+                                  ymd("2012-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2011-01-01"), 
+                                  ymd("2011-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2011-01-01"),
+                                 ymd("2011-04-01")) &
+                           NTU > 3 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2011-01-01"), 
+                                  ymd("2011-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2011-04-01"), 
+                                  ymd("2011-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2011-04-01"),
+                                 ymd("2011-05-01")) &
+                           NTU > 3 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2011-05-01"), 
+                                  ymd("2011-06-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2011-05-01"),
+                                 ymd("2011-05-09")) &
+                           NTU > 4 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2011-06-01"), 
+                                  ymd("2011-08-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2011-05-30"),
+                                 ymd("2011-08-01")) &
+                           NTU < 3 ~ NA,
+                         between(datetime, 
+                                 ymd("2011-06-05"),
+                                 ymd("2011-06-25")) &
+                           NTU > 50 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2011-04-01"), 
+                                  ymd("2011-08-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2011-07-01"), 
+                                  ymd("2011-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2011-08-15"), 
+                                  ymd("2011-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2011-09-01"),
+                               ymd("2011-09-06")),
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2011-07-01"), 
+                                  ymd("2011-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2011-10-01"), 
+                                  ymd("2012-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+```
+
+There is still some noise late sept-october, but that requires a bit more precision
+removal than we are going to apply right now.
 
 </details>
 
 -   2012 has a pretty significant data gap after high turbidity, might want to
 leave out.
 
--   Prior to 2013, data was generally no higher than 100 NTU, starting in 2013
-the range increases to 1000. Maybe leave out data prior to 2013? That's also
-post-High Park Fire, so maybe it's real? It could also just be a sensor
-change?
-
-A few places to recode errant data:
-
--   Sept 2015-Jun 2016
-
 <details>
 <summary>Click to expand plots</summary>
 
 ```{r}
 ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2015-09-01"), 
-                                  ymd("2015-10-15"))), 
+                                  ymd("2012-01-01"), 
+                                  ymd("2013-01-01"))), 
        aes(x = datetime, y = NTU, color = location)) +
   geom_point() +
   scale_color_viridis_d() +
@@ -346,8 +616,17 @@ ggplot(fc_turb %>% filter(between(datetime,
   theme(legend.position = "bottom")
 
 ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2016-04-15"), 
-                                  ymd("2016-06-01"))), 
+                                  ymd("2012-01-01"), 
+                                  ymd("2012-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-01-01"), 
+                                  ymd("2012-02-01"))), 
        aes(x = datetime, y = NTU, color = location)) +
   geom_point() +
   scale_color_viridis_d() +
@@ -355,15 +634,1017 @@ ggplot(fc_turb %>% filter(between(datetime,
   theme(legend.position = "bottom")
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2015-09-15"), ymd("2016-06-01")) &
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2012-01-05"),
+                               ymd("2012-01-14")),
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-01-01"), 
+                                  ymd("2012-02-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-02-01"), 
+                                  ymd("2012-03-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2012-02-06"),
+                                 ymd("2012-02-11")) ~ NA, 
+                         between(datetime, 
+                                 ymd("2012-02-20"),
+                                 ymd("2012-04-01")) & 
+                           NTU > 3 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-02-01"), 
+                                  ymd("2012-03-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-03-01"), 
+                                  ymd("2012-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-04-01"), 
+                                  ymd("2012-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-04-01"), 
+                                  ymd("2012-05-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2012-04-01"),
+                                 ymd("2012-04-22"))  &
+                           NTU > 10 ~ NA, 
+                         between(datetime, 
+                                 ymd("2012-04-24"),
+                                 ymd("2012-05-01")) & 
+                           NTU > 10 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-04-01"), 
+                                  ymd("2012-05-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-05-01"), 
+                                  ymd("2012-06-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2012-05-21"),
+                                 ymd("2012-05-24")) ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-05-01"), 
+                                  ymd("2012-06-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-06-01"), 
+                                  ymd("2012-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2012-06-01"),
+                                 ymd("2012-07-01")) &
+                           NTU > 12.5 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-04-01"), 
+                                  ymd("2012-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-07-01"), 
+                                  ymd("2012-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2012-07-01"),
+                                 ymd("2012-09-18")) ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-07-01"), 
+                                  ymd("2012-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-09-24"), 
+                                  ymd("2012-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2012-09-24"), 
+                                 ymd("2012-10-01"))  &
+                           NTU >= 100 ~ NA,
+                         .default = NTU)) 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-07-01"), 
+                                  ymd("2012-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2012-10-01"), 
+                                  ymd("2013-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+```
+
+</details>
+
+-   Prior to 2013, data was generally no higher than 100 NTU, starting in 2013
+the range increases to 1000. Maybe leave out data prior to 2013? That's also
+post-High Park Fire, so maybe it's real? It could also just be a sensor
+change?
+
+-   intermittent data looks suspect starting mid june
+
+<details>
+<summary>Click to expand plots</summary>
+```{r}
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-01-01"), 
+                                  ymd("2014-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-01-01"), 
+                                  ymd("2013-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-01-01"), 
+                                  ymd("2013-02-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2013-01-11"), 
+                               ymd("2013-01-17")), 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-01-01"), 
+                                  ymd("2013-02-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-02-01"), 
+                                  ymd("2013-03-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2013-02-11"), 
+                                 ymd("2013-02-12")) ~ NA,
+                         between(datetime, 
+                                 ymd("2013-02-01"), 
+                                 ymd("2013-03-01")) &
+                           NTU > 50 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-02-01"), 
+                                  ymd("2013-03-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-03-01"), 
+                                  ymd("2013-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2013-03-15"), 
+                               ymd("2013-04-01")) &
+                         NTU < 1, 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-03-01"), 
+                                  ymd("2013-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-04-01"), 
+                                  ymd("2013-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-04-01"), 
+                                  ymd("2013-05-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2013-04-26"), 
+                               ymd("2013-05-01")) &
+                         (NTU < 3 | NTU > 25), 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-04-01"), 
+                                  ymd("2013-05-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-06-01"), 
+                                  ymd("2013-09-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-08-01"), 
+                                  ymd("2013-09-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-07-01"), 
+                                  ymd("2013-09-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  coord_cartesian(ylim = c(0,100))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-09-01"), 
+                                  ymd("2013-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  coord_cartesian(ylim = c(0,100))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-10-01"), 
+                                  ymd("2014-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2013-10-01"), 
+                                  ymd("2014-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  coord_cartesian(ylim = c(0,100))
+
+# honestly, all this data looks terrible and noisy
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2013-06-01"), 
+                               ymd("2014-01-01")),
+                       NA, 
+                       NTU))
+
+```
+
+</details>
+
+-   2014 munroe Apr data should be recoded, some near-zero values during runoff to be recoded, look closer at some of the late-season peaks in intake, especially compared to munroe
+
+```{r}
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-04-01"), 
+                                  ymd("2014-05-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ .) +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  coord_cartesian(ylim = c(0,100))
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2014-04-07"), 
+                               ymd("2014-04-15")) &
+                         location == "munroe_turb_NTU", 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-04-21"), 
+                                  ymd("2014-05-01")) &
+                            location == "intake_turb_NTU"), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ .) +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2014-04-21"), 
+                               ymd("2014-05-01")) &
+                         location == "intake_turb_NTU" &
+                         NTU > 100, 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-04-01"), 
+                                  ymd("2014-05-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ .) +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-05-01"), 
+                                  ymd("2014-06-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ .) +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  coord_cartesian(ylim = c(0,100))
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2014-05-01"), 
+                                 ymd("2014-06-01")) &
+                           (NTU < 5 | NTU > 500) ~ NA,
+                         between(datetime,
+                                 ymd("2014-05-01"), 
+                                 ymd("2014-05-05")) &
+                           NTU > 50 ~ NA,
+                         location == "munroe_turb_NTU" &
+                           between(datetime,
+                                   ymd("2014-05-18"),
+                                   ymd("2014-05-20")) ~ NA,
+                         location == "munroe_turb_NTU" &
+                           between(datetime,
+                                   ymd("2014-05-25"),
+                                   ymd("2014-05-27")) ~ NA,
+                         .default = NTU)
+  )
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-05-01"), 
+                                  ymd("2014-06-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ ., scales = "free_y") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-04-01"), 
+                                  ymd("2014-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ ., scales = "free_y") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-06-01"), 
+                                  ymd("2014-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ ., scales = "free_y") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(location == "intake_turb_NTU" &
+                           between(datetime,
+                                   ymd("2014-06-14"),
+                                   ymd("2014-06-16")) ~ NA,
+                         location == "intake_turb_NTU" &
+                           between(datetime,
+                                   ymd("2014-06-17"),
+                                   ymd("2014-06-20")) ~ NA,
+                         .default = NTU)
+  )
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-06-01"), 
+                                  ymd("2014-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ ., scales = "free_y") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-07-01"), 
+                                  ymd("2014-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ ., scales = "free_y") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-07-01"), 
+                                  ymd("2014-08-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ ., scales = "free_y") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(location == "intake_turb_NTU" &
+                           between(datetime,
+                                   ymd("2014-07-11"),
+                                   ymd("2014-07-18")) ~ NA,
+                         .default = NTU)
+  )
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-07-01"), 
+                                  ymd("2014-08-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ ., scales = "free_y") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-07-15"), 
+                                  ymd("2014-08-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ ., scales = "free_y") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-07-15"), 
+                                  ymd("2014-09-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ ., scales = "free_y") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  coord_cartesian(ylim = c(0,100))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-08-15"), 
+                                  ymd("2014-09-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ ., scales = "free_y") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  coord_cartesian(ylim = c(0,100))
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-09-15"), 
+                                  ymd("2014-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ ., scales = "free_y") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2014-08-26"), 
+                                 ymd("2014-08-27")) &
+                           NTU > 10 ~ NA,
+                         between(datetime,
+                                 ymd("2014-09-30"), 
+                                 ymd("2014-10-03")) &
+                           NTU > 10 ~ NA,
+                         
+                         .default = NTU),
+  )
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-07-01"), 
+                                  ymd("2014-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ ., scales = "free_y") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2014-10-01"), 
+                                  ymd("2015-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ ., scales = "free_y") +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+```
+
+
+-   2015: near-zero noise during snowmelt, Sept 2015-Jun 2016 munroe; is munroe an order of magnitude off?
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-01-01"), 
+                                  ymd("2016-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  facet_grid(location ~ .) +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+# munroe is wrong all year
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime,
+                               ymd("2015-01-01"), 
+                               ymd("2016-01-01")) &
+                         location == "munroe_turb_NTU", 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-01-01"), 
+                                  ymd("2016-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-02-01"), 
+                                  ymd("2015-03-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime,
+                               ymd("2015-02-21"), 
+                               ymd("2015-02-24")) &
+                         location == "intake_turb_NTU", 
+                       NA, 
+                       NTU))
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-02-01"), 
+                                  ymd("2015-03-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-03-15"), 
+                                  ymd("2015-06-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime,
+                               ymd("2015-03-15"),
+                               ymd("2015-06-15")) &
+                         NTU < 2, 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-01-01"), 
+                                  ymd("2015-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-07-01"), 
+                                  ymd("2015-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-07-01"), 
+                                  ymd("2015-08-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime,
+                               ymd("2015-07-21"), 
+                               ymd("2015-07-22")) &
+                         location == "intake_turb_NTU", 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-07-01"), 
+                                  ymd("2015-08-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-08-15"), 
+                                  ymd("2015-10-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2015-08-15"),
+                                 ymd("2015-10-15")) &
+                           location == "intake_turb_NTU" & 
+                           NTU > 40 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-07-01"), 
+                                  ymd("2015-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2015-10-01"), 
+                                  ymd("2016-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+```
+
+</details>
+
+-   2016: errant data ~ 325 at munroe, near zero throughout snowmelt, Munroe Oct 2016-end of year
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-01-01"), 
+                                  ymd("2017-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-01-01"), 
+                                  ymd("2016-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-01-01"), 
+                                  ymd("2016-02-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2016-01-01"),
+                                 ymd("2016-02-04")) ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-01-01"), 
+                                  ymd("2016-02-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-02-01"), 
+                                  ymd("2016-03-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2016-02-15"),
+                                 ymd("2016-03-01")) &
+                           NTU > 10 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-02-01"), 
+                                  ymd("2016-03-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-03-01"), 
+                                  ymd("2016-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-04-01"), 
+                                  ymd("2016-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-04-01"), 
+                                  ymd("2016-05-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2016-01-01"),
+                                 ymd("2016-04-02")) &
+                           location == "munroe_turb_NTU" ~ NA,
+                         between(datetime, 
+                                 ymd("2016-04-25"),
+                                 ymd("2016-04-28")) &
+                           location == "munroe_turb_NTU" ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-04-01"), 
+                                  ymd("2016-05-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-05-01"), 
+                                  ymd("2016-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2016-05-01"), 
+                               ymd("2016-06-01")) &
                          location == "munroe_turb_NTU" &
                          NTU > 300, 
                        NA, 
                        NTU))
 
 ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2015-09-01"), 
-                                  ymd("2015-10-15"))), 
+                                  ymd("2016-05-01"), 
+                                  ymd("2016-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2016-05-08"), 
+                                 ymd("2016-05-27")) &
+                           location == "munroe_turb_NTU" ~ NA,
+                         between(datetime, 
+                                 ymd("2016-05-01"), 
+                                 ymd("2016-07-01")) &
+                           location == "intake_turb_NTU" &
+                           (NTU < 2 | NTU > 150) ~ NA,
+                         between(datetime, 
+                                 ymd("2016-05-10"), 
+                                 ymd("2016-05-11")) &
+                           location == "intake_turb_NTU" ~ NA,
+                         between(datetime, 
+                                 ymd("2016-05-17"), 
+                                 ymd("2016-05-18")) &
+                           location == "intake_turb_NTU" ~ NA,
+                         between(datetime, 
+                                 ymd("2016-05-24"), 
+                                 ymd("2016-05-26")) &
+                           location == "intake_turb_NTU" ~ NA,
+                         between(datetime, 
+                                 ymd("2016-06-12"), 
+                                 ymd("2016-06-24")) &
+                           location == "intake_turb_NTU" ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-04-01"), 
+                                  ymd("2016-07-01"))), 
        aes(x = datetime, y = NTU, color = location)) +
   geom_point() +
   scale_color_viridis_d() +
@@ -371,36 +1652,138 @@ ggplot(fc_turb %>% filter(between(datetime,
   theme(legend.position = "bottom")
 
 ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2016-04-15"), 
-                                  ymd("2016-06-01"))), 
+                                  ymd("2016-07-01"), 
+                                  ymd("2016-10-01"))), 
        aes(x = datetime, y = NTU, color = location)) +
   geom_point() +
   scale_color_viridis_d() +
   theme_bw() +
   theme(legend.position = "bottom")
 
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-07-01"), 
+                                  ymd("2016-08-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-07-01"), 
+                                  ymd("2016-08-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  coord_cartesian(ylim = c(0,100))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-08-01"), 
+                                  ymd("2016-09-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  coord_cartesian(ylim = c(0,100))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-09-01"), 
+                                  ymd("2016-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  coord_cartesian(ylim = c(0,100))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2016-10-01"), 
+                                  ymd("2017-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+# these all look pretty sus - they are low NTU, so unhelpful for model creation,
+# therefore, removal is okay from a modeling standpoint.
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2016-09-01"), 
+                                 ymd("2017-01-01")) ~ NA,
+                         .default = NTU))
+
+
+
+
 ```
 
 </details>
 
--   Oct 2016-Apr 2017
+-   2017: end of year at intake
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2017-01-01"), 
+                                  ymd("2018-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2017-12-01"),
+                               ymd("2018-01-01")) &
+                         location == "intake_turb_NTU" , 
+                       NA, 
+                       NTU))
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2017-01-01"), 
+                                  ymd("2018-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2017-03-01"),
+                                 ymd("2017-04-01")) &
+                           location == "intake_turb_NTU" &
+                           NTU > 15 ~ NA,
+                         between(datetime, 
+                                 ymd("2017-01-01"),
+                                 ymd("2017-04-03")) &
+                           location == "munroe_turb_NTU" ~ NA,
+                         .default = NTU))
+
+```
+
+</details>
+
+-   2018: Nov 2017-Apr 2018 intake, snowmelt near-zero
 
 <details>
 <summary>Click to expand plots</summary>
 
 ```{r}
 ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2016-10-15"), 
-                                  ymd("2016-11-15"))), 
-       aes(x = datetime, y = NTU, color = location)) +
-  geom_point() +
-  scale_color_viridis_d() +
-  theme_bw() +
-  theme(legend.position = "bottom")
-
-ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2017-03-20"), 
-                                  ymd("2017-04-15"))), 
+                                  ymd("2018-01-01"), 
+                                  ymd("2019-01-01"))), 
        aes(x = datetime, y = NTU, color = location)) +
   geom_point() +
   scale_color_viridis_d() +
@@ -408,52 +1791,317 @@ ggplot(fc_turb %>% filter(between(datetime,
   theme(legend.position = "bottom")
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2016-10-24"), ymd("2017-04-03")) &
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2018-01-01"),
+                               ymd("2018-04-01")) &
+                         location == "intake_turb_NTU" , 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2018-01-01"), 
+                                  ymd("2019-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2018-04-01"), 
+                                  ymd("2018-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2018-04-01"),
+                                 ymd("2018-04-08")) &
+                           location == "munroe_turb_NTU" ~ NA, 
+                         between(datetime, 
+                                 ymd("2018-05-04"),
+                                 ymd("2018-05-08")) &
+                           location == "munroe_turb_NTU" ~ NA, 
+                         between(datetime, 
+                                 ymd("2018-05-01"),
+                                 ymd("2018-05-15")) &
+                           location == "munroe_turb_NTU" & 
+                           NTU > 50 ~ NA, 
+                         between(datetime, 
+                                 ymd("2018-05-25"),
+                                 ymd("2018-05-30")) &
+                           location == "munroe_turb_NTU" & 
+                           NTU > 50 ~ NA, 
+                         between(datetime, 
+                                 ymd("2018-06-01"),
+                                 ymd("2018-06-05")) &
+                           NTU < 1 ~ NA, 
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2018-04-01"), 
+                                  ymd("2018-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2018-07-01"), 
+                                  ymd("2018-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2018-07-10"),
+                                 ymd("2018-07-16")) &
+                           location == "munroe_turb_NTU" ~ NA, 
+                         between(datetime, 
+                                 ymd("2018-07-01"),
+                                 ymd("2018-07-05")) &
+                           location == "munroe_turb_NTU" & 
+                           NTU > 150 ~ NA, 
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2018-07-01"), 
+                                  ymd("2018-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2018-10-01"), 
+                                  ymd("2019-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+```
+
+</details>
+
+-   2019: runoff noise
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2019-01-01"), 
+                                  ymd("2020-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2019-05-13"), 
+                                  ymd("2019-05-20"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2019-05-15"), 
+                               ymd("2019-05-18")) &
+                         location == "intake_turb_NTU" , 
+                       NA, 
+                       NTU))
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2019-06-01"), 
+                                  ymd("2019-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2019-06-08"), 
+                               ymd("2019-06-11")) &
+                         location == "munroe_turb_NTU" , 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2019-06-20"), 
+                                  ymd("2019-06-24"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2019-06-21"), 
+                               ymd("2019-06-23")) &
+                         location == "intake_turb_NTU" , 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2019-04-01"), 
+                                  ymd("2019-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2019-04-01"), 
+                               ymd("2019-07-01")) &
                          location == "munroe_turb_NTU" &
+                         NTU > 300, 
+                       NA, 
+                       NTU))
+
+```
+
+</details>
+
+
+-   2020: munroe noise at start of record, late season high values at intake
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2020-01-01"), 
+                                  ymd("2021-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2020-04-01"), 
+                                  ymd("2020-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2020-05-01"), 
+                                 ymd("2020-06-01")) &
+                           NTU < 3 ~ NA, 
+                         between(datetime, 
+                                 ymd("2020-06-01"), 
+                                 ymd("2020-07-01")) &
+                           NTU < 1.5 ~ NA, 
+                         
+                         .default = NTU))
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2020-06-15"), 
+                                  ymd("2020-06-20"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2020-06-16"), 
+                               ymd("2020-06-18")) &
+                         location == "munroe_turb_NTU", 
+                       NA, 
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2020-10-01"), 
+                                  ymd("2021-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2020-10-10"), 
+                                  ymd("2020-10-15"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2020-10-12"), 
+                                 ymd("2021-01-01")) &
+                           location == "munroe_turb_NTU" ~ NA,
+                         between(datetime, 
+                                 ymd("2020-10-13"), 
+                                 ymd("2020-10-14")) &
+                           location == "intake_turb_NTU" ~ NA,
+                         .default = NTU))
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2020-01-01"), 
+                               ymd("2021-01-10")) &
+                         location == "intake_turb_NTU" &
                          NTU > 500, 
                        NA, 
                        NTU))
 
 ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2016-10-15"), 
-                                  ymd("2016-11-15"))), 
+                                  ymd("2020-10-01"), 
+                                  ymd("2021-01-01"))), 
        aes(x = datetime, y = NTU, color = location)) +
   geom_point() +
   scale_color_viridis_d() +
   theme_bw() +
   theme(legend.position = "bottom")
 
-ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2017-03-20"), 
-                                  ymd("2017-04-15"))), 
-       aes(x = datetime, y = NTU, color = location)) +
-  geom_point() +
-  scale_color_viridis_d() +
-  theme_bw() +
-  theme(legend.position = "bottom")
 
 ```
 
 </details>
 
--   Nov 2017-Apr 2018
+-   2021: 1000 values, munroe sensor failure in late summer, near-zero during runoff, back online after sensor offline intake
 
 <details>
 <summary>Click to expand plots</summary>
 
 ```{r}
 ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2017-10-15"), 
-                                  ymd("2017-11-15"))), 
-       aes(x = datetime, y = NTU, color = location)) +
-  geom_point() +
-  scale_color_viridis_d() +
-  theme_bw() +
-  theme(legend.position = "bottom")
-
-ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2018-03-20"), 
-                                  ymd("2018-04-15"))), 
+                                  ymd("2021-01-01"), 
+                                  ymd("2022-01-01"))), 
        aes(x = datetime, y = NTU, color = location)) +
   geom_point() +
   scale_color_viridis_d() +
@@ -461,58 +2109,51 @@ ggplot(fc_turb %>% filter(between(datetime,
   theme(legend.position = "bottom")
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2017-11-06"), ymd("2018-04-09")) &
-                         location == "munroe_turb_NTU" &
-                         NTU > 500, 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2021-01-01"), 
+                               ymd("2022-01-01")) &
+                         NTU > 990, NA, NTU))
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2021-08-19"), 
+                                  ymd("2021-09-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2021-07-19"), 
+                               ymd("2021-08-01")) &
+                         location == "munroe_turb_NTU", 
                        NA, 
-                       NTU),
-         NTU = if_else(between(datetime, ymd("2017-12-01"), ymd("2018-04-01")) &
+                       NTU))
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2021-04-01"), 
+                                  ymd("2021-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2021-05-01"), 
+                               ymd("2021-07-01")) &
                          location == "intake_turb_NTU" &
-                         NTU > 200, 
+                         NTU < 3, 
                        NA, 
                        NTU))
 
 ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2017-10-15"), 
-                                  ymd("2017-11-15"))), 
-       aes(x = datetime, y = NTU, color = location)) +
-  geom_point() +
-  scale_color_viridis_d() +
-  theme_bw() +
-  theme(legend.position = "bottom")
-
-ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2018-03-20"), 
-                                  ymd("2018-04-15"))), 
-       aes(x = datetime, y = NTU, color = location)) +
-  geom_point() +
-  scale_color_viridis_d() +
-  theme_bw() +
-  theme(legend.position = "bottom")
-
-
-```
-
-</details>
-
--   Oct 2023 - Apr 2024
-
-<details>
-<summary>Click to expand plots</summary>
-
-```{r}
-ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2023-10-15"), 
-                                  ymd("2023-11-15"))), 
-       aes(x = datetime, y = NTU, color = location)) +
-  geom_point() +
-  scale_color_viridis_d() +
-  theme_bw() +
-  theme(legend.position = "bottom")
-
-ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2024-03-20"), 
-                                  ymd("2024-04-15"))), 
+                                  ymd("2021-08-09"), 
+                                  ymd("2021-08-16"))), 
        aes(x = datetime, y = NTU, color = location)) +
   geom_point() +
   scale_color_viridis_d() +
@@ -520,15 +2161,48 @@ ggplot(fc_turb %>% filter(between(datetime,
   theme(legend.position = "bottom")
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2023-10-23"), ymd("2024-04-08")) &
-                         location == "munroe_turb_NTU" &
-                         NTU > 600, 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2021-08-10"), 
+                               ymd("2021-08-14")) &
+                         location == "intake_turb_NTU",        
                        NA, 
                        NTU))
 
+
+```
+
+</details>
+
+
+-   2022: 
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
 ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2023-10-15"), 
-                                  ymd("2023-11-15"))), 
+                                  ymd("2022-01-01"), 
+                                  ymd("2023-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2022-01-01"), 
+                                 ymd("2023-01-01")) &
+                           NTU > 990 ~ NA,
+                         between(datetime, 
+                                 ymd("2022-01-01"), 
+                                 ymd("2022-05-01")) &
+                           NTU > 200 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2022-01-01"), 
+                                  ymd("2023-01-01"))), 
        aes(x = datetime, y = NTU, color = location)) +
   geom_point() +
   scale_color_viridis_d() +
@@ -536,622 +2210,594 @@ ggplot(fc_turb %>% filter(between(datetime,
   theme(legend.position = "bottom")
 
 ggplot(fc_turb %>% filter(between(datetime, 
-                                  ymd("2024-03-20"), 
-                                  ymd("2024-04-15"))), 
+                                  ymd("2022-05-01"), 
+                                  ymd("2022-06-01"))), 
        aes(x = datetime, y = NTU, color = location)) +
   geom_point() +
   scale_color_viridis_d() +
   theme_bw() +
   theme(legend.position = "bottom")
 
-```
-
-</details>
-
-### Second Pass
-
-Plot year-by-year to re-check cleaning
-
-<details open>
-<summary>Click to collapse year-by-year plots</summary>
-
-```{r}
-# plot year-by-year for outliers and errors
-map(2010:2025, \(y) {
-  start_date <- paste0(y, "-01-01")
-  end_date <- paste0(y + 1, "-01-01")
-  ggplot() +
-    geom_area(data = flow_data %>% 
-                filter(between(datetime, 
-                               ymd(start_date), 
-                               ymd(end_date))),
-              aes(x = datetime, y = value/10),
-              fill = "blue",
-              alpha = 0.3) +
-    geom_point(data = fc_turb %>% filter(between(datetime, 
-                                                 ymd(start_date), 
-                                                 ymd(end_date))), 
-               aes(x = datetime, y = NTU, color = location)) +
-    labs(title = y,
-         y = "turbidity (NTU)") +
-    scale_color_viridis_d() +
-    theme_bw() +
-    theme(legend.position = "bottom")
-})
-
-```
-
-</details>
-
-Still a few artifacts here:
-
--   Sept 2011 before data gap
-
-<details>
-<summary>Click to expand plots</summary>
-
-```{r}
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2011-09-01"), 
-                             ymd("2011-10-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2011-09-01"), 
-                                               ymd("2011-10-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
-  scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
-  theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
-
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2011-09-04"), ymd("2011-09-06")) &
-                         NTU > 10, 
-                       NA, 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2022-05-01"), 
+                               ymd("2022-06-01")) &
+                         NTU > 200,
+                       NA,
                        NTU))
 
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2011-09-01"), 
-                             ymd("2011-10-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2011-09-01"), 
-                                               ymd("2011-10-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
-  scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
-  theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
-
-```
-
-</details>
-
--   Apr 2013 before data gap
-
-<details>
-<summary>Click to expand plots</summary>
-
-```{r}
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2013-04-15"), 
-                             ymd("2013-05-15"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2013-04-15"), 
-                                               ymd("2013-05-15"))), 
-             aes(x = datetime, y = NTU, color = location)) +
-  scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
-  theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
-
-fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2013-04-29"), ymd("2013-05-01")) &
-                         NTU > 10, 
-                       NA, 
-                       NTU))
-
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2013-04-15"), 
-                             ymd("2013-05-15"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2013-04-15"), 
-                                               ymd("2013-05-15"))), 
-             aes(x = datetime, y = NTU, color = location)) +
-  scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
-  theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
-```
-
-</details>
-
--   Munroe 2015 Apr - Jul miscalibrated
-
-If you look at the quantiles, the relationship between the two locations for
-this period is super different from every other year:
-
-```{r, echo=FALSE}
-turb_q <- fc_turb %>% 
-  mutate(date = date(datetime),
-         doy = yday(date),
-         year = year(date)) %>%
-  filter(!is.na(NTU)) %>% 
-  summarize(p05 = quantile(NTU, 0.05),
-            p25 = quantile(NTU, 0.25),
-            p50 = quantile(NTU, 0.50),
-            p75 = quantile(NTU, 0.75),
-            p95 = quantile(NTU, 0.95),
-            n = n(),
-            .by = c(year, doy, date, location))
-
-# data that have the same quantile values on a given day or that have low n 
-# should be excluded here
-turb_q_filt <- turb_q %>% 
-  # we want to make sure we have at least 75% of the days values
-  filter(n > 96*0.75) %>% 
-  # and that all the values are not the same (indicating something is wrong with the sensor)
-  filter(p05 != p95) %>% 
-  filter(p25 != p75)
-
-date_sequence <- seq.Date(min(turb_q$date), max(turb_q$date)) %>% 
-  tibble(date = .) %>% 
-  mutate(doy = yday(date),
-         year = year(date)) %>% 
-  cross_join(., tibble(location = c("munroe_turb_NTU", "intake_turb_NTU")))
-
-turb_q_filt <- left_join(date_sequence, turb_q_filt)
-
-turb_q_filt %>% 
-  select(date, year, p50, location) %>% 
-  pivot_wider(names_from = location,
-              values_from = p50) %>% 
-  ggplot(., aes(x = intake_turb_NTU, y = munroe_turb_NTU, color = factor(year))) +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2022-05-01"), 
+                                  ymd("2022-06-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
   geom_point() +
-  theme_bw() +
-  labs(x = "median daily turbidity at intake (NTU)",
-       y = "median daily turbidity at Munroe (NTU)",
-       color = "year") +
-  geom_abline(slope = 1, intercept = 0, lty = 2, color = "grey60") +
   scale_color_viridis_d() +
-  coord_cartesian(xlim = c(0, 120),
-                  ylim = c(0, 120)) +
-  gghighlight(year == 2015)
-```
-
-<details>
-<summary>Click to expand plots</summary>
-
-```{r}
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2015-04-01"), 
-                             ymd("2015-07-31"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2015-04-01"), 
-                                               ymd("2015-07-31"))), 
-             aes(x = datetime, y = NTU, color = location)) +
-  scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 week") +
+  theme(legend.position = "bottom")
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2022-06-01"), 
+                                  ymd("2022-08-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
   theme(legend.position = "bottom")
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2015-04-06"), ymd("2015-07-16")) &
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2022-06-01"), 
+                                 ymd("2022-07-01")) &
+                           NTU > 300 ~ NA,
+                         between(datetime, 
+                                 ymd("2022-06-01"), 
+                                 ymd("2022-08-01")) &
+                           NTU < 2  ~ NA,
+                         between(datetime, 
+                                 ymd("2022-07-15"), 
+                                 ymd("2022-08-01")) &
+                           NTU > 200 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2022-06-01"), 
+                                  ymd("2022-08-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2022-10-01"), 
+                                  ymd("2022-11-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2022-10-27"), 
+                               ymd("2023-01-01")) &
                          location == "munroe_turb_NTU",
-                       NA, 
+                       NA,
                        NTU))
 
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2015-04-01"), 
-                             ymd("2015-07-31"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2015-04-01"), 
-                                               ymd("2015-07-31"))), 
-             aes(x = datetime, y = NTU, color = location)) +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2022-10-01"), 
+                                  ymd("2022-11-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 week") +
+  theme(legend.position = "bottom")
+```
+
+</details>
+
+-   2023
+
+<details>
+<summary>Click to expand plots</summary>
+
+```{r}
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-01-01"), 
+                                  ymd("2024-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-01-01"), 
+                                  ymd("2023-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2023-01-01"), 
+                               ymd("2023-04-01")) &
+                         NTU > 100,
+                       NA,
+                       NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-01-01"), 
+                                  ymd("2023-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-04-01"), 
+                                  ymd("2023-05-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2023-04-01"), 
+                                 ymd("2023-04-03")) &
+                           NTU > 40 ~ NA,
+                         between(datetime, 
+                                 ymd("2023-04-01"), 
+                                 ymd("2023-04-08")) &
+                           location == "munroe_turb_NTU" ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-04-01"), 
+                                  ymd("2023-05-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-05-01"), 
+                                  ymd("2023-06-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2023-05-01"), 
+                                 ymd("2023-06-01")) &
+                           NTU > 990 ~ NA,
+                         between(datetime, 
+                                 ymd("2023-05-01"), 
+                                 ymd("2023-06-01")) &
+                           NTU < 2 ~ NA,
+                         between(datetime, 
+                                 ymd("2023-05-14"), 
+                                 ymd("2023-05-18")) &
+                           location == "munroe_turb_NTU" ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-05-01"), 
+                                  ymd("2023-06-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-06-01"), 
+                                  ymd("2023-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2023-06-01"), 
+                                 ymd("2023-07-01")) &
+                           NTU < 2 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-06-01"), 
+                                  ymd("2023-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  coord_cartesian(ylim = c(0,200))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-07-01"), 
+                                  ymd("2023-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2023-07-01"), 
+                                 ymd("2023-08-01")) &
+                           NTU > 990 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-07-01"), 
+                                  ymd("2023-08-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  coord_cartesian(ylim = c(0,100))
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2023-07-01"), 
+                                 ymd("2023-07-19")) &
+                           location == "intake_turb_NTU" ~ NA,
+                         .default = NTU))
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-07-01"), 
+                                  ymd("2023-08-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  coord_cartesian(ylim = c(0,100))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-08-01"), 
+                                  ymd("2023-09-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2023-08-01"), 
+                                 ymd("2023-09-01")) &
+                           NTU < 2 ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-08-01"), 
+                                  ymd("2023-09-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2023-12-01"), 
+                                  ymd("2024-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
   theme(legend.position = "bottom")
 
 ```
 
 </details>
 
--   Apr 2016 Munroe (after data gap)
+-   2024
 
 <details>
 <summary>Click to expand plots</summary>
 
 ```{r}
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2016-04-01"), 
-                             ymd("2016-05-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2016-04-01"), 
-                                               ymd("2016-05-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2024-01-01"), 
+                                  ymd("2025-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2024-01-01"), 
+                                  ymd("2024-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
   theme(legend.position = "bottom")
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2016-04-25"), ymd("2016-04-28")) &
-                         location == "munroe_turb_NTU" &
-                         NTU < 10,
-                       NA, 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2024-01-01"), 
+                               ymd("2024-04-01")) &
+                         NTU > 100,
+                       NA,
                        NTU))
 
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2016-04-01"), 
-                             ymd("2016-05-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2016-04-01"), 
-                                               ymd("2016-05-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
-  scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
-  theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
-```
 
-</details>
-
--   May 2019 intake (flatlined near 0)
-
-<details>
-<summary>Click to expand plots</summary>
-
-```{r}
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2019-05-01"), 
-                             ymd("2019-06-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2019-05-01"), 
-                                               ymd("2019-06-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
-  labs(y = "turbidity (NTU)") +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2024-01-01"), 
+                                  ymd("2024-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
   theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2024-04-01"), 
+                                  ymd("2024-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2019-05-15"), ymd("2019-05-18")) &
-                         location == "intake_turb_NTU" &
-                         NTU < 8,
-                       NA, 
-                       NTU))
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2024-04-01"), 
+                                 ymd("2024-07-01")) &
+                           NTU > 500 ~ NA,
+                         between(datetime, 
+                                 ymd("2024-04-01"), 
+                                 ymd("2024-07-01")) &
+                           NTU < 2 ~ NA,
+                         .default = NTU))
 
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2019-05-01"), 
-                             ymd("2019-06-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2019-05-01"), 
-                                               ymd("2019-06-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
-  labs(y = "turbidity (NTU)") +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2024-04-01"), 
+                                  ymd("2024-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom") 
 
-```
-
-</details>
-
--   Jun 2020 Munroe (after data gap)
-
-<details>
-<summary>Click to expand plots</summary>
-
-```{r}
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2020-06-01"), 
-                             ymd("2020-07-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2020-06-01"), 
-                                               ymd("2020-07-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2024-07-01"), 
+                                  ymd("2024-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom") 
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2020-06-16"), ymd("2020-06-18")) &
-                         location == "munroe_turb_NTU" &
-                         NTU >10,
-                       NA, 
-                       NTU))
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2024-07-01"), 
+                                 ymd("2024-10-01")) &
+                           NTU > 500 ~ NA,
+                         .default = NTU))
 
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2020-06-01"), 
-                             ymd("2020-07-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2020-06-01"), 
-                                               ymd("2020-07-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2024-07-01"), 
+                                  ymd("2024-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2024-08-01"), 
+                                  ymd("2024-09-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2024-08-21"), 
+                                 ymd("2024-08-26")) &
+                           location == "munroe_turb_NTU" ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2024-08-01"), 
+                                  ymd("2024-09-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2024-09-01"), 
+                                  ymd("2024-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
+
+fc_turb <- fc_turb %>% 
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2024-09-24"), 
+                                 ymd("2024-09-30")) &
+                           location == "munroe_turb_NTU" ~ NA,
+                         .default = NTU))
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2024-09-01"), 
+                                  ymd("2024-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
 
 ```
 
 </details>
 
--   Aug 2021 intake
+- 2025
 
 <details>
 <summary>Click to expand plots</summary>
 
 ```{r}
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2021-08-01"), 
-                             ymd("2021-09-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2021-08-01"), 
-                                               ymd("2021-09-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2025-01-01"), 
+                                  ymd("2026-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
+  theme(legend.position = "bottom")
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2025-01-01"), 
+                                  ymd("2025-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
   theme(legend.position = "bottom")
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2021-08-10"), ymd("2021-08-13")) &
-                         location == "intake_turb_NTU" &
-                         NTU < 5,
-                       NA, 
+  mutate(NTU = if_else(between(datetime, 
+                               ymd("2025-01-01"), 
+                               ymd("2025-04-01")) &
+                         NTU > 60,
+                       NA,
                        NTU))
 
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2021-08-01"), 
-                             ymd("2021-09-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2021-08-01"), 
-                                               ymd("2021-09-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2025-01-01"), 
+                                  ymd("2025-04-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
   theme(legend.position = "bottom")
-```
 
-</details>
-
--   Jul 2021 Munroe
-
-<details>
-<summary>Click to expand plots</summary>
-
-```{r}
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2021-07-01"), 
-                             ymd("2021-08-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2021-07-01"), 
-                                               ymd("2021-08-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2025-04-01"), 
+                                  ymd("2025-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom") 
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2021-07-21"), ymd("2021-07-28")) &
-                         location == "munroe_turb_NTU" &
-                         NTU > 10,
-                       NA, 
-                       NTU))
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2025-04-01"), 
+                                 ymd("2025-04-04")) &
+                           location == "munroe_turb_NTU" ~ NA,
+                         between(datetime, 
+                                 ymd("2025-04-15"), 
+                                 ymd("2025-07-01")) &
+                           NTU < 2 ~ NA,
+                         .default = NTU))
 
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2021-07-01"), 
-                             ymd("2021-08-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2021-07-01"), 
-                                               ymd("2021-08-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2025-04-01"), 
+                                  ymd("2025-07-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
-```
+  theme(legend.position = "bottom") 
 
-</details>
-
--   Apr 2025 Munroe
-
-<details>
-<summary>Click to expand plots</summary>
-
-```{r}
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2025-04-01"), 
-                             ymd("2025-05-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2025-04-01"), 
-                                               ymd("2025-05-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2025-07-01"), 
+                                  ymd("2025-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2025-09-01"), 
+                                  ymd("2025-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2025-04-02"), ymd_hm("2025-04-02 12:00")) &
-                         location == "munroe_turb_NTU",
-                       NA, 
-                       NTU))
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2025-09-25"), 
+                                 ymd("2025-09-29")) &
+                           location == "munroe_turb_NTU" ~ NA,
+                         .default = NTU))
 
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2025-04-01"), 
-                             ymd("2025-05-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2025-04-01"), 
-                                               ymd("2025-05-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2025-07-01"), 
+                                  ymd("2025-10-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom") 
 
-```
-
-</details>
-
--   Sept 2025 Munroe
-
-<details>
-<summary>Click to expand plots</summary>
-
-```{r}
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2025-09-01"), 
-                             ymd("2025-10-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2025-09-01"), 
-                                               ymd("2025-10-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2025-10-01"), 
+                                  ymd("2026-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom") 
+
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2025-10-01"), 
+                                  ymd("2025-11-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "bottom") 
 
 fc_turb <- fc_turb %>% 
-  mutate(NTU = if_else(between(datetime, ymd("2025-09-25"), ymd_hm("2025-09-28 12:00")) &
-                         location == "munroe_turb_NTU",
-                       NA, 
-                       NTU))
-
-ggplot() +
-  geom_area(data = flow_data %>% 
-              filter(between(datetime, 
-                             ymd("2025-09-01"), 
-                             ymd("2025-10-01"))), 
-            aes(x = datetime, y = value/10),
-            fill = "blue",
-            alpha = 0.3) +
-  geom_point(data = fc_turb %>% filter(between(datetime, 
-                                               ymd("2025-09-01"), 
-                                               ymd("2025-10-01"))), 
-             aes(x = datetime, y = NTU, color = location)) +
+  mutate(NTU = case_when(between(datetime, 
+                                 ymd("2025-10-06"), 
+                                 ymd("2026-01-01")) &
+                           location == "munroe_turb_NTU" ~ NA,
+                         .default = NTU))
+ggplot(fc_turb %>% filter(between(datetime, 
+                                  ymd("2025-10-01"), 
+                                  ymd("2026-01-01"))), 
+       aes(x = datetime, y = NTU, color = location)) +
+  geom_point() +
   scale_color_viridis_d() +
-  labs(y = "turbidity (NTU)") +
   theme_bw() +
-  scale_x_datetime(minor_breaks = "1 day") +
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom") 
 
 ```
 
@@ -1165,6 +2811,13 @@ Plot to re-check cleaning year-by-year
 <summary>Click to collapse year-by-year </summary> 
 
 ```{r}
+flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
+                       start_date = min(fc_turb$date, na.rm = T),
+                       end_date = max(fc_turb$date, na.rm = T),
+                       timescale = "day")%>%
+  mutate(year = factor(year(datetime)), 
+         doy = yday(datetime))
+
 # plot year-by-year for outliers and errors
 map(2010:2025, \(y) {
   start_date <- paste0(y, "-01-01")
@@ -1192,9 +2845,7 @@ map(2010:2025, \(y) {
 
 </details>
 
-Okay, that's a lot better, still some noise, but generally okay. There's some
-persistent near-zero noise sometimes during runoff, but I think that with
-quantiles we should be okay including those in any training/validation data.
+Okay, that's a lot better, still some noise, but generally okay. 
 
 ### Daily Quantiles
 
@@ -1239,12 +2890,6 @@ turb_q_filt <- left_join(date_sequence, turb_q_filt)
 
 
 ```{r, fig.height=12, fig.width=8}
-flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
-                       start_date = min(turb_q$date, na.rm = T),
-                       end_date = max(turb_q$date, na.rm = T),
-                       timescale = "day")%>%
-  mutate(year = factor(year(datetime)), 
-         doy = yday(datetime))
 
 # with Q
 ggplot(turb_q_filt, aes(x = doy)) +
@@ -1335,7 +2980,19 @@ turb_q_flagged %>%
                   ylim = c(0, 120)) +
   gghighlight(is.na(flag_diff))
 
-# write_csv(turb_q_flagged, here("data/collated/FC_intake/fc_intake_munroe_turbidity_quantile_record_2010-2025.csv"))
+# write_csv(turb_q_flagged, here("data/collated/FC_intake/fc_intake_munroe_turbidity_quantile_record_2010-2025_v2026-04-29.csv"))
+```
+
+Let's add those flags to the 15-minute data, too.
+
+```{r}
+fc_turb_flagged <- fc_turb %>% 
+  mutate(date = date(datetime)) %>% 
+  left_join(., flagged %>% select(date, flag_diff)) %>% 
+  select(-date)
+
+# write_csv(fc_turb_flagged, here("data/collated/FC_intake/fc_intake_munroe_turbidity_15min_record_2010-2025_v2026-04-29.csv"))
+
 ```
 
 And let's tally how many times each quantile was above the 50 NTU, which is when
@@ -1359,4 +3016,5 @@ turb_q_flagged %>%
                 full_width = TRUE,
                 position = "center")  
 ```
+
 
