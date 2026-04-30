@@ -2812,8 +2812,8 @@ Plot to re-check cleaning year-by-year
 
 ```{r}
 flow_data <- get_sw_ts(abbrev = "CLAFTCCO",
-                       start_date = min(fc_turb$date, na.rm = T),
-                       end_date = max(fc_turb$date, na.rm = T),
+                       start_date = min(fc_turb$datetime, na.rm = T),
+                       end_date = max(fc_turb$datetime, na.rm = T),
                        timescale = "day")%>%
   mutate(year = factor(year(datetime)), 
          doy = yday(datetime))
@@ -2890,7 +2890,6 @@ turb_q_filt <- left_join(date_sequence, turb_q_filt)
 
 
 ```{r, fig.height=12, fig.width=8}
-
 # with Q
 ggplot(turb_q_filt, aes(x = doy)) +
   geom_area(data = flow_data,
@@ -3017,4 +3016,7 @@ turb_q_flagged %>%
                 position = "center")  
 ```
 
+Generally speaking, we will only be using the data aggregated to a daily timestep
+for the intake data and we will not be using the Munroe data at all due to how
+noisy it is.
 
