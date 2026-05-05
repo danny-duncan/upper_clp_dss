@@ -1,81 +1,66 @@
-#' XGBoost Feature Selection with Cross-Validation and SHAP Values for Regression Target
+#' XGBoost Feature Selection with Cross-Validation and SHAP Values
 #'
-#' Trains XGBoost models across multiple folds to evaluate feature importance
-#' and SHAP values. This function helps identify the most predictive features
-#' by aggregating performance and contribution metrics across data splits.
+#' Trains XGBoost regression models across multiple folds to evaluate feature importance
+#' and SHAP (SHapley Additive exPlanations) values. This function facilitates identifying
+#' the most predictive features by aggregating performance and contribution metrics
+#' across data splits.
 #'
-#' @param train_val_df A data frame or tibble containing features, the target variable (`target_col`),
-#'   and a `fold_id` column used for cross-validation splitting. All rows in `train_val_df` must have a `fold_id` value.
+#' @param train_val_df A data frame or tibble containing predictor features,
+#'   the target variable, and a `fold_id` column used for cross-validation.
+#'   All rows must have a valid `fold_id`.
 #' @param features_to_test A character vector of column names to be used as predictors.
-#' @param target_col A string specifying the name of the response variable.
+#' @param target_col A string specifying the name of the response (target) variable.
 #' @param default_hyper_params A list of hyperparameters to pass to \code{xgb.train}.
-#'   Must include the following: \code{objective}, \code{eval_metric}, \code{eta} for the model to run. Other parameters can be included but are not required.
-#'   If these are not included, defaults will be set to: \code{objective = "reg:squarederror"}, \code{eval_metric = "rmse"} and  \code{eta = 0.05}.
+#'   If missing, the following defaults are used:
+#'   \itemize{
+#'     \item \code{objective = "reg:squarederror"}
+#'     \item \code{eval_metric = "rmse"}
+#'     \item \code{eta = 0.05}
+#'     \item \code{nthread = 1}
+#'   }
 #' @param weight_fun A function that takes a data frame and returns a numeric vector
 #'   of weights. If \code{NULL}, all observations are weighted equally (1).
 #'
-#' @return A list containing:
-#' \itemize{
-#'   \item \code{model}: A list of trained \code{xgb.Booster} objects (one per fold).
-#'   \item \code{features}: The unique vector of features tested.
-#'   \item \code{best_msg}: A tibble of performance metrics (rmse) and best iterations per fold.
-#'   \item \code{model_importance}: A tibble of XGBoost importance metrics (Gain, Cover, Frequency) per fold.
-#'   \item \code{shap_values}: A tibble of mean absolute SHAP values for train and validation sets per fold.
+#' @return A named list containing:
+#' \describe{
+#'   \item{\code{model}}{A list of trained \code{xgb.Booster} objects, one per fold.}
+#'   \item{\code{features}}{The unique vector of features used for training.}
+#'   \item{\code{best_msg}}{A tibble summarizing best iterations and RMSE (train/val) for each fold.}
+#'   \item{\code{model_importance}}{A tibble of XGBoost importance metrics (Gain, Cover, Frequency) for every fold.}
+#'   \item{\code{shap_values}}{A tibble of mean absolute SHAP values for both training and validation sets per fold.}
 #' }
 #'
+#' @export
 #'
 #' @examples
-#' # Setting our default hyperparameters
+#' \dontrun{
+#' # 1. Define hyperparameters
+#' params <- list(
+#'   objective        = "reg:squarederror",
+#'   eta              = 0.05,
+#'   max_depth        = 4,
+#'   subsample        = 0.5,
+#'   colsample_bytree = 0.5
+#' )
 #'
-#'default_hyper_params <- list(
-#'  objective        = "reg:squarederror",
-#'  eval_metric      = "rmse",
-#'  eta              = 0.05,
-#'  gamma            = 0.6,
-#'  alpha            = 0,
-#'  lambda           = 1,
-#'  max_depth        = 4,
-#'  subsample        = 0.5,
-#'  colsample_bytree = 0.5,
-#'  min_child_weight  = 2
-#')
-
-#' # weighting function for TOC categories to emphasize high TOC values
-#' Weighting function for TOC
-#' toc_high_weights <-  function(df) {
-#'  ifelse(df$TOC <= 4,1,                  # flat weight for low TOC
-#'         1 + 3 *log1p(df$TOC - 4))  # grows slowly, no cap needed
-#'}
-
-#' #set aside sensor parameters that are generally useful
-#'general_features <- c("FDOMc","Sensor_Turb","Sensor_Cond", "Chl_a", "Temp")
-#'
-#' #Running function on general features only
-#'
-#'general_feature_results <- xgboost_feature_selection(
-#'  train_val_df = train_val,
-#'  features_to_test = general_features,
-#'  target_col = "TOC_cat",
-#'  default_hyper_params = default_hyper_params,
-#'  weight_fun = high_weight
-#')
-
-#'# Testing multiple feature sets to see if there is improvement
-
-#' feature_results <- map(
-#'  list(
-#'    gen_feat = general_features,
-#'    more_features = c(fewer_features, "sin_doy", "daily_canyon_mouth_flow")
-#'    ),
-#'   ~xgboost_feature_selection(
-#'    train_val_df = train_val,
-#'    features_to_test = .x,
-#'    target_col = "TOC_cat",
-#'    default_hyper_params = default_hyper_params
-#'  )
-#'
+#' # 2. Define a weighting function (optional)
+#' # Emphasize high TOC (Total Organic Carbon) values
+#' toc_weights <- function(df) {
+#'   ifelse(df$TOC <= 4, 1, 1 + 3 * log1p(df$TOC - 4))
 #' }
 #'
+#' # 3. Run feature selection
+#' results <- xgboost_feature_selection(
+#'   train_val_df = train_val,
+#'   features_to_test = c("FDOMc", "Sensor_Turb", "Sensor_Cond", "Temp"),
+#'   target_col = "TOC",
+#'   default_hyper_params = params,
+#'   weight_fun = toc_weights
+#' )
+#'
+#' # 4. Inspect importance
+#' print(results$model_importance)
+#' }
 xgboost_feature_selection <- function(train_val_df,
                                           features_to_test,
                                           target_col,
@@ -106,7 +91,7 @@ xgboost_feature_selection <- function(train_val_df,
   }
   #check that default_hyper_params has an objective, eval metric and eta
   #All other parameters have fine defaults so we can ignore them if a user does not input them
-  required_params <- c("objective", "eval_metric", "eta")
+  required_params <- c("objective", "eval_metric", "eta", "nthread")
 
   if(!all(required_params %in% names(default_hyper_params))){
     missing_params <- required_params[!required_params %in% names(default_hyper_params)]
@@ -121,6 +106,9 @@ xgboost_feature_selection <- function(train_val_df,
     }
     if("eval_metric" %in% missing_params) {
       default_hyper_params$eval_metric <- "rmse"
+    }
+    if("nthread" %in% missing_params) {
+      default_hyper_params$nthread <- 1
     }
   }
 
@@ -148,21 +136,20 @@ xgboost_feature_selection <- function(train_val_df,
   shap_val_df <- tibble(Feature = features_to_test)
   best_msgs <- tibble()
   models <- list()
+  fold_ids <- sort(unique(train_val_df$fold_id), decreasing = FALSE)
 
-  for(i in unique(train_val$fold_id)){
 
+  for(i in fold_ids){
     #train val split
-    train_data <- train_val %>%
+    train_data <- train_val_df %>%
       filter(fold_id != i) %>%
-      select(any_of(c(features_to_test, target, "id", "sensor_datetime", "collector")))
+      select(any_of(c(features_to_test, target_col, "id", "sensor_datetime", "collector")))
 
     val_data <- suppressMessages(
-      train_val %>%
+      train_val_df %>%
         anti_join(train_data)
     )
-    if(is.null(weight_fun)){
-      weight_fun <- function(df) {rep(1, nrow(df))}
-    }
+
     #weight data
     w_train <- weight_fun(train_data)
     w_val   <- weight_fun(val_data)
@@ -170,13 +157,13 @@ xgboost_feature_selection <- function(train_val_df,
     #prep matrices
     dtrain <- xgb.DMatrix(
       data = as.matrix(train_data[, features_to_test]),
-      label = train_data[[target]],
+      label = train_data[[target_col]],
       weight = w_train
     )
 
     dval <- xgb.DMatrix(
       data = as.matrix(val_data[, features_to_test]),
-      label = val_data[[target]],
+      label = val_data[[target_col]],
       weight = w_val
     )
 
@@ -187,32 +174,29 @@ xgboost_feature_selection <- function(train_val_df,
       params = default_hyper_params,
       data = dtrain,
       nrounds = 10000,
-      watchlist = watchlist,
+      evals = watchlist,
       early_stopping_rounds = 1000,
       print_every_n = 1000,
-      verbose = 0,
-      nthread = 1
+      verbose = 0
     )
     #Save model
     models[[i]] <- model
-    #Save best msg
+    #get eval log
+    eval_log <- attributes(model)$evaluation_log
+    #get best iteration
+    best_iter <- as.numeric(xgb.attr(model, "best_iteration"))
+  #Extract best message
     best_msg <- tibble(
       fold_id = i,
-      best_iteration = model$best_iteration,
-      best_msg = model$best_msg
-    ) %>%
-      #clean up message
-      mutate(
-        train_rmse = str_extract(best_msg, "(?<=train-rmse:)\\d+\\.\\d+"),
-        eval_rmse  = str_extract(best_msg, "(?<=eval-rmse:)\\d+\\.\\d+"),
-        train_rmse = as.numeric(train_rmse),
-        eval_rmse  = as.numeric(eval_rmse)
-      )%>%
-      select(-best_msg)
+      best_iteration = best_iter,
+      # We use best_iter + 1 because R is 1-indexed and XGBoost is 0-indexed
+      train_rmse = eval_log$train_rmse[best_iter + 1],
+      eval_rmse  = eval_log$eval_rmse[best_iter + 1]
+    )
+
     #best message
     best_msgs <- bind_rows(best_msgs, best_msg)%>%
       distinct()
-
 
     #Feature importance
     importance_df <- importance_df%>%
@@ -222,16 +206,34 @@ xgboost_feature_selection <- function(train_val_df,
                     .cols = c(Gain, Cover, Frequency)
                   ), by = "Feature")
 
+    train_X <- as.matrix(train_data[, features_to_test])
+    val_X <- as.matrix(val_data[, features_to_test])
+    #In case we need to predict and output a plot of predicted vs actual for train and val
+    # train_data$pred <- predict(model, newdata = train_X)
+    # val_data$pred <- predict(model, newdata = val_X)
+    #
+    # max_val <- max(c(train_data[[target_col]], val_data[[target_col]]), na.rm = TRUE)
+    # min_val <- min(c(train_data[[target_col]], val_data[[target_col]]), na.rm = TRUE)
+    #
+    # ggplot(train_data, aes(x = !!sym(target_col), y = pred )) +
+    #   geom_point() +
+    #   geom_point(data = val_data, aes(x = !!sym(target_col), y = pred), color = "blue") +
+    #   geom_abline(slope = 1, intercept = 0, color = "red") +
+    #   labs(title = glue("Fold {i} - Train: Predicted vs Actual"),
+    #        x = paste0(target_col, " (Actual)"),
+    #        y = paste0(target_col, " (Predicted)")) +
+    #   ylim(min_val,max_val)+
+    #   xlim(min_val,max_val)
     # SHAP (Training)
-    shap_long_train <- shap.prep(xgb_model = model, X_train = as.matrix(train_data[, features_to_test]))
-    shap_vals_train <- shap.values(xgb_model = model, X_train = dtrain)$mean_shap_score %>%
+    shap_long_train <- shap.prep(xgb_model = model, X_train = train_X)
+    shap_vals_train <- shap.values(xgb_model = model, X_train = train_X)$mean_shap_score %>%
       as.data.frame() %>%
       tibble::rownames_to_column("Feature") %>%
       rename(train_mean_abs_shap = ".")
 
     # SHAP (Validation)
-    shap_long_val <- shap.prep(xgb_model = model, X_train = as.matrix(val_data[, features_to_test]))
-    shap_vals_val <- shap.values(xgb_model = model, X_train = dval)$mean_shap_score %>%
+    shap_long_val <- shap.prep(xgb_model = model, X_train = val_X)
+    shap_vals_val <- shap.values(xgb_model = model, X_train = val_X)$mean_shap_score %>%
       as.data.frame() %>%
       tibble::rownames_to_column("Feature") %>%
       rename(val_mean_abs_shap = ".")
@@ -244,7 +246,6 @@ xgboost_feature_selection <- function(train_val_df,
       )
     shap_val_df <- shap_val_df%>%
       left_join(shap_val, by = c("Feature"))
-
   }
 
   #output
