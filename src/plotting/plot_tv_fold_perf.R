@@ -60,12 +60,14 @@ plot_tv_fold_perf <- function(fold_set, train_val_df, fold_model, target_col = "
   source("src/setup_ross_theme.R") #load theme
 
   # Split data into training and validation sets based on fold_id
-  val_data <- train_val_df %>% filter(fold_set == fold_id)
+  val_data <- train_val_df %>% filter(fold_id == fold_set)
   train_data <- anti_join(train_val_df, val_data, by = "fold_id")
   # Create prediction column name
   target_pred_col <- paste0(target_col, "_guess")
   # Get model features
-  features <- fold_model$feature_names
+  features <- xgb.importance(model = fold_model)%>%pull(Feature)
+
+  best_iter <- as.numeric(xgb.attr(fold_model, "best_iteration"))
 
   #convert train_val sets to matrix for prediction
   val_matrix <- val_data[, features]%>%
@@ -75,10 +77,11 @@ plot_tv_fold_perf <- function(fold_set, train_val_df, fold_model, target_col = "
     mutate(across(everything(), as.numeric)) %>%
     as.matrix()
 
+
   #make predictions
-  val_data[[target_pred_col]] <-  predict(fold_model, val_matrix, iterationrange = c(1, fold_model$best_iteration))
+  val_data[[target_pred_col]] <-  predict(fold_model, val_matrix, iterationrange = c(1, best_iter), validate_features = T)
   val_data$group <-  "Validation"
-  train_data[[target_pred_col]] <-  predict(fold_model, train_matrix, iterationrange = c(1, fold_model$best_iteration))
+  train_data[[target_pred_col]] <-  predict(fold_model, train_matrix,  iterationrange = c(1,best_iter), validate_features = T)
   train_data$group <-  "Train"
 
   # Calculate RMSE/MAE for annotation & round to 3 decimals

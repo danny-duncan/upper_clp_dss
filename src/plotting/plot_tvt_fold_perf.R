@@ -82,7 +82,8 @@ plot_tvt_fold_perf <- function( train_val_df, test_df, fold_set, fold_model, tar
   train_set <- anti_join(train_val_df, val_set, by = "id")
 
   #use the fold model to get feature names
-  features <- fold_model$feature_names
+  features <- xgb.importance(model = fold_model) %>% pull(Feature)
+  best_iter <- as.numeric(xgb.attr(fold_model, "best_iteration"))
   # Create matrix for train/val/test datasets
   val_matrix <- val_set[, features]%>%
     mutate(across(everything(), as.numeric)) %>%
@@ -97,13 +98,13 @@ plot_tvt_fold_perf <- function( train_val_df, test_df, fold_set, fold_model, tar
   pred_col <- glue("{target_col}_guess_fold{fold_set}")
 
   # make predictions
-  val_set[[pred_col]] <-  predict(fold_model, val_matrix, iterationrange = c(1, fold_model$best_iteration))
+  val_set[[pred_col]] <-  predict(fold_model, val_matrix, iterationrange = c(1, best_iter), validate_features = T)
   val_set$group <-  "Validation"
 
-  train_set[[pred_col]] <-  predict(fold_model, train_matrix, iterationrange = c(1, fold_model$best_iteration))
+  train_set[[pred_col]] <-  predict(fold_model, train_matrix, iterationrange = c(1, best_iter), validate_features = T)
   train_set$group <-  "Train"
 
-  test_df[[pred_col]] <-  predict(fold_model, test_matrix, iterationrange = c(1, fold_model$best_iteration))
+  test_df[[pred_col]] <-  predict(fold_model, test_matrix, iterationrange = c(1, best_iter), validate_features = T)
   test_df$group <-  "Test"
 
 
