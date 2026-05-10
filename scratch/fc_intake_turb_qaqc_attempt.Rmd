@@ -1,0 +1,638 @@
+---
+title: "City of Fort Collins Turbidity Data QAQC"
+output: html_document
+---
+
+# Objective
+
+The purpose of this notebook is to QAQC the turbidity data provided to us from 
+the City of Fort Collins at their intake/Munroe Canal. Some exploration on this
+data set has been done already so we will be applying whatever tools are applicable 
+for autoQAQC from `{ross.wq.tools}`.
+
+We will be building on the turbidity QAQC that was started in `scratch/FC_Intake_Explore.Rmd`
+
+# Environment Set Up
+```{r, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(ross.wq.tools)
+library(here)
+library(plotly)
+library(timetk)
+library(changepoint)
+library(ggchangepoint)
+```
+
+# Turbidity data collation
+```{r}
+intake_turb <- read_csv(here("data/raw/fc_intake_data/Intake_Turbidity_2010-2025.csv"),
+                        col_names = c("datetime", "intake_turb_NTU"),
+                        skip = 1,
+                        col_select = c("datetime", "intake_turb_NTU"),
+                        show_col_types = F)
+
+munroe_turb <- read_csv(here("data/raw/fc_intake_data/Munroe_Turbidity_2013-2025.csv"),,
+                        col_names = c("datetime", "munroe_turb_NTU"),
+                        skip = 1,
+                        col_select = c("datetime", "munroe_turb_NTU"),
+                        show_col_types = F) 
+
+fc_turb <- full_join(intake_turb, munroe_turb, by = "datetime") %>% 
+  pivot_longer(cols = c(munroe_turb_NTU, intake_turb_NTU),
+               names_to = "location",
+               values_to = "NTU") 
+
+rm(intake_turb, munroe_turb)
+```
+
+# Manual QAQC
+
+Manual QAQC decisions have already been made in `scratch/FC_Intake_Explore.Rmd`.
+Here we want to reproduce those decisions. 
+
+```{r}
+fc_turb <- fc_turb %>%
+  mutate(NTU = case_when(NTU <= 0 ~ NA,
+                         NTU >= 1000 ~ NA,
+                         round(NTU, 0) == 655 & location == "munroe_turb_NTU" ~ NA,
+                         round(NTU, 0) == 630 & location == "munroe_turb_NTU" ~ NA,
+                         round(NTU, 0) == 555 & location == "munroe_turb_NTU" ~ NA,
+                         .default = NTU)) %>%
+  mutate(flag = case_when(
+    # 2011-09-04 to 2011-09-06: both, spike with no flow signal (FC_Intake_Explore.Rmd L613)
+    between(datetime, ymd("2011-09-04"), ymd("2011-09-06")) &
+      NTU > 10 ~ "fail",
+    # 2013-04-29 to 2013-05-01: both, spike before data gap (FC_Intake_Explore.Rmd L665)
+    between(datetime, ymd("2013-04-29"), ymd("2013-05-01")) &
+      NTU > 10 ~ "fail",
+    # 2015-04-06 to 2015-07-16: munroe miscalibrated sensor (entire window) (FC_Intake_Explore.Rmd L767)
+    between(datetime, ymd("2015-04-06"), ymd("2015-07-16")) &
+      location == "munroe_turb_NTU" ~ "fail",
+    # 2015-09-15 to 2016-06-01: munroe winter off-season spikes (FC_Intake_Explore.Rmd L358)
+    between(datetime, ymd("2015-09-15"), ymd("2016-06-01")) &
+      location == "munroe_turb_NTU" & NTU > 300 ~ "fail",
+    # 2016-04-25 to 2016-04-28: munroe spurious near-zero values after data gap (FC_Intake_Explore.Rmd L819)
+    between(datetime, ymd("2016-04-25"), ymd("2016-04-28")) &
+      location == "munroe_turb_NTU" & NTU < 10 ~ "fail",
+    # 2016-10-24 to 2017-04-03: munroe winter off-season spikes (FC_Intake_Explore.Rmd L411)
+    between(datetime, ymd("2016-10-24"), ymd("2017-04-03")) &
+      location == "munroe_turb_NTU" & NTU > 500 ~ "fail",
+    # 2017-11-06 to 2018-04-09: munroe winter off-season spikes (FC_Intake_Explore.Rmd L464)
+    between(datetime, ymd("2017-11-06"), ymd("2018-04-09")) &
+      location == "munroe_turb_NTU" & NTU > 500 ~ "fail",
+    # 2017-12-01 to 2018-04-01: intake winter off-season spikes (FC_Intake_Explore.Rmd L469)
+    between(datetime, ymd("2017-12-01"), ymd("2018-04-01")) &
+      location == "intake_turb_NTU" & NTU > 200 ~ "fail",
+    # 2019-05-15 to 2019-05-18: intake flatlined near zero during runoff (FC_Intake_Explore.Rmd L871)
+    between(datetime, ymd("2019-05-15"), ymd("2019-05-18")) &
+      location == "intake_turb_NTU" & NTU < 8 ~ "fail",
+    # 2020-06-16 to 2020-06-18: munroe spike after data gap (FC_Intake_Explore.Rmd L924)
+    between(datetime, ymd("2020-06-16"), ymd("2020-06-18")) &
+      location == "munroe_turb_NTU" & NTU > 10 ~ "fail",
+    # 2021-07-21 to 2021-07-28: munroe spike (FC_Intake_Explore.Rmd L1029)
+    between(datetime, ymd("2021-07-21"), ymd("2021-07-28")) &
+      location == "munroe_turb_NTU" & NTU > 10 ~ "fail",
+    # 2021-08-10 to 2021-08-13: intake flatlined near zero (FC_Intake_Explore.Rmd L977)
+    between(datetime, ymd("2021-08-10"), ymd("2021-08-13")) &
+      location == "intake_turb_NTU" & NTU < 5 ~ "fail",
+    # 2023-10-23 to 2024-04-08: munroe winter off-season spikes (FC_Intake_Explore.Rmd L523)
+    between(datetime, ymd("2023-10-23"), ymd("2024-04-08")) &
+      location == "munroe_turb_NTU" & NTU > 600 ~ "fail",
+    # 2025-04-02 to 2025-04-02 12:00: munroe artifact at start of record (FC_Intake_Explore.Rmd L1081)
+    between(datetime, ymd("2025-04-02"), ymd_hm("2025-04-02 12:00")) &
+      location == "munroe_turb_NTU" ~ "fail",
+    # 2025-09-25 to 2025-09-28 12:00: munroe artifact (FC_Intake_Explore.Rmd L1133)
+    between(datetime, ymd("2025-09-25"), ymd_hm("2025-09-28 12:00")) &
+      location == "munroe_turb_NTU" ~ "fail",
+    .default = NA
+  )) 
+```
+
+Now let's visualize these manual decisions
+
+```{r, fig.height=12, fig.width=12}
+ggplot(fc_turb, aes(x = datetime, y = NTU)) +
+  geom_point(size = 0.5, color = "grey40") +
+  geom_point(data = fc_turb %>% filter(flag == "fail"),
+             aes(x = datetime, y = NTU),
+             shape = 1, size = 2, color = "red") +
+  facet_wrap(~ location, nrow = 2, scales = "free_y") +
+  labs(x = "", y = "turbidity (NTU)") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+# Automatic QAQC
+
+Format the data to match what we expect in ross.wq.tools
+
+```{r}
+turb_list <- fc_turb %>%
+  mutate(parameter = "Turbidity", units = "NTU") %>%
+  select(DT_round = datetime, site = location, parameter, mean = NTU, units,
+         manual_flag = flag) %>%
+  split(f = list(.$site, .$parameter), sep = "-") %>%
+  discard(~nrow(.) == 0)
+```
+
+Generate summary statistics once for use in both threshold table and flagging.
+
+```{r}
+turb_stats <- turb_list %>%
+  map(~arrange(., DT_round)) %>%
+  map(~filter(., is.na(manual_flag))) %>%
+  map(~generate_summary_statistics(.))
+```
+
+Make the seasonal threshold table for each of these sites
+
+```{r}
+turb_seasonal_thresholds <- turb_stats %>%
+  map(function(df) {
+    df %>%
+      filter(is.na(manual_flag), !is.na(mean)) %>%
+      make_threshold_table()
+  }) %>%
+  bind_rows()
+```
+
+Build the network structure that is expected for network check
+
+```{r}
+fc_intake_site_order <- list(
+  fc_intake = c("munroe_turb_NTU", "intake_turb_NTU")
+)
+```
+
+Single parameter QAQC flags
+
+Note: `add_repeat_flag` is not used here because there are many instances of
+consecutive repeated values that contain actual data.
+
+Note: `add_drift_flag` is not used here because it splits the record on site
+visit flags, which are not available for this dataset.
+
+Note: `add_na_flag` is not used here because missing data is already
+represented as NA in the mean column.
+
+```{r}
+turb_auto_flagged <- turb_stats %>%
+  map(function(df) {
+    df %>%
+      data.table::data.table() %>%
+      add_seasonal_flag(threshold_table = turb_seasonal_thresholds)
+  })
+```
+
+Do the network check
+```{r}
+turb_network_flagged <- turb_auto_flagged %>%
+  map(~network_check(df = .,
+                     intrasensor_flags_arg = turb_auto_flagged,
+                     site_order_arg = fc_intake_site_order)) %>%
+  bind_rows()
+```
+
+```{r, fig.height=12, fig.width=12}
+threshold_lines <- turb_network_flagged %>%
+  select(DT_round, site, season) %>%
+  left_join(turb_seasonal_thresholds %>%
+              select(site, season, t_mean01, t_mean99),
+            by = c("site", "season"))
+
+ggplot(turb_network_flagged, aes(x = DT_round, y = mean)) +
+  geom_point(size = 0.5, color = "grey40") +
+  geom_point(data = turb_network_flagged %>% filter(!is.na(auto_flag)),
+             aes(x = DT_round, y = mean),
+             shape = 1, size = 2, color = "red") +
+  geom_line(data = threshold_lines, aes(x = DT_round, y = t_mean99),
+            color = "blue", linewidth = 0.5) +
+  geom_line(data = threshold_lines, aes(x = DT_round, y = t_mean01),
+            color = "blue", linewidth = 0.5, linetype = "dashed") +
+  facet_wrap(~ site, nrow = 2, scales = "free_y") +
+  labs(x = "", y = "turbidity (NTU)") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+
+# Trying {timetk} anomalize
+
+This also did not work, but it was a suggestion from Sam.
+
+```{r}
+turb_anomalize <- fc_turb %>%
+  mutate(NTU = if_else(!is.na(flag) & flag == "fail", NA_real_, NTU)) %>%
+  filter(!is.na(NTU), NTU > 0) %>%
+  group_by(location) %>%
+  timetk::anomalize(
+    .date_var    = datetime,
+    .value       = NTU,
+    .frequency   = "auto",
+    .trend       = "auto",
+    .method      = "stl",
+    .iqr_alpha   = 0.05,
+    .max_anomalies = 0.05
+  )
+```
+
+```{r, fig.height=12, fig.width=12}
+# Plotting this work
+turb_anomalize %>%
+  timetk::plot_anomalies(
+    .date_var    = datetime,
+    .facet_ncol  = 1,
+    .interactive = FALSE
+  ) +
+  labs(x = "", y = "turbidity (NTU)") +
+  theme_bw()
+```
+
+#### Parameter sweep for anomalize
+
+Three levers: `.iqr_alpha` and `.max_anomalies` control flagging sensitivity; `.trend` controls how wide a window is used to extract the trend before anomaly detection runs on the remainder — too wide and drift gets absorbed, too narrow and storm events bleed into the remainder. (`.method = "twitter"` is documented in the timetk docs but not yet implemented — only `"stl"` works.)
+
+```{r}
+anomalize_params <- list(
+  # baseline
+  list(method = "stl",     iqr_alpha = 0.05, max_anoms = 0.05, trend = "auto"),
+  # loosen alpha/max_anoms with stl
+  list(method = "stl",     iqr_alpha = 0.20, max_anoms = 0.20, trend = "auto"),
+  list(method = "stl",     iqr_alpha = 0.50, max_anoms = 0.50, trend = "auto"),
+  list(method = "stl",     iqr_alpha = 0.75, max_anoms = 0.75, trend = "auto"),
+  # vary trend window with mid alpha
+  list(method = "stl",     iqr_alpha = 0.20, max_anoms = 0.20, trend = "3 months"),
+  list(method = "stl",     iqr_alpha = 0.20, max_anoms = 0.20, trend = "1 year"),
+  # longer trend windows with high alpha
+  list(method = "stl",     iqr_alpha = 0.50, max_anoms = 0.50, trend = "3 months"),
+  list(method = "stl",     iqr_alpha = 0.50, max_anoms = 0.50, trend = "1 year"),
+  list(method = "stl",     iqr_alpha = 0.75, max_anoms = 0.75, trend = "3 months"),
+  list(method = "stl",     iqr_alpha = 0.75, max_anoms = 0.75, trend = "1 year")
+)
+
+turb_anomalize_sweep <- anomalize_params %>%
+  map(function(p) {
+    fc_turb %>%
+      mutate(NTU = if_else(!is.na(flag) & flag == "fail", NA_real_, NTU)) %>%
+      filter(!is.na(NTU), NTU > 0) %>%
+      group_by(location) %>%
+      timetk::anomalize(
+        .date_var      = datetime,
+        .value         = NTU,
+        .frequency     = "auto",
+        .trend         = p$trend,
+        .method        = p$method,
+        .iqr_alpha     = p$iqr_alpha,
+        .max_anomalies = p$max_anoms
+      ) %>%
+      mutate(method = p$method, iqr_alpha = p$iqr_alpha,
+             max_anoms = p$max_anoms, trend = p$trend)
+  }) %>%
+  bind_rows() %>%
+  mutate(params = paste0(method, " | alpha=", iqr_alpha,
+                         " / max=", max_anoms, " / trend=", trend))
+```
+
+```{r}
+turb_anomalize_sweep %>%
+  group_by(location, params) %>%
+  summarise(
+    n_total     = n(),
+    n_anomaly   = sum(anomaly == "Yes", na.rm = TRUE),
+    pct_flagged = round(n_anomaly / n_total * 100, 2),
+    .groups = "drop"
+  )
+```
+
+```{r, fig.height=30, fig.width=12}
+turb_anomalize_sweep %>%
+  ggplot(aes(x = datetime, y = observed)) +
+  geom_point(size = 0.3, color = "grey50") +
+  geom_point(
+    data = ~filter(., anomaly == "Yes"),
+    aes(x = datetime, y = observed),
+    shape = 1, size = 2, color = "red"
+  ) +
+  facet_grid(params ~ location, scales = "free_y") +
+  labs(x = "", y = "turbidity (NTU)",
+       title = "anomalize sensitivity sweep") +
+  theme_bw(base_size = 9)
+```
+
+# Changepoint detection for sensor cleaning events
+
+Sensor cleanings produce abrupt mean-shifts in turbidity. With no field visit records to split on, changepoint detection on mean NTU is a candidate for inferring when cleanings occurred. Using `{changepoint}` with PELT (Pruned Exact Linear Time) to find multiple changepoints per location.
+
+Aggregate to daily median before running changepoint detection. At sub-hourly resolution PELT reacts to every storm spike; daily medians suppress that noise so only persistent level shifts (cleanings) survive.
+
+```{r}
+turb_daily_cp <- fc_turb %>%
+  mutate(NTU = if_else(!is.na(flag) & flag == "fail", NA_real_, NTU)) %>%
+  filter(!is.na(NTU), NTU > 0) %>%
+  mutate(date = as.Date(datetime)) %>%
+  group_by(location, date) %>%
+  summarise(NTU_median = median(NTU, na.rm = TRUE), .groups = "drop") %>%
+  arrange(location, date)
+```
+
+Fit PELT on daily medians with `minseglen = 14` (two weeks minimum between changepoints) and an MBIC penalty, which is stricter than BIC and favors fewer, more confident changepoints.
+
+```{r}
+cp_results <- turb_daily_cp %>%
+  split(.$location) %>%
+  map(function(df) {
+    cpt_fit <- cpt.mean(df$NTU_median, method = "PELT", penalty = "MBIC", minseglen = 14)
+    cp_indices <- cpts(cpt_fit)
+    if (length(cp_indices) == 0) return(tibble())
+    tibble(
+      location    = df$location[[1]],
+      cp_date     = df$date[cp_indices],
+      mean_before = map_dbl(cp_indices, ~mean(df$NTU_median[max(1, . - 14):.])),
+      mean_after  = map_dbl(cp_indices, ~mean(df$NTU_median[.:(min(nrow(df), . + 14))]))
+    )
+  }) %>%
+  bind_rows() %>%
+  mutate(mean_shift = mean_after - mean_before)
+
+cp_results
+```
+
+Build background rectangles — one per segment between changepoints, colored by the direction of the shift that started that segment.
+
+```{r}
+date_range <- turb_daily_cp %>%
+  group_by(location) %>%
+  summarise(start = min(date), end = max(date), .groups = "drop")
+
+cp_rects <- cp_results %>%
+  arrange(location, cp_date) %>%
+  group_by(location) %>%
+  mutate(
+    seg_start = cp_date,
+    seg_end   = lead(cp_date, default = date_range$end[date_range$location == location[[1]]]),
+    shift_dir = if_else(mean_shift < 0, "down", "up")
+  ) %>%
+  ungroup()
+```
+
+Plot changepoints as colored background regions over the daily median series.
+
+```{r, fig.height=12, fig.width=12}
+ggplot(turb_daily_cp, aes(x = date, y = NTU_median)) +
+  geom_rect(
+    data = cp_rects,
+    aes(xmin = seg_start, xmax = seg_end, ymin = -Inf, ymax = Inf, fill = shift_dir),
+    inherit.aes = FALSE, alpha = 0.25
+  ) +
+  geom_line(linewidth = 0.3, color = "grey30") +
+  scale_fill_manual(values = c("down" = "steelblue", "up" = "tomato")) +
+  facet_wrap(~ location, nrow = 2, scales = "free_y") +
+  labs(x = "", y = "daily median turbidity (NTU)", fill = "shift direction",
+       title = "PELT changepoints on daily medians (MBIC penalty, minseglen = 14 days)") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+Seasonality of downward shifts — if cleaning events are real they should cluster in spring/fall maintenance windows.
+
+```{r, fig.height=6, fig.width=10}
+cp_results %>%
+  filter(mean_shift < 0) %>%
+  mutate(month = lubridate::month(cp_date, label = TRUE)) %>%
+  ggplot(aes(x = month)) +
+  geom_bar() +
+  facet_wrap(~ location) +
+  labs(x = "month of changepoint", y = "count",
+       title = "Seasonality of downward mean-shifts (candidate cleanings)") +
+  theme_bw()
+```
+
+# Why `ross.wq.tools` does not work well for this dataset
+
+`ross.wq.tools` was designed for in-stream continuous monitoring sondes in a
+river network with mWater field visit records. This dataset violates several of
+those assumptions:
+
+**Slope-based flagging (`add_seasonal_flag` slope violation)**
+
+`make_threshold_table` computes p99 of positive slopes and values from the historical record,
+pooled across all years within each season. For in-stream turbidity, the dominant
+source of relatively large slopes and values are real runoff events, since the majority of 
+turbidity data we received was low-slope and low-value. Because the
+threshold is derived from data that contains real events and errors that look
+very similar statistically, the p99 cutoff is set by both the most extreme real events 
+and errors in readings. Since we are unable to separate out these two signals for 
+flagging the threshold table approach we have used for our own network does not 
+work well here. I will note here that the thresholds in the PWQN probably work 
+better because the data that we use to generate those thresholds are very well 
+vetted and manually verified. 
+
+TLDR: There is no way to separate sensor artifacts from real
+hydrological signal using slope alone without site visit records or additional sensors
+(e.g. Depth or SC), AND most of this data is dominated by low slopes and low values,
+so p99 captures small deviations from those patterns.
+
+**Drift flagging (`add_drift_flag`)**
+
+`add_drift_flag` splits the time series on site visit flags before computing
+rolling R² values. Without site visit records, the entire 15-year record is
+treated as one continuous window, making the drift detection impossible with 
+our current methods. 
+
+An idea going forward: Some changepoint approach could probably be added to the 
+autoQAQC to make decisions about that. Comparison to up/downstream data would also 
+be useful here, but some idea about how correlated these data sets are temporally
+would be a more "correct" thing to think about when building this out. 
+
+**Repeat flagging (`add_repeat_flag`)**
+
+At low turbidity during baseflow, the sensor resolution causes many consecutive
+identical readings that are real measurements, not stuck-sensor artifacts.
+`add_repeat_flag` cannot distinguish these from true sensor malfunctions.
+
+**Network check (`network_check`)**
+
+`network_check` was designed for a linear stream network where upstream and
+downstream sites share the same water parcel with a predictable travel time and
+benefits from having an upstream and downstream site for every site. 
+
+We could in theory plug this into the PWQN, I personally just didn't spend the time
+to do that for this exercise since I am not super familiar with these data streams.
+
+**Other issues that were resolved in this script, but should be cleaned up in the package to make our life easier in the future for AutoQAQC of other data streams**
+
+## Explicit assumptions (stated in code or docs)
+
+**15-minute sampling interval is hardcoded.**
+
+`generate_summary_statistics` divides slopes by `15` (`(front1 - mean)/15`).
+`network_check` uses `width_fun = 17` ("17 observations at 15-minute intervals = 4-hour window").
+`add_drift_flag` uses `win_short <- 96L` and `win_long <- 288L` (~1 day and ~3 days at 15-min).
+All data is not guaranteed to be regular 15-minute intervals.
+
+**Site visit / field visit records are required.**
+
+`add_drift_flag` explicitly splits the time series on site visit flags before computing rolling R²
+— without them, the entire 15-year record is one unbroken window and drift detection is unreliable.
+
+This is actually a huge thing that should be looked into when working on drift detection
+and correction.
+
+**Linear stream network with upstream/downstream relationships.**
+
+`network_check` is designed for a network where a water parcel flows from an upstream site to a
+downstream site with predictable travel time. I am unsure of the relationship with
+Munroe Canal and the Intake. 
+
+I will also note here that some temporal correlation relationship can be used to 
+make the network check more reliable.
+
+**One site and one parameter per dataframe.**
+
+`add_seasonal_flag` and `generate_summary_statistics` both call `unique(na.omit(df$site))` and
+`unique(na.omit(df$parameter))` — they assume a pre-split list structure, which required a manual
+`split()` + `discard()` step. Major headache that should be removed from the package. 
+The package should have some input structure expectation to aid in generalizability.
+
+**Specific column naming convention required.**
+
+The package expects `DT_round`, `site`, `parameter`, `mean`, `flag`, `manual_flag`. The FC data
+came in as `datetime`, `location`, `NTU`, requiring explicit renaming. Another 
+point that should be updated to make it easier to interact with different data structures 
+in the future.
+
+**mWater is the source of field records.**
+
+`grab_mWater_cleaning_notes`, `load_mWater`, etc. are all hardcoded to mWater. There is no path
+for non-mWater field records and no way to incorporate field note data that does 
+not jibe with what we've made. 
+
+## Implicit assumptions (baked into logic, not documented)
+
+**Thresholds can be separated from real signal.**
+
+`make_threshold_table` in this case uses non-manually-flagged data to compute p99 value and slope thresholds.
+For in-stream turbidity, real storm events *are* the extreme values, so p99 is set by the largest
+real events — the next tier of real events will always be flagged.
+
+**Repeated values are sensor artifacts, not real data.**
+
+`add_repeat_flag` flags any value equal to its immediate neighbor. At low turbidity during
+baseflow, sensor resolution produces many legitimate consecutive identical readings.
+
+**Temperature and Depth are co-measured at every site.**
+
+`intersensor_check` validates slope violations by cross-referencing concurrent Temperature and
+Depth flags. Without those parameters, the cross-validation step silently does nothing useful.
+
+**Simultaneous flags at neighboring sites = real event.**
+
+`network_check` removes flags when they overlap within a 4-hour rolling window at an upstream or
+downstream site. For FC, relationship between Munroe and Intake is unknown (to me), though
+it is safe to assume that they behave the same way. 
+
+**NAs represent gaps in an otherwise continuous record.**
+
+`add_na_flag` flags NAs as "missing data." For FC, NAs were already used to remove out-of-range
+values (≤0, ≥1000, stuck values) — flagging them as missing data conflates two different data
+quality issues.
+
+**Season definitions match the ROSS network's hydrological regime.**
+
+`generate_summary_statistics` hardcodes `winter_baseflow` (Dec–Apr), `snowmelt` (May–Jun),
+`monsoon` (Jul–Sep), `fall_baseflow` (Oct–Nov). These reflect a mountain stream watershed and
+may not match other intake turbidity dynamics.
+
+**`data.table` format is required before `add_seasonal_flag`.**
+
+The notebook had to explicitly call `data.table::data.table()` before passing data to
+`add_seasonal_flag` — this dependency is not documented in the function's `@param` or examples.
+
+# Next Steps for `{ross.wq.tools}`
+
+The issues encountered in this workflow point to several concrete improvements needed in the
+package to support data streams outside the PWQN. These are grouped by theme.
+
+## Generalization
+
+**Decouple the hardcoded 15-minute interval.**
+
+The slope calculation in `generate_summary_statistics` (`(front1 - mean)/15`), the rolling window
+sizes in `add_drift_flag` (`win_short = 96L`, `win_long = 288L`), and the network check window
+(`width_fun = 17`) all assume 15-minute data. These should be derived from the actual timestamp
+spacing in the data, or exposed as user-configurable arguments, so the package works with any
+sampling frequency.
+
+**Make season definitions configurable.**
+
+`generate_summary_statistics` hardcodes four seasons tied to the Cache la Poudre hydrological
+regime. This should be a user-supplied lookup table or argument so the package can be applied to
+watersheds with different seasonal dynamics.
+
+**Decouple field records from mWater.**
+
+`add_drift_flag`, `add_field_flag`, and `add_malfunction_flag` all depend on mWater-formatted
+field records. There is currently no path for datasets without mWater records. The package should
+accept a generic field notes dataframe with a documented schema, with mWater being one way to
+populate it — not the only way.
+
+**Standardize but do not enforce column names.**
+
+The package silently requires `DT_round`, `site`, `parameter`, `mean`, `flag`. Working with
+external data requires manual renaming before any package function can be called. The package
+should either accept a column mapping argument or provide a documented helper that validates and
+renames input data to the expected schema.
+
+## Input validation and documentation
+
+**Document the `data.table` input requirement for `add_seasonal_flag`.**
+
+The function silently requires a `data.table` object but this is not stated in the `@param`
+documentation. Either document it explicitly or coerce internally so the caller does not need to
+know.
+
+**Replace disabled examples with `@examplesIf` or `\donttest{}`.**
+
+All flagging functions currently have `# Examples are temporarily disabled`. These should use
+`@examplesIf interactive()` so they run in `R CMD check` where possible, catching breaking changes
+earlier.
+
+**Add early input validation.**
+
+Functions currently rely on implicit downstream errors when inputs are malformed. Adding
+`stopifnot()` checks (or `cli::cli_abort()` for messages with runtime values) for required columns
+and correct data types would make errors easier to diagnose.
+
+## Flagging logic
+
+**Revisit `add_repeat_flag` for low-resolution sensors.**
+
+The current logic flags any value equal to its immediate neighbor as a stuck sensor. For sensors
+with coarse resolution measuring stable parameters (e.g., low turbidity at baseflow), this
+produces many false positives. Consider requiring a minimum run length (e.g., N consecutive
+identical values) before flagging.
+
+**Separate value removal from missingness in `add_na_flag`.**
+
+NAs in external datasets may represent values that were already removed during manual QAQC, not
+true data gaps. `add_na_flag` conflates these two cases. The package should either distinguish
+them via a separate removal flag or document this limitation clearly so users know to handle it
+upstream.
+
+**Make `intersensor_check` gracefully handle missing parameters.**
+
+The function assumes Temperature and Depth are always present. When they are absent it silently
+does nothing. It should either warn the user or skip gracefully with a message.
+
+## Network check
+
+**Incorporate temporal lag into `network_check`.**
+
+The current implementation checks for flag overlap within a fixed ±2-hour window, assuming
+simultaneous response across sites. A cross-correlation or user-supplied travel-time offset would
+make the check more reliable for networks where upstream/downstream sites do not respond
+synchronously.

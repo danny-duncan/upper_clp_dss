@@ -60,8 +60,9 @@ plot_train_test_ensemble_perf <- function( train_val_df, test_df, fold_models, t
     # Make predictions with every fold
 
     test_preds_all <- map_dfc(fold_models, function(m) {
-      features <- m$feature_names
-      predict(m, as.matrix(test_df[, features]), iteration_range = c(1, m$best_iteration))
+      features <- xgb.importance(model = m) %>% pull(Feature)
+      best_iter <- as.numeric(xgb.attr(m, "best_iteration"))
+      predict(m, as.matrix(test_df[, features]), iteration_range = c(1, best_iter), validate_features = TRUE)
     })
     colnames(test_preds_all) <- paste0("fold_", seq_along(fold_models))
 
@@ -81,8 +82,9 @@ plot_train_test_ensemble_perf <- function( train_val_df, test_df, fold_models, t
 
     # --- Training predictions (mean across folds) ---
     train_preds_all <- map_dfc(fold_models, function(m) {
-      features <- m$feature_names
-      predict(m, as.matrix(train_val_df[, features]), iteration_range = c(1, m$best_iteration))
+      features <- xgb.importance(model = m) %>% pull(Feature)
+      best_iter <- as.numeric(xgb.attr(m, "best_iteration"))
+      predict(m, as.matrix(train_val_df[, features]), iteration_range = c(1, best_iter), validate_features = TRUE)
     })
     colnames(train_preds_all) <- paste0("fold_", seq_along(fold_models))
 

@@ -86,9 +86,13 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
     summarise(across(everything(), mean, na.rm = TRUE), .groups = 'drop')
 
   if(method  %in% c("Ensemble", "ensemble")){
+    features <- xgb.importance(model = model[[1]]) %>% pull(Feature)
+
+
     summarized_data <- imap_dfc(model, ~{
       # Get model features
-      features <- .x$feature_names
+      features <- xgb.importance(model = .x) %>% pull(Feature)
+      best_iter <- as.numeric(xgb.attr(.x, "best_iteration"))
 
       feature_data <- summarized_data %>%
         select(all_of(features)) %>%
@@ -99,7 +103,7 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
       # Make preds
       raw_preds <- feature_data %>%
         as.matrix() %>%
-        predict(.x, ., iteration_range = c(1, .x$best_iteration)) %>%
+        predict(.x, ., iteration_range = c(1, best_iter), validate_features = TRUE) %>%
         round(2)
 
       # make preds NA where features had NA
@@ -113,7 +117,7 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
       # compute ensemble mean
       mutate(
         !!glue("{target_col}_guess_ensemble") := if_else(
-          if_any(all_of(model[[1]]$feature_names), is.na),                # Check if ANY feature is NA
+          if_any(all_of(features), is.na),                # Check if ANY feature is NA
           NA_real_,                                                        # If true, set ensemble to NA
           round(rowMeans(across(matches(glue("{target_col}_guess_fold")))), 2) # Else, compute mean
         )
@@ -203,13 +207,14 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
       stop("For non-ensemble method, model must be a single trained model object.")
     }
 
-    features <- model$feature_names
+    features <- xgb.importance(model = model) %>% pull(Feature)
+    best_iter <- xgb.attr(model, "best_iteration")%>%as.numeric()
 
     preds <- summarized_data %>%
       select(all_of(features)) %>%
       mutate(across(everything(), as.numeric)) %>%
       as.matrix() %>%
-      predict(model, ., iteration_range = c(1, model$best_iteration)) %>%
+      predict(model, ., iteration_range = c(1, best_iter), validate_parameters = T) %>%
       round(2)
 
     plot_col <- glue("{target_col}_guess")
@@ -302,10 +307,11 @@ plot_model_timeseries <- function( model_input_df, water_chem_df, model, method 
   if(plot_model_input){
     if(method %in% c("Ensemble", "ensemble")){
       model <- model[[1]]  # Use the first model for input features
+      features <- xgb.importance(model = model) %>% pull(Feature)
     }
     # Plot model input data
     model_input_long <- summarized_data %>%
-      select(site, DT_round, all_of(model$feature_names)) %>%
+      select(site, DT_round, all_of(features)) %>%
       # Filter to desired time window first
       filter(between(DT_round, start_DT, end_DT)) %>%
       # Pad missing timestamps based on summary_interval

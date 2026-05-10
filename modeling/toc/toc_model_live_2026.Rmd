@@ -24,7 +24,7 @@ library(glue)
 library(SHAPforxgboost)
 set.seed(123)
 #set version for saving (update when changes are significant)
-version = "20260216"
+version = "20260224"
 
 #### Data setup functions ####
 #load grab sample data function
@@ -96,7 +96,9 @@ sensor_prepped <- sensor_data%>%
   bind_rows(riverbend_cottonwood_sub)%>%
   filter(site %nin% c("archery_virridy", "riverbend_virridy", "cottonwood_virridy"))%>%
   pivot_wider(id_cols = c("site","DT_hourly_round"), names_from = "parameter", values_from = "hourly_median")%>%
-  mutate(Turbidity = if_else(Turbidity == 0, 0.1, Turbidity))%>% #replace 0 turbidity with 0.1 to be able to do turbidity corrections and log transformations
+  mutate(Turbidity = case_when(Turbidity < 0.1 ~ 0.1, #replace 0 turbidity with 0.1 to be able to do turbidity corrections and log transformations
+                               Turbidity > 1000 ~ 1000,
+                               TRUE ~ Turbidity))%>% 
   #remove rows where everything other than site and DT_round are NA
   filter(!if_all(-c(site, DT_hourly_round), is.na))%>%
   #applying FDOM temperature & turbidity correcting/standardization
@@ -141,7 +143,8 @@ sensor_lagged <- sensor_prepped %>%
       mutate(sin_doy = sin(2*pi*yday(DT_hourly_round)/365.25), 
              fdom_x_turb = FDOMc * Turbidity, 
              fdom_turb = FDOMc/Turbidity, 
-             fdom_x_sc = FDOMc * `Specific Conductivity`)%>%
+             fdom_x_sc = FDOMc * `Specific Conductivity`, 
+             log_turb = log10(Turbidity))%>%
       # recent variance/sd (sc)
       calc_lagged_parameter(site_col = "site", parameter_col = "Specific Conductivity",
                             dt_col = "DT_hourly_round", lag_fun = "var",
@@ -158,7 +161,7 @@ sensor_lagged <- sensor_prepped %>%
       calc_lagged_parameter(site_col = "site", parameter_col = "Turbidity",
                             dt_col = "DT_hourly_round", lag_fun = "median",
                             time_period = "6 hour", new_value_col = "turb_median_6hour")%>%
-      select(-sc_var_24hr)
+      select(-sc_var_24hr, -log_turb)
     
   })%>%
   bind_rows()
@@ -202,7 +205,8 @@ sensor_final <- sensor_lagged%>%
   mutate(date = as_date(DT_hourly_round))%>%
   left_join(canyon_mouth_flow_daily, by = "date")%>%
   select(-date, -year)%>%
-  rename(DT_round = DT_hourly_round)
+  rename(DT_round = DT_hourly_round)%>%
+  select(-FDOM_final_corr, -FDOM_turb_corr) #not keeping the fully corrected FDOM values since this method might not be effective/correct for our sensors
 
 ```
 
@@ -302,10 +306,10 @@ all_matches_norm <- matchup_results %>%
   # Apply normalization 
   apply_training_scale(
     new_data = .,
-    features = features,
+    features = setdiff(features, "log_turb"),
     full_dataset = sensor_final,
     scaling_param_out_path = paste0("data/derived/model_scaling_parameters/scaling_params_toc_", version)
-  ) %>%
+  )%>%
   na.omit()
 
 # make distribution of all matches normalized features to check for any weird outliers or issues with scaling
@@ -317,6 +321,14 @@ all_matches_norm %>%
   labs(title = "Distribution of Normalized Features in Matchup Dataset", x = "Normalized Value", y = "Count") +
   theme_bw()
 
+#check if any of the features are Inf
+all_matches_norm%>%
+  select(any_of(features))%>%
+  summarise_all(~sum(is.infinite(.)))%>%
+  pivot_longer(everything(), names_to = "feature", values_to = "n_inf")%>%
+  filter(n_inf > 0)
+
+  
 ```
 
 ## Create Holdout Dataset
@@ -547,16 +559,37 @@ First, we will start with our base model (live sensor data only) and then test a
 Here I run the `xgboost_feature_selection()` function which runs a basic xgboost model with the specified features and default hyperparameters. It returns feature importance, shap values, and best iteration info for each fold. We will then look at feature importance and shap values to see which features are most useful, then trim features back to reduce our correlative and overfitting issues. 
 
 ```{r}
-
 # Weighting function for TOC
 toc_high_weights <-  function(df) {
   ifelse(df$TOC <= 4,1,                  # flat weight for low TOC
          1 + 3 *log1p(df$TOC - 4))  # grows slowly, no cap needed
 }
 
+# toc_high_weights_exp <- function(df) {
+#   ifelse(df$TOC <= 4,1,                  # flat weight for low TOC
+#          exp(0.5 * (df$TOC - 4)))  # exponential growth for higher TOC
+# }
+
 #raw sensor features
 general_features <- c("FDOMc","Turbidity","Specific Conductivity", "Temperature")
 
+
+hyper_params <- list(
+  objective        = "reg:squarederror",
+  eval_metric      = "rmse",
+  eta              = 0.05,
+  gamma            = 0.8,
+  alpha            = 0,
+  lambda           = 1,
+  max_depth        = 3,
+  subsample        = 0.5,
+  colsample_bytree = 0.5,
+  min_child_weight  = 2, 
+  nthread = 1)
+```
+
+
+```{r}
 #setup function
 feature_results <- map(
   #list of different features we want to test
@@ -564,8 +597,9 @@ feature_results <- map(
     gen_feat = general_features, 
     fewer_features = c(fewer_features), # this is the set of features we are testing that have been pruned based on correlation and domain knowledge, but still includes flow
     # removing FDOM_turb and turb median 6 hour
-    fewer_features_doy = c(setdiff(fewer_features, c("fdom_turb", "turb_median_6hour"))), 
-    fewest_features = c(setdiff(fewer_features, c("fdom_turb", "turb_median_6hour", "sin_doy")))
+    fewer_features_no_log_turb = c(setdiff(fewer_features, c("fdom_turb", "turb_median_6hour","log_turb"))), 
+    fewer_features_no_doy = c(setdiff(fewer_features, c("fdom_turb", "turb_median_6hour","log_turb", "sin_doy"))),
+    fewest_features = c(setdiff(fewer_features, c("fdom_turb", "turb_median_6hour", "sin_doy", "sc_sd_24hr","log_turb")))
     
   ),
   #Setting function parameters
@@ -577,14 +611,15 @@ feature_results <- map(
       objective        = "reg:squarederror",
       eval_metric      = "rmse",
       eta              = 0.05,
-      gamma            = 0.6,
+      gamma            = 0.8,
       alpha            = 0,
       lambda           = 1,
       max_depth        = 3,
       subsample        = 0.5,
       colsample_bytree = 0.5,
-      min_child_weight  = 2 ), 
-    weight_fun = toc_high_weights
+      min_child_weight  = 2, 
+      nthread = 1), 
+    weight_fun = NULL
   ))
 ```
 
@@ -755,11 +790,7 @@ Now that we have a feature set, we can do some hyperparameter tuning to see if w
 
 ```{r}
 
-folds <- tibble(
-  fold = 1:3,
-  val_ids = list(val_set_1, val_set_2, val_set_3)
- )
-features <- best_models[[1]]$feature_names
+features <- xgb.importance(model = best_models[[1]])$Feature # get features from model to use in tuning)
 
 # Reduce tune grid for reruns (ie. General best params)
 tune_grid = expand.grid(
@@ -781,12 +812,11 @@ tune_grid = expand.grid(
 ```{r}
 set.seed(123)
 hyperp_results <- xgboost_hyperparameter_tuning(
-  data = train_val %>% select(TOC, id, any_of(features)), 
+  train_val_df = train_val %>% select(TOC,fold_id, any_of(features)), 
+  feature_cols = features,
   weights = toc_high_weights,
   tune_grid = tune_grid,
   target_col = "TOC",
-  site_col = "id",
-  fold_ids =  folds, 
   units = "mg/L")
 
 ```
@@ -800,7 +830,7 @@ hyperp_results[[1]]$perf_dist
 hyperp_results[[1]]$eval_plot
 hyperp_results[[1]]$tv_plot
 
-best_fold_1_grid <- 25
+ best_fold_1_grid <- 22
 ```
 Chose the grid `best_fold_1_grid` for fold 1 because it has the lowest validation RMSE, it's RMSE is most closely related to it's val RMSE in the eval plot and doesn't have a evident bench in comparison to other grids. Overall there was minimal difference between grids. 
 
@@ -811,7 +841,7 @@ hyperp_results[[2]]$perf_dist
 hyperp_results[[2]]$eval_plot
 hyperp_results[[2]]$tv_plot
 
-best_fold_2_grid <- 71
+best_fold_2_grid <- 162
 
 ```
 Chose the grid `best_fold_2_grid` for fold 2 because it has the lowest validation RMSE, and there was minimal difference between grids. This fold contains our lowest TOC values in Val which leads to poor performance on the validation set so a bench at both side of the the model is common across grids. 
@@ -823,11 +853,11 @@ hyperp_results[[3]]$perf_dist
 hyperp_results[[3]]$eval_plot
 hyperp_results[[3]]$tv_plot
 
-best_fold_3_grid <- 52
+best_fold_3_grid <- 139
 
 ```
 
-Chose the grid `best_fold_3_grid` for fold 3 because it has the lowest validation RMSE, and the validation points hug the 1:1 line across TOC levels whereas other models appear to deviated to underpredict. 
+Chose the grid `best_fold_3_grid` for fold 3 because it has the second lowest validation RMSE, and the validation points hug the 1:1 line across TOC levels whereas other models appear to deviated to underpredict. 
 
 ```{r}
 
@@ -854,7 +884,7 @@ full_model <- map(1:3, function(i) {
 ```{r}
 importance_list <- lapply(seq_along(full_model), function(i) {
   fold_model <- full_model[[i]]$model
-  features <- fold_model$feature_names
+  features <- xgb.importance(model = fold_model)$Feature
   importance_matrix <- xgb.importance(feature_names = features, model = fold_model)
   importance_df <- as.data.frame(importance_matrix)
   importance_df$Fold <- paste("Fold", i)
@@ -871,7 +901,7 @@ print(importance_list)
 # Function to plot SHAP values for a given fold
 plot_shap <- function(fold_set, training_data, fold_model) {
   #get features from model
-  features <- fold_model$feature_names
+  features <- xgb.importance(model = fold_model)$Feature
   # Predictions on validation/training set
   dtrain <- as.matrix(training_data[, features])
   
@@ -891,7 +921,7 @@ map(1:3, ~ plot_shap(
   fold_model = full_model[[.x]]$model,
   training_data = full_model[[.x]]$training_data
 ))%>%
-  wrap_plots(., ncol = 1, guides = "collect") &
+  wrap_plots(., ncol = 1, axes = "collect", guides = "collect") &
   theme(legend.position = "bottom")
 
 ```
@@ -907,7 +937,7 @@ hyperparam_tv_plots <- map(1:3, ~plot_tv_fold_perf(fold_set = .x,
                                                    target_col = "TOC", units = "mg/L")
 )
 
-hp_tv_plot<- wrap_plots(hyperparam_tv_plots, ncol = 1, guides = "collect")&
+hp_tv_plot<- wrap_plots(hyperparam_tv_plots, ncol = 2, guides = "collect")&
   theme(legend.position = "bottom")
 hp_tv_plot
 ggsave(here(paste0("docs/uclp_dss/figs/realtime_toc_modeling/performance/toc_model_fold_validation_performance_", version, ".png")), width = 14, height = 10)
@@ -944,9 +974,22 @@ If we want to test additional ideas for bias correction or look at model perform
 
 ```{r}
 #commented out so we don't overwrite existing model files
-saveRDS(full_model, file = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_full_",version,".rds")))
-#if we want to reload model
-#full_model <- readRDS(here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_full_",version,".rds")))
+
+path <- here("data", "derived", "models","TOC_realtime", "in_dev")
+
+xgb.save(full_model[[1]]$model, fname = file.path(path, paste0("ross_only_toc_xgboost_model_fold1_", version, ".ubj")))
+xgb.save(full_model[[2]]$model, fname = file.path(path, paste0("ross_only_toc_xgboost_model_fold2_", version, ".ubj")))
+xgb.save(full_model[[3]]$model, fname = file.path(path, paste0("ross_only_toc_xgboost_model_fold3_", version, ".ubj")))
+
+#if we want to reload model into full model in the $model slot for each fold index
+full_model <- 1:3 %>%
+  map(~{
+    list(
+      model = xgb.load(file.path(path, paste( "ross_only_toc_xgboost_model_fold", .x, "_", version, ".ubj", sep = ""))),
+      training_data = train_val %>% filter(fold_id != .x),
+      validation_data = train_val %>% filter(fold_id == .x)
+    )
+  })
 
 rm(list = setdiff(ls(), c("train_val", "testing", "full_model","version","id_cols",
                           "sensor_final",
@@ -1004,10 +1047,12 @@ ggsave(here("docs","uclp_dss", "figs", "realtime_toc_modeling","performance",pas
 
 ```{r}
 #loading in all sensor data and applying training scaling
+feats <- xgb.importance(full_model[[1]]$model)$Feature
+
 sensor_ts <- apply_training_scale(new_data = sensor_final, 
                                   full_dataset = sensor_final, 
-                                  features = full_model[[1]]$model$feature_names)%>%
-  select(site, DT_round, any_of(full_model[[1]]$model$feature_names))
+                                  features = feats )%>%
+  select(site, DT_round, any_of(feats))
 
 water_chem <- load_grab_sample_data()
 
@@ -1020,7 +1065,7 @@ time_series_dir <- here("docs", "uclp_dss", "figs", "realtime_toc_modeling", "ti
 
 chd_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
                                   water_chem_df = water_chem, 
-                                  summary_interval = "4 hour",
+                                  summary_interval = "6 hour",
                                   site_sel = "chd", 
                                   site_title = "Chambers Lake outflow",
                                   model = map(full_model, "model"),
@@ -1056,7 +1101,7 @@ ggsave(here(time_series_dir, paste0("chambers_outflow_20250501_20250705_toc", ve
 
 pfal_plot <- plot_model_timeseries(model_input_df = sensor_ts, 
                                    water_chem_df = water_chem%>%filter(collector == "ROSS"), 
-                                   summary_interval = "4 hour",
+                                   summary_interval = "6 hour",
                                    site_sel = "pfal", 
                                    site_title = "Poudre @ Poudre Falls",
                                    model = map(full_model, "model"),
@@ -1297,6 +1342,13 @@ We will extract just the model objects from the list to save space.
 small_models <- map(full_model, "model")
 
 saveRDS(small_models, file = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_models_light_",version,".rds")))
+
+# Save xgb versions for safety
+xgb.save(small_models[[1]], fname = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_model_fold1_", version, ".ubj")))
+
+xgb.save(small_models[[2]], fname = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_model_fold2_", version, ".ubj")))
+
+xgb.save(small_models[[3]], fname = here("data", "derived", "models","TOC_realtime", "in_dev", paste0("ross_only_toc_xgboost_model_fold3_", version, ".ubj")))
 
 ```
 
