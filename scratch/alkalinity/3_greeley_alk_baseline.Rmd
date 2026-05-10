@@ -1,5 +1,5 @@
 ---
-title: "alk_ratio_forecast"
+title: "Alkalinity Baseline Forecast Exploration"
 author: "Danny Duncan"
 date: "`r Sys.Date()`"
 output: html_document
@@ -11,6 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(here)
 library(mgcv)
+library(scoringRules)
 library(tidyverse)
 library(lubridate)
 library(kableExtra)
@@ -92,7 +93,7 @@ all_data <- plant_data %>%
 From our initial exploration, the proportion of North Fork flow to Canyon Mouth flow (flow_ratio) is the best predictor when paired with day-of-year (doy). Unlike the Canyon Mouth, no flow forecast is available for the North Fork. Since this is the case, we'll create a forecast which calculates "flow_ratio" from the Canyon Mouth forecast for n+7 while using the n+0 observation from the North Fork.
 
 ## Data Prep
-```{r}
+```{r data prep}
 # Data Prep
 clean_data <- all_data %>%
   mutate(
@@ -108,7 +109,7 @@ train_data <- clean_data %>% filter(year <= 2022)
 ```
 
 ## Model Building
-```{r}
+```{r gam-model}
 # Build GAM with CM/NF flow ratio & Day-of-Year
 # Cyclic spline utilized to capture seasonality in DOY
 # Gamma distribution with log link for right-skewed Alkalinity data
@@ -122,10 +123,25 @@ m1 <- gam(
 gam.check(m1)
 summary(m1)
 ```
+## Test Data Evaluation (Observed Flow Ratio)
+
+```{r gam obs test}
+# Create test data (2023-2025)
+test_data <- clean_data %>% filter(year >= 2023)
+
+# Predict using observed flow_ratio and doy
+test_preds <- predict(m1, newdata = test_data, type = "response", se.fit = TRUE)
+
+test_data <- test_data %>%
+  mutate(
+    alk_pred_obs = test_preds$fit,
+    se_obs = test_preds$se.fit
+  )
+```
 
 ## Forecast Simulation
 
-```{r}
+```{r gam-forecast-test}
 # Create 7-day forecast simulation dataset for 2023-2024
 # For every "today", we create a 7-day forecast window.
 test_dates <- clean_data %>% 
@@ -187,7 +203,7 @@ performance_summary <- daily_sim_df %>%
 print(performance_summary)
 ```
 
-```{r}
+```{r gam forecast plot}
 # Plot day 1 & 7 forecast against observed Alkalinity
 plot_data <- daily_sim_df %>%
   filter(lead_time %in% c(1, 7)) %>% 
@@ -199,10 +215,10 @@ plot_data <- daily_sim_df %>%
 ggplot(plot_data) +
   # Observed Alkalinity
   geom_line(aes(x = target_date, y = alkalinity_actual, color = "Actual"), 
-            size = 0.8, alpha = 0.5) +
+            linewidth = 0.8, alpha = 0.5) +
   # Predicted Alkalinity for Day 1 and Day 7 "forecasts"
   geom_line(aes(x = target_date, y = alk_pred, color = lead_label), 
-            size = 0.8) +
+            linewidth = 0.8) +
   facet_wrap(~year, scales = "free_x", ncol = 1) +
   scale_color_manual(values = c("Actual" = "black", 
                                 "Day 1 Forecast" = "dodgerblue", 
@@ -218,7 +234,78 @@ ggplot(plot_data) +
   theme(legend.position = "bottom")
 ```
 
-# Extreme Observations Test
+
+```{r obs vs. preds scatterplot, fig.dim=c(10, 6)}
+# --- X-Y Scatterplot of Measured vs Predicted Alkalinity ---
+plot_df <- daily_sim_df %>%
+  mutate(horizon_label = factor(paste0("Day ", lead_time, " Forecast"), 
+                                levels = paste0("Day ", 1:7, " Forecast")))
+
+ggplot(plot_df, aes(x = alkalinity_actual, y = alk_pred)) +
+  geom_point(alpha = 0.4, color = "dodgerblue") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  facet_wrap(~horizon_label, ncol = 4) +
+  labs(
+    title = "Measured vs Predicted Alkalinity",
+    subtitle = "Comparing performance across 1-7 day forecast horizons",
+    x = "Measured Alkalinity (mg/L)",
+    y = "Predicted Alkalinity (mg/L)"
+  ) +
+  theme_bw() +
+  coord_equal()
+```
+
+```{r crps calculation}
+phi <- summary(m1)$dispersion 
+
+# Calculate CRPS for each forecast point in the daily_sim_df
+crps_results <- daily_sim_df %>%
+  mutate(
+    # The Gamma distribution in R uses shape and scale
+    # Mean (mu) = shape * scale
+    # Variance = shape * scale^2 = mu^2 * phi
+    # Therefore:
+    shape_param = 1 / phi,
+    scale_param = alk_pred * phi
+  ) %>%
+  mutate(
+    # crps_gamma(actual_observation, shape, scale)
+    crps = crps_gamma(alkalinity_actual, shape = shape_param, scale = scale_param)
+  )
+
+# Calculate CRPS for Observed Flow (Test Data)
+test_crps <- test_data %>%
+  mutate(
+    shape_param = 1 / phi,
+    scale_param = alk_pred_obs * phi,
+    crps = crps_gamma(alkalinity, shape = shape_param, scale = scale_param),
+    lead_time = 0 # Representing observed flow as lead time 0
+  )
+```
+
+```{r crps plots, fig.dim=c(12, 6)}
+# Plot 1: Observed Flow (Test Data)
+ggplot(test_crps, aes(x = "Observed Flow", y = crps)) +
+  geom_violin(fill = "lightblue", alpha = 0.7) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
+  theme_bw() +
+  labs(y = "Continuous Ranked Probability Score (mg/L)",
+       x = "Model Condition",
+       title = "CRPS: Perfect Foresight",
+       subtitle = "Using observed flow_ratio")
+
+# Plot 2: Forecast Simulation (1-7 Days)
+ggplot(crps_results, aes(x = as.factor(lead_time), y = crps)) +
+  geom_violin(fill = "lightgray", alpha = 0.7) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
+  theme_bw() +
+  labs(y = "Continuous Ranked Probability Score (mg/L)",
+       x = "Forecast Horizon (Days)",
+       title = "CRPS: Forecast Horizons",
+       subtitle = "1 to 7 Day Horizon")
+```
+
+# Extreme Forecast Sensitivity Test
 ```{r}
 # Create a 7-day horizon for every single day in the test period
 rolling_sens_df <- expand_grid(
@@ -229,86 +316,89 @@ rolling_sens_df <- expand_grid(
   # Join Origin NF Flow (Persisted)
   left_join(clean_data %>% select(date, nf_cfs), by = c("origin_date" = "date")) %>%
   rename(nf_flow_obs = nf_cfs) %>%
-  # Join Target CM Flow and Actual Alkalinity
+  # Join Target CM Flow (Acting as Forecast) and Actual Alkalinity
   left_join(clean_data %>% select(date, cm_cfs, alkalinity, doy), by = c("target_date" = "date")) %>%
-  rename(cm_flow_actual = cm_cfs, alkalinity_actual = alkalinity) %>%
+  rename(cm_flow_fcst = cm_cfs, alkalinity_actual = alkalinity) %>%
   filter(!is.na(alkalinity_actual), !is.na(nf_flow_obs)) %>%
   # Sensitivity modification
   mutate(
-    # Scenario A: Control (Actual CM Flow)
-    flow_ratio_control = nf_flow_obs / cm_flow_actual,
-    # Scenario B: Sensitivity (1.25x CM Flow)
-    cm_flow_sens = cm_flow_actual * 1.25,
-    flow_ratio_sens = nf_flow_obs / cm_flow_sens
+    # Scenario A: Control (Baseline Forecast)
+    flow_ratio_control = nf_flow_obs / cm_flow_fcst,
+    # Scenario B: Over-forecast Sensitivity (+25% CM Flow)
+    cm_flow_sens_high = cm_flow_fcst * 1.25,
+    flow_ratio_sens_high = nf_flow_obs / cm_flow_sens_high,
+    # Scenario C: Under-forecast Sensitivity (-25% CM Flow)
+    cm_flow_sens_low = cm_flow_fcst * 0.75,
+    flow_ratio_sens_low = nf_flow_obs / cm_flow_sens_low
   )
 
 # Generate predictions for control & sensitivity
-# Predict Control
+# Predict Control (Baseline Forecast)
 rolling_sens_df$alk_pred_control <- predict(m1, 
                                             newdata = data.frame(
                                               flow_ratio = rolling_sens_df$flow_ratio_control,
                                               doy = rolling_sens_df$doy
                                             ), type = "response")
 
-# Predict Sensitivity
-rolling_sens_df$alk_pred_sens <- predict(m1, 
+# Predict Over-forecast (+25%)
+rolling_sens_df$alk_pred_sens_high <- predict(m1, 
                                           newdata = data.frame(
-                                            flow_ratio = rolling_sens_df$flow_ratio_sens,
+                                            flow_ratio = rolling_sens_df$flow_ratio_sens_high,
                                             doy = rolling_sens_df$doy
                                           ), type = "response")
 
-# Calculate the Delta (The impact of the 25% flow increase on the forecast)
+# Predict Under-forecast (-25%)
+rolling_sens_df$alk_pred_sens_low <- predict(m1, 
+                                          newdata = data.frame(
+                                            flow_ratio = rolling_sens_df$flow_ratio_sens_low,
+                                            doy = rolling_sens_df$doy
+                                          ), type = "response")
+
+# Calculate the Delta (Impact of forecast errors on alkalinity)
 rolling_sens_df <- rolling_sens_df %>%
-  mutate(diff_mgL = alk_pred_sens - alk_pred_control)
+  mutate(
+    diff_mgL_high = alk_pred_sens_high - alk_pred_control,
+    diff_mgL_low = alk_pred_sens_low - alk_pred_control
+  )
 
 # Performance and Sensitivity Analysis
 sens_summary <- rolling_sens_df %>%
   group_by(lead_time) %>%
   summarise(
     avg_control_pred = mean(alk_pred_control),
-    avg_sens_pred = mean(alk_pred_sens),
-    mean_diff = mean(diff_mgL),
-    pct_impact = (mean_diff / avg_control_pred) * 100
+    avg_sens_high_pred = mean(alk_pred_sens_high),
+    avg_sens_low_pred = mean(alk_pred_sens_low),
+    mean_diff_high = mean(diff_mgL_high),
+    pct_impact_high = (mean_diff_high / avg_control_pred) * 100,
+    mean_diff_low = mean(diff_mgL_low),
+    pct_impact_low = (mean_diff_low / avg_control_pred) * 100
   )
 
 print(sens_summary)
 
-# Visualize the 7-Day Sensitivity Trajectories; visualizing one specific day
-sample_origin <- as.Date("2024-05-20") # Spring runoff period
-
-sample_data <- rolling_sens_df %>% filter(origin_date == sample_origin)
-
-ggplot(sample_data, aes(x = target_date)) +
-  geom_line(aes(y = alkalinity_actual, color = "Actual Observed"), size = 1.2, linetype = "dotted") +
-  geom_line(aes(y = alk_pred_control, color = "Forecast (Normal CM)"), size = 1) +
-  geom_line(aes(y = alk_pred_sens, color = "Forecast (+25% CM Sensitivity)"), size = 1, linetype = "dashed") +
-  geom_point(aes(y = alk_pred_control, color = "Forecast (Normal CM)")) +
-  geom_point(aes(y = alk_pred_sens, color = "Forecast (+25% CM Sensitivity)")) +
-  scale_color_manual(values = c("Actual Observed" = "black", 
-                                "Forecast (Normal CM)" = "blue", 
-                                "Forecast (+25% CM Sensitivity)" = "red")) +
-  labs(title = paste("7-Day Forecast Sensitivity starting", sample_origin),
-       subtitle = "Comparing predicted alkalinity if CM flow was 25% higher than reality",
-       y = "Alkalinity (mg/L)", x = "Forecast Date") +
-  theme_minimal()
-
 # Visualizing yearly summaries
-# Compare the average forecast of both scenarios vs Actual across the test years
+# Compare the average forecast of scenarios vs Actual across the test years
 yearly_summary <- rolling_sens_df %>%
   group_by(target_date) %>%
   summarise(actual = first(alkalinity_actual),
             pred_control = mean(alk_pred_control),
-            pred_sens = mean(alk_pred_sens)) %>%
+            pred_sens_high = mean(alk_pred_sens_high),
+            pred_sens_low = mean(alk_pred_sens_low)) %>%
   mutate(year = year(target_date))
 
 ggplot(yearly_summary, aes(x = target_date)) +
   geom_line(aes(y = actual, color = "Actual"), alpha = 0.4) +
-  geom_line(aes(y = pred_control, color = "Control Forecast"), size = 0.8) +
-  geom_line(aes(y = pred_sens, color = "Sensitivity Forecast"), size = 0.8, linetype = "dashed") +
+  geom_line(aes(y = pred_control, color = "Baseline Forecast"), linewidth = 0.8) +
+  geom_line(aes(y = pred_sens_high, color = "Over-forecast (+25%)"), linewidth = 0.8, linetype = "dashed") +
+  geom_line(aes(y = pred_sens_low, color = "Under-forecast (-25%)"), linewidth = 0.8, linetype = "dotted") +
   facet_wrap(~year, scales = "free_x", ncol = 1) +
-  scale_color_manual(values = c("Actual" = "gray50", "Control Forecast" = "blue", "Sensitivity Forecast" = "red")) +
-  labs(title = "Rolling Forecast Sensitivity: 2023-2025",
-       subtitle = "Blue: Forecast using actual CM flow | Red: Forecast using 1.25x CM flow",
-       y = "Alkalinity (mg/L)") +
+  scale_color_manual(values = c("Actual" = "gray50", 
+                                "Baseline Forecast" = "blue", 
+                                "Over-forecast (+25%)" = "red",
+                                "Under-forecast (-25%)" = "darkorange")) +
+  labs(title = "Forecast Sensitivity: 2023-2025",
+       subtitle = "Testing the impact of +/- 25% errors in CM Flow forecasts",
+       y = "Alkalinity (mg/L)",
+       color = "Scenario") +
   theme_minimal()
 ```
